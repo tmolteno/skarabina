@@ -5,9 +5,8 @@ import shutil
 import dask
 from casacore.tables import table
 import dask.array as da
-import xarray as xr
 
-from daskms import xds_from_table, xds_to_table, xds_from_ms
+from daskms import xds_to_table, xds_from_ms
 from dask.diagnostics import ProgressBar
 
 logger = logging.getLogger(__name__)
@@ -83,12 +82,18 @@ class DaskMS:
         self.changed.append('FLAG_ROW')
 
     def summary(self):
-        num_flagged = da.sum(self.ds.FLAG).compute()
-        rows_flagged = da.sum(self.ds.FLAG_ROW).compute()
-        total = da.prod(da.array(self.ds.FLAG.shape)).compute()
-        rows_total = da.prod(da.array(self.ds.FLAG_ROW.shape)).compute()
+        num_flagged = da.sum(self.ds.FLAG)
+        rows_flagged = da.sum(self.ds.FLAG_ROW)
+        total = da.prod(da.array(self.ds.FLAG.shape))
+        rows_total = da.prod(da.array(self.ds.FLAG_ROW.shape))
         percent = 100.0 * (num_flagged/total)
         rows_percent = 100.0 * (rows_flagged/rows_total)
+
+        with ProgressBar():
+            num_flagged, rows_flagged, \
+                total, rows_total, percent, \
+                rows_percent = dask.compute(num_flagged, rows_flagged,
+                                            total, rows_total, percent, rows_percent)
 
         print(f"Flagging Summary ({self.name}): {percent} % - {num_flagged}/{total}.")
         print(f"    flags: {percent:4.2f} % - {num_flagged}/{total}.")
