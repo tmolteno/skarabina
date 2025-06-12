@@ -3,6 +3,8 @@ import dask.array as da
 import datetime
 import logging
 
+from dask.diagnostics import ProgressBar
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,10 +35,11 @@ def barber(ms, pol):
     ant1 = ms.antenna1[dump_index]
     ant2 = ms.antenna2[dump_index]
 
-    max_vis, mean_vis, dump_index, channel_index, pol_index, \
-        dt, max_index, max_flag, percentile_values = \
-        dask.compute(max_vis, mean_vis, dump_index, channel_index,
-                     pol_index, dt, max_index, max_flag, percentile_values)
+    with ProgressBar():
+        max_vis, mean_vis, dump_index, channel_index, pol_index, \
+            dt, max_index, max_flag, percentile_values = \
+            dask.compute(max_vis, mean_vis, dump_index, channel_index,
+                        pol_index, dt, max_index, max_flag, percentile_values)
 
     ant1, ant2 = dask.compute(ant1, ant2)
     # ts = inverse[dump_index]
@@ -62,9 +65,6 @@ def barber(ms, pol):
     print("    Percentiles: ")
     for p, v in zip(percentile_inputs, percentile_values):
         print(f"        {p:6.4f}: \t{v:4.2f}")
-    # print(f"    u = {u_arr[dump_index]}")
-    # print(f"    v = {v_arr[dump_index]}")
-    # print(f"    w = {w_arr[dump_index]}")
 
     if False:
         min_index = da.unravel_index(da.argmin(absvis, axis=None), shape=absvis.shape)
