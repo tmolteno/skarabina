@@ -1,6 +1,6 @@
 cabs:
     skarabina:
-        info: 'Mupati -- A basic 1GC flagger'
+        info: 'skarabina (dung beetle) -- A basic 1GC flagger'
         command: skarabina
         inputs:
             ms:
