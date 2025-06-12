@@ -1,0 +1,34 @@
+[project]
+name = "skarabina"
+version = "0.1.1"
+description = "Skarabina (dungbeetle): An all purpose 1GC flagger"
+authors = [
+    {name = "Tim Molteno",email = "tim@elec.ac.nz"}
+]
+license = {text = "GPLv3"}
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+packages = [{include = "skarabina"}]
+
+dependencies = [
+    "dask-ms[xarray, zarr, dataframe]",
+    "stimela >=2.1.2",
+    "zarr (>=2.12.0)"
+
+]
+[tool.poetry]
+
+[tool.poetry.scripts]
+skarabina = "skarabina.main:main"
+
+[tool.poetry.dependencies]
+dask-ms = { path = "/home/tim/github/dask-ms" }
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.4.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+
