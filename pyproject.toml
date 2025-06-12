@@ -22,7 +22,7 @@ dependencies = [
 skarabina = "skarabina.main:main"
 
 [tool.poetry.dependencies]
-dask-ms = { path = "/home/tim/github/dask-ms" }
+dask-ms = { git = "https://github.com/tmolteno/dask-ms" }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.0"

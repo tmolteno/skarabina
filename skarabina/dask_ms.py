@@ -93,7 +93,8 @@ class DaskMS:
             num_flagged, rows_flagged, \
                 total, rows_total, percent, \
                 rows_percent = dask.compute(num_flagged, rows_flagged,
-                                            total, rows_total, percent, rows_percent)
+                                            total, rows_total, percent,
+                                            rows_percent)
 
         print(f"Flagging Summary ({self.name}): {percent} % - {num_flagged}/{total}.")
         print(f"    flags: {percent:4.2f} % - {num_flagged}/{total}.")
