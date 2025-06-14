@@ -7,9 +7,8 @@ import datetime
 
 import logging
 
-from . import recipes
-from . import dask_ms
-from . import skarabina
+from skarabina import recipes
+from skarabina import dask_ms
 
 recipe = resources.files(recipes) / "skarabina.yml"
 schemas = OmegaConf.load(recipe)
@@ -40,7 +39,16 @@ def main(**kw):
 
     ms = dask_ms.DaskMS(opts.ms)
 
-    skarabina.skarabina(ms, opts)
+    if opts.uv_above is not None:
+        # Set the flag Variable on first Dataset to it's inverse
+        print(f"uv_above {opts.uv_above}")
+        ms.flag_uv_above(opts.uv_above)
+
+    if opts.summary:
+        ms.summary()
+
+    if opts.barber:
+        barber.barber(ms, opts.barber_pol)
 
     if opts.msout:
         ms.write_new_ms(opts.msout, opts.clobber)
