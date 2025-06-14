@@ -62,7 +62,7 @@ class DaskMS:
         #     except:
         #         print(f"Failed to open {s} as a subtable")
         #         pass
-        self.changed = []
+        self.changed = {}
 
     def flag_uv_above(self, uv_limit):
         '''
@@ -79,7 +79,7 @@ class DaskMS:
         print(f"uv_flag_mask: {da.sum(new_flag_row).compute()}")
         self.ds['FLAG_ROW'] = (self.ds.FLAG_ROW.dims, new_flag_row)
 
-        self.changed.append('FLAG_ROW')
+        self.changed['FLAG_ROW'] = True
 
     def summary(self):
         num_flagged = da.sum(self.ds.FLAG)
@@ -126,11 +126,14 @@ class DaskMS:
             raise RuntimeError(f"Measurement set {name} can't be changed. Use --clobber to overwrite")
         logger.warning(f"Updating {name}")
 
-        for to_update in self.changed:
+        for to_update in self.changed.keys():
 
-            print(f"Updating table: {to_update} in {name}")
-            print(f"    ds={self.ds[to_update]}")
-            writes = xds_to_table(self.ds, f"{name}", to_update)
-            with ProgressBar():
-                dask.compute(writes)
+            if self.changed[to_update]:
+                print(f"Updating table: {to_update} in {name}")
+                print(f"    ds={self.ds[to_update]}")
+                writes = xds_to_table(self.ds, f"{name}", to_update)
+                with ProgressBar():
+                    dask.compute(writes)
+
+                self.changed[to_update] = False
 
