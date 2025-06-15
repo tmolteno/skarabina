@@ -1,0 +1,15 @@
+_include:
+    - (skarabina):
+        - skarabina.yml
+
+my-recpipe:
+    info: "Print a flagging summary using skarabina"
+    inputs:
+        ms: MS
+
+    steps:
+        flag-summary:
+            cab: skarabina
+            params:
+                ms: =recipe.ms
+                summary: true
