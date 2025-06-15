@@ -7,10 +7,9 @@ import datetime
 
 import logging
 
-from skarabina import recipes
 from skarabina import dask_ms
 
-recipe = resources.files(recipes) / "skarabina.yml"
+recipe = resources.files('skarabina').joinpath('skarabina.yml')
 schemas = OmegaConf.load(recipe)
 
 logging.basicConfig()

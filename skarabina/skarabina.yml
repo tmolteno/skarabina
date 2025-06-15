@@ -30,19 +30,18 @@ cabs:
             apply:
                 dtype: bool
                 default: false
-            flag:
-                uv_above:
-                    dtype: float
-                    info: Flag UVW above this limit.
-                freq:
-                    dtype: List[Tuple[float, float]]
-                    info: |-
-                        "Flag this list of frequency channels (lower - upper). Eg"
-                        "freq_flag:"
-                        "    - 850,900          # Lower band edge   "
-                        "    - 1658-1800,       # Upper bandpass edge "
-                        "    - 1419.8~1421.3    # Galactic HI "
-                        ""
+            uv_above:
+                dtype: float
+                info: Flag UVW above this limit.
+            freq:
+                dtype: List[Tuple[float, float]]
+                info: |-
+                    "Flag this list of frequency channels (lower - upper). Eg"
+                    "freq_flag:"
+                    "    - 850,900          # Lower band edge   "
+                    "    - 1658-1800,       # Upper bandpass edge "
+                    "    - 1419.8~1421.3    # Galactic HI "
+                    ""
             chan-bin:
                 dtype: int
                 info: Average the flagged channels.
