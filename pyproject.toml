@@ -7,22 +7,23 @@ authors = [
 ]
 license = {text = "GPLv3"}
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.10,<3.14"
 packages = [{include = "skarabina"}]
 
 dependencies = [
-    "dask-ms[xarray, zarr, dataframe]",
+    "dask-ms[xarray,zarr,dataframe] @ git+https://github.com/tmolteno/dask-ms",
     "stimela >=2.1.2",
-    "zarr (>=2.12.0)"
-
+    "zarr (>=2.0)"
 ]
+
+
 [tool.poetry]
 
 [tool.poetry.scripts]
 skarabina = "skarabina.main:main"
 
 [tool.poetry.dependencies]
-dask-ms = { git = "https://github.com/tmolteno/dask-ms" }
+# dask-ms = { git = "https://github.com/tmolteno/dask-ms" }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.0"
