@@ -1,0 +1,5 @@
+vars:
+  skarabina:
+    images:
+      registry: ghcr.io/tmolteno
+      version: v0.1.3
