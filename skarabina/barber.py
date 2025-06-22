@@ -19,7 +19,7 @@ def barber(ms, pol):
         pol_index = max_index[2]
     else:
         pol_index = pol
-        max_index = da.unravel_index(da.argmax(absvis[:,:,pol_index], axis=None), shape=absvis.shape)
+        max_index = da.unravel_index(da.argmax(absvis[:, :, pol_index], axis=None), shape=absvis.shape)
 
     max_vis = absvis[max_index]
     mean_vis = da.mean(absvis)

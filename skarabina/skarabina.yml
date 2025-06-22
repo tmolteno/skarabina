@@ -30,7 +30,7 @@ cabs:
             apply:
                 dtype: bool
                 default: false
-            uv_above:
+            uv-above:
                 dtype: float
                 info: Flag UVW above this limit.
             freq:
