@@ -19,7 +19,7 @@ logger = logging.getLogger()
 @click.command("skarabina")
 @clickify_parameters(schemas.cabs.get('skarabina'))
 def main(**kw):
-    print("Mupati (dungbeetle): The 1GC flagger")
+    print("Mupati (skarabina): The 1GC flagger")
     opts = OmegaConf.create(kw)
 
     if opts.debug:
