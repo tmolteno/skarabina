@@ -55,7 +55,7 @@ def barber(ms, pol):
     print(f"        at vis_index = {dump_index}")
     print(f"        at channel_index = {channel_index}")
     print(f"        at pol_index = {pol_index}")
-    print(f"    flags[{max_index}] = {ms.flag[max_index].compute().to_numpy()}")
+    print(f"    flags[{max_index}] = {ms.flag[max_index].compute()}")
     print(f"    weights[{max_index}] = {ms.weight_spectrum[max_index].compute()}")
     print(f"    Time = {timestamp}")
 

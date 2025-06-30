@@ -4,9 +4,13 @@ _include:
 cabs:
     skarabina:
         info: 'skarabina (dung beetle) -- A basic 1GC flagger'
-        image:
-            _use: vars.skarabina.images
-            name: skarabina
+        backend:
+            native:
+                virtual_env: ~/github/skarabina/venv
+        #
+        # image:
+        #     _use: vars.skarabina.images
+        #     name: skarabina
         command: skarabina
         inputs:
             ms:
@@ -16,6 +20,10 @@ cabs:
             summary:
                 dtype: bool
                 info: Print the flagging summary
+                default: false
+            optimize:
+                dtype: bool
+                info: Opotimize the size of the measurement set while keeping all rows of equal length.
                 default: false
             clobber:
                 dtype: bool
@@ -30,9 +38,19 @@ cabs:
             apply:
                 dtype: bool
                 default: false
-            uv-above:
-                dtype: float
-                info: Flag UVW above this limit.
+            flag:
+                uv-above:
+                    dtype: float
+                    info: Flag UVW above this limit.
+                nan:
+                    dtype: bool
+                    info: Flag NaN
+                zero:
+                    dtype: bool
+                    info: Flag Zero.
+                clip:
+                    dtype: Tuple[float, float]
+                    info: Flag clip.
             freq:
                 dtype: List[Tuple[float, float]]
                 info: |-
@@ -60,3 +78,6 @@ cabs:
             reference-antenna:
                 dtype: int
                 info: A recommended reference antenna (close to the core and least flagged)
+            max-uv:
+                dtype: float
+                info: The maximum uv coordinate in the MS.

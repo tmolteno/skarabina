@@ -2,6 +2,18 @@ _include:
     - (skarabina):
         - skarabina.yml
 
+cabs:
+    echo:
+        command: echo
+        info: An echo cab
+        inputs:
+            args:
+                dtype: Union[str, List[str]]
+                required: true
+                policies:
+                    positional: true
+                    repeat: false
+
 my-recpipe:
     info: "Print a flagging summary using skarabina"
     inputs:
@@ -13,3 +25,10 @@ my-recpipe:
             params:
                 ms: =recipe.ms
                 summary: true
+
+        print-1:
+            cab: echo
+            info: Write out the information
+            params:
+                args:
+                    - =previous.max-uv

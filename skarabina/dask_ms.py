@@ -32,7 +32,7 @@ class DaskMS:
         logger.info(self.datasets)
 
         self.ds = self.datasets[0]
-        self.flag = self.ds.FLAG
+        self.flag = da.asarray(self.ds.FLAG)
         self.flag_row = da.asarray(self.ds.FLAG_ROW)
         print(f"FLAG_ROW = {self.ds.FLAG_ROW}")
         self.antenna1 = da.asarray(self.ds.ANTENNA1)
@@ -70,16 +70,50 @@ class DaskMS:
         '''
         print(f"flag_uv_above: {uv_limit}")
         abs_uv = self.u_arr*self.u_arr + self.v_arr*self.v_arr
-        logger.info(f" flags: {self.flag.shape} dims: {self.flag.dims}")
+        logger.info(f" data: {self.data.shape} dims: {self.ds.DATA.dims}")
+        logger.info(f" abs_uv: {abs_uv.shape}")
+        logger.info(f" uvw: {self.ds.UVW.shape} dims: {self.ds.UVW.dims}")
+        logger.info(f" flags: {self.ds.FLAG.shape} dims: {self.ds.FLAG.dims}")
         logger.info(f" row_flags: {self.flag_row.shape} dims: {self.ds.FLAG_ROW.dims}")
 
         uv_flag_mask = da.greater(abs_uv, uv_limit*uv_limit)
+        logger.info(f" uv_flag_mask: {uv_flag_mask.shape}")
         new_flag_row = da.logical_or(uv_flag_mask, self.flag_row)
         print(f"abs_uv: {da.sqrt(da.max(abs_uv)).compute()}")
         print(f"uv_flag_mask: {da.sum(new_flag_row).compute()}")
         self.ds['FLAG_ROW'] = (self.ds.FLAG_ROW.dims, new_flag_row)
 
         self.changed['FLAG_ROW'] = True
+
+    def flag_data(self, operations={}):
+        '''
+            flag_data: Flag all NAN visibilities.
+        '''
+        abs_vis = da.abs(self.data)
+        update = False
+
+        old_flags = self.flag
+        if 'NAN' in operations:
+            nan_flag_mask = da.isnan(abs_vis)
+            nan_updated_flags = da.logical_or(nan_flag_mask, old_flags)
+            update = True
+        else:
+            nan_updated_flags = old_flags
+
+        if 'CLIP' in operations:
+            clip_min, clip_max = operations['CLIP']
+            min_flag_mask = da.less_equal(abs_vis, clip_min)
+            max_flag_mask = da.greater_equal(abs_vis, clip_max)
+            clip_flag_mask = da.logical_or(min_flag_mask, max_flag_mask)
+            clip_updated_flags = da.logical_or(clip_flag_mask, nan_updated_flags)
+            update = True
+        else:
+            clip_updated_flags = nan_updated_flags
+
+        if update:
+            self.ds['FLAG'].data = clip_updated_flags
+            self.changed['FLAG'] = True
+
 
     def summary(self):
         num_flagged = da.sum(self.ds.FLAG)
@@ -89,16 +123,44 @@ class DaskMS:
         percent = 100.0 * (num_flagged/total)
         rows_percent = 100.0 * (rows_flagged/rows_total)
 
+        abs_uv = da.sqrt(self.u_arr*self.u_arr + self.v_arr*self.v_arr)
+        percentile_inputs = [25, 33, 50, 75, 95, 100]
+        percentile_values = da.percentile(abs_uv.flatten(), percentile_inputs)
+
+
         with ProgressBar():
-            num_flagged, rows_flagged, \
+            percentile_values, num_flagged, rows_flagged, \
                 total, rows_total, percent, \
-                rows_percent = dask.compute(num_flagged, rows_flagged,
+                rows_percent = dask.compute(percentile_values, num_flagged, rows_flagged,
                                             total, rows_total, percent,
                                             rows_percent)
 
         print(f"Flagging Summary ({self.name}): {percent} % - {num_flagged}/{total}.")
         print(f"    flags: {percent:4.2f} % - {num_flagged}/{total}.")
         print(f"    rows: {rows_percent:4.2f} % - {rows_flagged}/{rows_total}.")
+        print(f"    max-uv: {percentile_values[-1]:4.2f}")
+        print("    UV-Percentiles: ")
+        for p, v in zip(percentile_inputs, percentile_values):
+            print(f"        {p:6f}: \t{v:7.2f}")
+
+    def optimize(self):
+        '''
+            Run through the flags, and remove all completely flagged rows.
+        '''
+        print(f"Remove all flagged rows...")
+        unflagged_rows = da.logical_not(self.ds['FLAG_ROW'])
+        n_unflagged = da.sum(unflagged_rows)
+        print(f"Unflagged Rows: {n_unflagged.compute()}")
+
+        new_data = self.data[unflagged_rows, :, :]
+        print(f"New Data Shape: {new_data.shape}")
+        new_flag_row = da.zeros_like(self.ds.FLAG_ROW)
+        self.ds['FLAG_ROW'] = (self.ds.FLAG_ROW.dims, new_flag_row)
+        self.ds['DATA'] = (self.ds.DATA.dims, new_data)
+
+        self.changed['DATA'] = True
+        self.changed['FLAG_ROW'] = True
+
 
     def write_new_ms(self, name, clobber):
         '''
