@@ -155,6 +155,27 @@ class DaskMS:
         percent = 100.0 * (num_flagged / total)
         rows_percent = 100.0 * (rows_flagged / rows_total)
 
+        # Histogram of unflagged visibilities per row
+        n_unflagged = da.sum(da.logical_not(self.ds.FLAG.data), axis=(1, 2))
+        n_flagged_per_row = da.sum(self.ds.FLAG.data, axis=(1, 2))
+        max_per_row = da.prod(da.array(self.ds.FLAG.shape[1:]))
+        frac = n_unflagged / max_per_row
+        bins = [
+            da.sum(frac == 0.0),
+            da.sum((frac > 0.0) & (frac <= 0.25)),
+            da.sum((frac > 0.25) & (frac <= 0.50)),
+            da.sum((frac > 0.50) & (frac <= 0.75)),
+            da.sum((frac > 0.75) & (frac < 1.0)),
+            da.sum(frac == 1.0),
+        ]
+        min_unflagged = da.min(n_unflagged)
+        max_unflagged = da.max(n_unflagged)
+        min_flagged = da.min(n_flagged_per_row)
+        max_flagged = da.max(n_flagged_per_row)
+        total_per_row = n_unflagged + n_flagged_per_row
+        min_total_per_row = da.min(total_per_row)
+        max_total_per_row = da.max(total_per_row)
+
         abs_uv = da.sqrt(self.u_arr * self.u_arr + self.v_arr * self.v_arr)
         percentile_inputs = [25, 33, 50, 75, 95, 100]
         percentile_values = da.percentile(abs_uv.flatten(), percentile_inputs)
@@ -168,6 +189,14 @@ class DaskMS:
                 rows_total,
                 percent,
                 rows_percent,
+                bins,
+                min_unflagged,
+                max_unflagged,
+                min_flagged,
+                max_flagged,
+                max_per_row,
+                min_total_per_row,
+                max_total_per_row,
             ) = dask.compute(
                 percentile_values,
                 num_flagged,
@@ -176,6 +205,14 @@ class DaskMS:
                 rows_total,
                 percent,
                 rows_percent,
+                bins,
+                min_unflagged,
+                max_unflagged,
+                min_flagged,
+                max_flagged,
+                max_per_row,
+                min_total_per_row,
+                max_total_per_row,
             )
 
         print(f"Flagging Summary ({self.name}): {percent} % - {num_flagged}/{total}.")
@@ -185,6 +222,27 @@ class DaskMS:
         print("    UV-Percentiles: ")
         for p, v in zip(percentile_inputs, percentile_values):
             print(f"        {p:6f}: \t{v:7.2f}")
+        print("    Row flagging histogram (% of visibilities unflagged):")
+        labels = ["   0%", " 1-25%", "26-50%", "51-75%", "76-99%", "  100%"]
+        for label, count in zip(labels, bins):
+            pct = 100.0 * int(count) / int(rows_total) if int(rows_total) > 0 else 0.0
+            bar = "#" * max(1, int(pct / 2))
+            print(f"        {label}: {int(count):8d} ({pct:5.1f}%) {bar}")
+        print(
+            f"    Visibilities per row: {int(max_per_row)} total"
+            f" (unflagged: min={int(min_unflagged)}, max={int(max_unflagged)};"
+            f" flagged: min={int(min_flagged)}, max={int(max_flagged)})",
+        )
+        if int(min_total_per_row) == int(max_total_per_row):
+            print(
+                f"    Row size check: all rows consistent"
+                f" ({int(min_total_per_row)} elements each)"
+            )
+        else:
+            print(
+                f"    Row size check: INCONSISTENT —"
+                f" min={int(min_total_per_row)}, max={int(max_total_per_row)}"
+            )
 
     def optimize(self):
         """
