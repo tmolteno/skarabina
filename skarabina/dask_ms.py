@@ -68,11 +68,14 @@ class DaskMS:
 
         # Load channel frequencies from SPECTRAL_WINDOW subtable (Hz)
         self.chan_freq_hz = None
+        self.nspw = 0
         for s in self.sub_table_names:
             if "SPECTRAL_WINDOW" in s:
                 try:
                     sw = table(s, ack=False)
-                    self.chan_freq_hz = sw.getcol("CHAN_FREQ")[0]
+                    chan_freq = sw.getcol("CHAN_FREQ")
+                    self.nspw = chan_freq.shape[0]
+                    self.chan_freq_hz = chan_freq[0]
                     sw.close()
                 except Exception:
                     logger.warning("Could not read CHAN_FREQ from %s", s)
@@ -335,6 +338,17 @@ class DaskMS:
             print(
                 f"    Row size check: INCONSISTENT —"
                 f" min={int(min_total_per_row)}, max={int(max_total_per_row)}"
+            )
+        if self.chan_freq_hz is not None:
+            nchan = len(self.chan_freq_hz)
+            fmin = self.chan_freq_hz[0] / 1e6
+            fmax = self.chan_freq_hz[-1] / 1e6
+            bw = fmax - fmin
+            print(
+                f"    Spectral windows: {self.nspw}"
+                f" (channels: {nchan},"
+                f" {fmin:.3f}–{fmax:.3f} MHz,"
+                f" bandwidth: {bw:.1f} MHz)"
             )
 
     def optimize(self):
