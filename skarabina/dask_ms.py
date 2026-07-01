@@ -353,15 +353,18 @@ class DaskMS:
 
     def optimize(self):
         """
-        Run through the flags, and remove all completely flagged rows.
+        Run through the flags, and remove all completely flagged rows
+        and channels.
 
         A row is removed if either:
         - FLAG_ROW is True (explicitly marked as bad), or
-        - Every individual visibility in FLAG is True (all channels × correlations flagged).
+        - Every individual visibility in FLAG is True (all channels ×
+          correlations flagged).
 
-        All row-indexed columns are filtered consistently.
+        A channel is removed if all rows and all correlations are flagged
+        for that channel (e.g. after flag_spectral_window).
         """
-        print("Remove all flagged rows...")
+        print("Remove all flagged rows and channels...")
 
         # Rows explicitly flagged via FLAG_ROW
         row_flagged = self.ds["FLAG_ROW"].data  # (nrow,)
@@ -370,9 +373,14 @@ class DaskMS:
         # FLAG shape: (nrow, nchan, ncorr) → all over chan (axis=1) and corr (axis=2) → (nrow,)
         all_data_flagged = da.all(self.ds["FLAG"].data, axis=(1, 2))
 
+        # Channels where all rows and correlations are flagged.
+        # FLAG shape: (nrow, nchan, ncorr) → all over row (axis=0) and corr (axis=2) → (nchan,)
+        chan_fully_flagged = da.all(self.ds["FLAG"].data, axis=(0, 2))
+
         # Combined: a row is removed if EITHER condition is true
         is_flagged = da.logical_or(row_flagged, all_data_flagged)
         unflagged_rows = da.logical_not(is_flagged)
+        keep_channels = da.logical_not(chan_fully_flagged)
 
         # Compute all statistics in one pass
         n_overlap = da.sum(da.logical_and(row_flagged, all_data_flagged))
@@ -383,6 +391,8 @@ class DaskMS:
             n_combined,
             n_unflagged,
             n_overlap,
+            n_chan_total,
+            n_chan_flagged,
         ) = dask.compute(
             row_flagged.size,
             da.sum(row_flagged),
@@ -390,6 +400,8 @@ class DaskMS:
             da.sum(is_flagged),
             da.sum(unflagged_rows),
             n_overlap,
+            chan_fully_flagged.size,
+            da.sum(chan_fully_flagged),
         )
 
         n_extra = int(n_all_data_flagged) - int(n_overlap)
@@ -400,32 +412,42 @@ class DaskMS:
         print(f"  Combined to remove: {int(n_combined):8d}")
         print(f"  Remaining:          {int(n_unflagged):8d}")
         print(f"  Extra rows caught by all(FLAG) check: {n_extra}")
+        print(f"  Fully-flagged channels: {int(n_chan_flagged)} / {int(n_chan_total)}")
 
         if int(n_unflagged) == 0:
             raise RuntimeError(
                 "No unflagged rows remain after optimize — nothing to write"
             )
 
-        # Find the row dimension name from DATA (typically "row")
+        if int(n_chan_flagged) == int(n_chan_total):
+            raise RuntimeError("All channels fully flagged — nothing to write")
+
+        # Find dimension names from DATA (typically "row", "chan")
         row_dim = self.ds.DATA.dims[0]
+        chan_dim = self.ds.DATA.dims[1]
 
-        # Materialize the mask and convert to integer indices.
-        # We use isel (integer indexing) rather than boolean indexing
-        # because assigning variables one-by-one with boolean masks
-        # causes xarray dimension conflicts: the first assigned variable
-        # shrinks the row dimension, then subsequent variables fail.
-        # isel filters all variables atomically in one operation.
-        keep_mask = unflagged_rows.compute()
-        keep_indices = np.nonzero(keep_mask)[0]
+        # Build indexers for rows and channels
+        keep_row_mask = unflagged_rows.compute()
+        keep_row_idx = np.nonzero(keep_row_mask)[0]
 
-        self.ds = self.ds.isel({row_dim: keep_indices})
+        isel_indexers = {row_dim: keep_row_idx}
 
-        # Mark all row-indexed variables as changed
+        if int(n_chan_flagged) > 0:
+            keep_chan_mask = keep_channels.compute()
+            keep_chan_idx = np.nonzero(keep_chan_mask)[0]
+            isel_indexers[chan_dim] = keep_chan_idx
+
+        self.ds = self.ds.isel(isel_indexers)
+
+        # Mark all changed variables
         for var_name in self.ds.data_vars:
             if row_dim in self.ds[var_name].dims:
                 self.changed[var_name] = True
 
-        print(f"Optimize complete. New row count: {int(n_unflagged)}")
+        print(
+            f"Optimize complete."
+            f" Rows: {int(n_unflagged)}, Channels: {int(n_chan_total) - int(n_chan_flagged)}"
+        )
 
     def write_new_ms(self, name, clobber):
         """
