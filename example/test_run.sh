@@ -5,6 +5,7 @@ uv run skarabina \
     --flag-uv-above 1000 \
     --flag-spectral-window spectral-flags.example.yml \
     --time-average-factor 3 \
+    --frequency-average-factor 20 \
     --optimize \
     --msout test_spw.ms \
     --clobber \
