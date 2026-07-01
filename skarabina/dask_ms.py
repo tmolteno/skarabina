@@ -531,6 +531,22 @@ class DaskMS:
                     _reshape(self.ds[col].data, s)[:, 0],
                 )
 
+        # Subsample every other row-indexed variable not handled above
+        # (e.g. FEED1, PROCESSOR_ID, STATE_ID, etc.).  We take every
+        # <factor>-th row so all variables end up with the same row count.
+        for var_name in self.ds.data_vars:
+            if var_name in updates:
+                continue
+            var = self.ds[var_name]
+            if row_dim not in var.dims:
+                continue
+            row_axis = var.dims.index(row_dim)
+            indexer = tuple(
+                slice(0, trim, factor) if i == row_axis else slice(None)
+                for i in range(len(var.dims))
+            )
+            updates[var_name] = (var.dims, var.data[indexer])
+
         # Apply all updates at once to avoid dimension conflicts
         self.ds = self.ds.assign(updates)
         for col in updates:
