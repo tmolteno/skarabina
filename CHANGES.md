@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-07-02
+
+### Fixed
+
+- `skarabina/dask_ms.py` — `optimize()`: materialize the row keep-mask before filtering columns. Dask boolean indexing produces unknown chunk sizes (`nan`), which xarray rejects at assignment time with "conflicting sizes for dimension 'row'".
+
 ## [0.2.2] - 2026-07-02
 
 ### Changed

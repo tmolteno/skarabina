@@ -212,17 +212,22 @@ class DaskMS:
         # Find the row dimension name from DATA (typically "row")
         row_dim = self.ds.DATA.dims[0]
 
+        # Materialize the mask now — dask boolean indexing produces
+        # unknown chunk sizes, which xarray rejects at assignment.
+        # A boolean mask of shape (nrow,) is small enough to hold in memory.
+        keep_mask = unflagged_rows.compute()
+
         # Filter every variable that depends on the row dimension
         for var_name in list(self.ds.data_vars):
             var = self.ds[var_name]
             if row_dim not in var.dims:
                 continue  # Skip non-row-indexed variables
 
-            # Build an indexer tuple: use unflagged_rows for the row axis,
+            # Build an indexer tuple: use keep_mask for the row axis,
             # slice(None) for all other axes.
             row_axis = var.dims.index(row_dim)
             indexer = tuple(
-                unflagged_rows if i == row_axis else slice(None)
+                keep_mask if i == row_axis else slice(None)
                 for i in range(len(var.dims))
             )
 
