@@ -67,23 +67,31 @@ class DaskMS:
 
     def flag_uv_above(self, uv_limit):
         """
-        uv_limit: Remove uv values below this threshold.
+        Flag rows where sqrt(u^2 + v^2) exceeds uv_limit.
         """
-        logger.info(f"flag_uv_above: {uv_limit}")
+        logger.info("flag_uv_above: %.1f wavelengths", uv_limit)
+
         abs_uv = self.u_arr * self.u_arr + self.v_arr * self.v_arr
-        logger.info(f" data: {self.data.shape} dims: {self.ds.DATA.dims}")
-        logger.info(f" abs_uv: {abs_uv.shape}")
-        logger.info(f" uvw: {self.ds.UVW.shape} dims: {self.ds.UVW.dims}")
-        logger.info(f" flags: {self.ds.FLAG.shape} dims: {self.ds.FLAG.dims}")
-        logger.info(f" row_flags: {self.flag_row.shape} dims: {self.ds.FLAG_ROW.dims}")
-
         uv_flag_mask = da.greater(abs_uv, uv_limit * uv_limit)
-        logger.info(f" uv_flag_mask: {uv_flag_mask.shape}")
         new_flag_row = da.logical_or(uv_flag_mask, self.flag_row)
-        logger.info(f"abs_uv: {da.sqrt(da.max(abs_uv)).compute()}")
-        logger.info(f"uv_flag_mask: {da.sum(new_flag_row).compute()}")
-        self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, new_flag_row)
 
+        n_old = da.sum(self.flag_row)
+        n_new = da.sum(new_flag_row)
+        n_uv = da.sum(uv_flag_mask)
+        max_uv = da.sqrt(da.max(abs_uv))
+
+        n_old_v, n_new_v, n_uv_v, max_uv_v = dask.compute(n_old, n_new, n_uv, max_uv)
+
+        n_added = int(n_new_v) - int(n_old_v)
+        logger.info("flag_uv_above: max UV distance = %.1f wavelengths", max_uv_v)
+        logger.info(
+            "flag_uv_above: %d rows above uv limit, %d newly flagged (total: %d)",
+            int(n_uv_v),
+            n_added,
+            int(n_new_v),
+        )
+
+        self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, new_flag_row)
         self.changed["FLAG_ROW"] = True
 
     def flag_data(self, operations=None):
