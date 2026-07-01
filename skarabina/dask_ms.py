@@ -460,6 +460,7 @@ class DaskMS:
             " → %d rows (discarding %d trailing rows)" % (factor, n_new, nrow - trim)
         )
 
+        row_dim = self.ds.DATA.dims[0]
         shape_3d = (n_new, factor, self.ds.FLAG.shape[1], self.ds.FLAG.shape[2])
         shape_uvw = (n_new, factor, 3)
         shape_1d = (n_new, factor)
@@ -467,36 +468,25 @@ class DaskMS:
         def _reshape(arr, shape):
             return arr[:trim].reshape(shape)
 
-        # Collect all updated variables before assigning,
-        # to avoid xarray dimension conflicts.
-        updates = {}
-        row_dim = self.ds.DATA.dims[0]
-
-        # DATA: average only unflagged visibilities
+        # Step 1: compute averaged arrays from the ORIGINAL data.
+        # We do this before isel because reshaping needs n_new*factor rows.
+        averaged = {}
         if "DATA" in self.ds.data_vars:
             d = _reshape(self.ds["DATA"].data, shape_3d)
             f = _reshape(self.ds["FLAG"].data, shape_3d)
             d_masked = da.where(f, 0j, d)
             n_unflagged = da.sum(da.logical_not(f), axis=1)
             n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
-            updates["DATA"] = (
-                self.ds["DATA"].dims,
-                da.sum(d_masked, axis=1) / n_safe,
-            )
+            averaged["DATA"] = da.sum(d_masked, axis=1) / n_safe
 
-        # WEIGHT_SPECTRUM: same logic
         if "WEIGHT_SPECTRUM" in self.ds.data_vars:
             w = _reshape(self.ds["WEIGHT_SPECTRUM"].data, shape_3d)
             f = _reshape(self.ds["FLAG"].data, shape_3d)
             w_masked = da.where(f, 0, w)
             n_unflagged = da.sum(da.logical_not(f), axis=1)
             n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
-            updates["WEIGHT_SPECTRUM"] = (
-                self.ds["WEIGHT_SPECTRUM"].dims,
-                da.sum(w_masked, axis=1) / n_safe,
-            )
+            averaged["WEIGHT_SPECTRUM"] = da.sum(w_masked, axis=1) / n_safe
 
-        # UVW, TIME, INTERVAL, EXPOSURE: simple average (per-row metadata)
         for col, s in [
             ("UVW", shape_uvw),
             ("TIME", shape_1d),
@@ -504,69 +494,33 @@ class DaskMS:
             ("EXPOSURE", shape_1d),
         ]:
             if col in self.ds.data_vars:
-                updates[col] = (
-                    self.ds[col].dims,
-                    da.mean(_reshape(self.ds[col].data, s), axis=1),
-                )
+                averaged[col] = da.mean(_reshape(self.ds[col].data, s), axis=1)
 
-        # FLAG columns: OR (any flagged → flagged)
         for col, s in [
             ("FLAG", shape_3d),
             ("FLAG_ROW", shape_1d),
         ]:
             if col in self.ds.data_vars:
-                updates[col] = (
-                    self.ds[col].dims,
-                    da.any(_reshape(self.ds[col].data, s), axis=1),
-                )
+                averaged[col] = da.any(_reshape(self.ds[col].data, s), axis=1)
 
-        # ANTENNA: take first of each block
         for col, s in [
             ("ANTENNA1", shape_1d),
             ("ANTENNA2", shape_1d),
         ]:
             if col in self.ds.data_vars:
-                updates[col] = (
-                    self.ds[col].dims,
-                    _reshape(self.ds[col].data, s)[:, 0],
-                )
+                averaged[col] = _reshape(self.ds[col].data, s)[:, 0]
 
-        # Subsample every other row-indexed variable not handled above
-        # (e.g. FEED1, PROCESSOR_ID, STATE_ID, etc.).  We take every
-        # <factor>-th row so all variables end up with the same row count.
-        for var_name in self.ds.data_vars:
-            if var_name in updates:
-                continue
-            var = self.ds[var_name]
-            if row_dim not in var.dims:
-                continue
-            row_axis = var.dims.index(row_dim)
-            indexer = tuple(
-                slice(0, trim, factor) if i == row_axis else slice(None)
-                for i in range(len(var.dims))
-            )
-            updates[var_name] = (var.dims, var.data[indexer])
+        # Step 2: subsample the dataset to keep every <factor>-th row.
+        # isel gives consistent dimensions and chunking (no conflicts).
+        keep_idx = np.arange(0, trim, factor)
+        self.ds = self.ds.isel({row_dim: keep_idx})
 
-        # Also subsample row-indexed coordinates (e.g. ROWID)
-        for coord_name, coord in self.ds.coords.items():
-            if row_dim in coord.dims:
-                row_axis = coord.dims.index(row_dim)
-                indexer = tuple(
-                    slice(0, trim, factor) if i == row_axis else slice(None)
-                    for i in range(len(coord.dims))
-                )
-                updates[coord_name] = (coord.dims, coord.data[indexer])
-
-        # Apply all updates at once.  We construct a fresh Dataset rather
-        # than using .assign(), because .assign() merges the updates with
-        # the original data_vars (which still have the old row count),
-        # causing dimension conflicts.
-        import xarray as xr
-
-        self.ds = xr.Dataset(updates, attrs=self.ds.attrs)
-        for col in updates:
-            if row_dim in self.ds[col].dims:
-                self.changed[col] = True
+        # Step 3: replace the averaged columns.  Since isel already
+        # reduced all variables to n_new rows, per-column assignment
+        # against the same row count is safe.
+        for col, arr in averaged.items():
+            self.ds[col] = (self.ds[col].dims, arr)
+            self.changed[col] = True
 
     def optimize(self):
         """
