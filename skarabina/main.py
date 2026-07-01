@@ -48,7 +48,7 @@ def main(**kw):
 
     if opts.flag_uv_above is not None:
         # Set the flag Variable on first Dataset to it's inverse
-        print(f"uv_above {opts.flag_uv_above}")
+        print(f"uv_above {opts.flag_uv_above} m")
         ms.flag_uv_above(opts.flag_uv_above)
 
     flag_data_operations = {}
