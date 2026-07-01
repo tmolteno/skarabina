@@ -26,9 +26,9 @@ class DaskMS:
         t = table(self.name)
         self.sub_table_names = t.getsubtables()
         t.close()
-        logger.info("Sub-table Names:")
+        logger.debug("Sub-table Names:")
         for s in self.sub_table_names:
-            logger.info(f"    {s}")
+            logger.debug(f"    {s}")
 
         self.datasets = xds_from_ms(self.name)
         logger.debug(self.datasets)
