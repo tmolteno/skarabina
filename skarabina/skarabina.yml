@@ -1,83 +1,68 @@
 _include:
-    - genesis/skarabina-base.yml
+  - genesis/skarabina-base.yml
 
 cabs:
-    skarabina:
-        info: 'skarabina (dung beetle) -- A basic 1GC flagger'
-        backend:
-            native:
-                virtual_env: ~/github/skarabina/venv
-        #
-        # image:
-        #     _use: vars.skarabina.images
-        #     name: skarabina
-        command: skarabina
-        inputs:
-            ms:
-                dtype: MS
-                info: The input measurement set
-                required: true
-            summary:
-                dtype: bool
-                info: Print the flagging summary
-                default: false
-            optimize:
-                dtype: bool
-                info: Opotimize the size of the measurement set while keeping all rows of equal length.
-                default: false
-            clobber:
-                dtype: bool
-                info: Replace the output measurement set
-                default: false
-            barber:
-                dtype: bool
-                info: Perform barber flagging (removes fringes in a jiffy)
-            barber.pol:
-                dtype: int
-                info: Polarization selection for barber.
-            apply:
-                dtype: bool
-                default: false
-            flag:
-                uv-above:
-                    dtype: float
-                    info: Flag UVW above this limit.
-                nan:
-                    dtype: bool
-                    info: Flag NaN
-                zero:
-                    dtype: bool
-                    info: Flag Zero.
-                clip:
-                    dtype: Tuple[float, float]
-                    info: Flag clip.
-            freq:
-                dtype: List[Tuple[float, float]]
-                info: |-
-                    "Flag this list of frequency channels (lower - upper). Eg"
-                    "freq_flag:"
-                    "    - 850,900          # Lower band edge   "
-                    "    - 1658-1800,       # Upper bandpass edge "
-                    "    - 1419.8~1421.3    # Galactic HI "
-                    ""
-            chan-bin:
-                dtype: int
-                info: Average the flagged channels.
-            # field:
-            #     dtype: List[int]
-            #     info: Use this FIELD_ID from the measurement set
-            debug:
-                info: Switch on debugging output
-                dtype: bool
-                default: false
-        outputs:
-            msout:
-                dtype: MS
-                info: The output measurement set
-                required: false
-            reference-antenna:
-                dtype: int
-                info: A recommended reference antenna (close to the core and least flagged)
-            max-uv:
-                dtype: float
-                info: The maximum uv coordinate in the MS.
+  skarabina:
+    info: "skarabina (dung beetle) -- A basic 1GC flagger"
+    backend:
+      native:
+        virtual_env: ~/github/skarabina/venv
+    #
+    # image:
+    #     _use: vars.skarabina.images
+    #     name: skarabina
+    command: skarabina
+    inputs:
+      ms:
+        dtype: MS
+        info: The input measurement set
+        required: true
+      summary:
+        dtype: bool
+        info: Print the flagging summary
+        default: false
+      optimize:
+        dtype: bool
+        info: Opotimize the size of the measurement set while keeping all rows of equal length.
+        default: false
+      clobber:
+        dtype: bool
+        info: Replace the output measurement set
+        default: false
+      barber:
+        dtype: bool
+        info: Perform barber flagging (removes fringes in a jiffy)
+      barber.pol:
+        dtype: int
+        info: Polarization selection for barber.
+      apply:
+        dtype: bool
+        default: false
+      flag:
+        uv-above:
+          dtype: float
+          info: Flag UVW above this limit.
+        nan:
+          dtype: bool
+          info: Flag NaN
+        clip:
+          dtype: Tuple[float, float]
+          info: Flag clip.
+      # field:
+      #     dtype: List[int]
+      #     info: Use this FIELD_ID from the measurement set
+      debug:
+        info: Switch on debugging output
+        dtype: bool
+        default: false
+    outputs:
+      msout:
+        dtype: MS
+        info: The output measurement set
+        required: false
+      reference-antenna:
+        dtype: int
+        info: A recommended reference antenna (close to the core and least flagged)
+      max-uv:
+        dtype: float
+        info: The maximum uv coordinate in the MS.

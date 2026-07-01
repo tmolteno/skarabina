@@ -31,8 +31,14 @@ The following will write a new measurement set.
     
 ## Build
 
-    pip install poetry
-    poetry install
+Install [uv](https://docs.astral.sh/uv/), then sync the project (creates a virtual
+environment and installs skarabina in editable mode):
+
+    uv sync
+
+Build distributables:
+
+    uv build
 
 ## Stimela
 

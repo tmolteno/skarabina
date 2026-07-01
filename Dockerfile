@@ -1,28 +1,29 @@
 FROM python:3.11-slim AS base
-RUN apt update && apt install -y curl
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv for dependency management and packaging
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# uv configuration:
+#   Install into the system interpreter so the `skarabina` console script is on PATH.
 ENV PYTHONFAULTHANDLER=1 \
-  PYTHONUNBUFFERED=1 \
-  PYTHONHASHSEED=random \
-  PIP_NO_CACHE_DIR=off \
-  PIP_DISABLE_PIP_VERSION_CHECK=on \
-  PIP_DEFAULT_TIMEOUT=100 \
-  # Poetry's configuration:
-  POETRY_NO_INTERACTION=1 \
-  POETRY_VIRTUALENVS_CREATE=false \
-  POETRY_CACHE_DIR='/var/cache/pypoetry' \
-  POETRY_HOME='/usr/local' \
-  POETRY_VERSION=2.1.3
-
-RUN curl -sSL https://install.python-poetry.org | python3 -
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    UV_PROJECT_ENVIRONMENT=/usr/local \
+    UV_LINK_MODE=copy
 
 WORKDIR /code
-COPY poetry.lock pyproject.toml .
-RUN poetry install --no-root
 
+# Resolve and install dependencies first for better layer caching.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
+
+# Add the project source and install it.
 ADD skarabina/ skarabina/
 COPY README.md ./
-RUN ls -l
-RUN poetry install
+RUN uv sync --frozen
 
 ENTRYPOINT ["/bin/bash"]
