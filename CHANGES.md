@@ -24,6 +24,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `skarabina/dask_ms.py` — `write_new_ms()` now deep-copies all subtables (SPECTRAL_WINDOW, ANTENNA, etc.) to the output MS. Previously only the main table was written, so `CHAN_FREQ` and other subtable metadata were missing from `--msout`.
 - Suppressed casacore C++ stderr noise (`SORT_COLUMNS`, `SORT_ORDER`) during subtable copy unless `--debug` is set.
 
+## [0.4.0] - 2026-07-02
+
+### Added
+
+- `--flag-spectral-window` CLI option: YAML-driven frequency flagging with optional per-entry UV constraints. Includes `spectral-flags.example.yml` with band-edge, Galactic HI, and short-baseline RFI rules.
+- `--time-average-factor N` CLI option: averages every N consecutive rows (mean for DATA/UVW using only unflagged visibilities, OR for FLAG, sum for INTERVAL). Runs before `--optimize`.
+- `--field-of-view` CLI option in degrees (default 1°): sets the half-width from phase centre used in the fringe-rotation integration time limit.
+- `skarabina/dask_ms.py` — `summary()` now reports the fringe-rotation max integration time at 1%, 3%, and 5% amplitude loss, using the Wijnholds (2018, MNRAS) formula: Δt_max = c·√(6L) / (π·ω⊕·B_max·ν_max·ℓ).
+- `skarabina/dask_ms.py` — `summary()` now reports the current integration time from the MS `INTERVAL` or `EXPOSURE` column.
+- `skarabina/dask_ms.py` — `summary()` now includes a row-level flagging histogram (% of unflagged visibilities per row) and a row-size consistency check.
+- `AVERAGING.md` documenting the fringe-rotation formula with example values.
+- Unit tests for the fringe-rotation integration time formula (11 tests).
+
+### Changed
+
+- `skarabina/dask_ms.py` — `time_average()` averages only unflagged visibilities (flagged entries are excluded from the mean). INTERVAL and EXPOSURE are summed (not averaged).
+- `skarabina/main.py` — pipeline reorganized with explicit section markers; `optimize()` and `time_average()` are guaranteed to run after all flagging.
+
+### Fixed
+
+- `skarabina/dask_ms.py` — `time_average()`: multiple fixes for xarray dimension conflicts (isel-first then column replacement with rechunking) and ROWID coordinate subsampling.
+
 ## [0.2.4] - 2026-07-02
 
 ### Added
