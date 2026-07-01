@@ -368,6 +368,26 @@ class DaskMS:
                 f" bandwidth: {bw:.1f} MHz)"
             )
 
+        # Field listing
+        print("    Fields:")
+        field_names = {}
+        for s in self.sub_table_names:
+            if s.endswith("/FIELD"):
+                try:
+                    ft = table(s, ack=False)
+                    names = ft.getcol("NAME")
+                    ft.close()
+                    for i, name in enumerate(names):
+                        field_names[i] = name.strip()
+                except Exception:
+                    pass
+        field_ids = self.ds.FIELD_ID.data
+        unique_ids = da.unique(field_ids).compute()
+        for fid in sorted(unique_ids):
+            n = int(da.sum(field_ids == fid).compute())
+            name = field_names.get(int(fid), f"FIELD_ID={fid}")
+            print(f"        {fid}: {name:20s} {n:8d} rows")
+
     def optimize(self):
         """
         Run through the flags, and remove all completely flagged rows
