@@ -1,3 +1,4 @@
+# Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 import logging
 import os
 import shutil
@@ -20,7 +21,7 @@ class DaskMS:
         if not os.path.exists(ms_name):
             raise RuntimeError(f"Measurement set {self.name} not found")
 
-        ## Some casacore bits here
+        # Some casacore bits here
         t = table(self.name)
         self.sub_table_names = t.getsubtables()
         t.close()
@@ -93,10 +94,13 @@ class DaskMS:
             operations = {}
         abs_vis = da.abs(self.data)
         update = False
+        n_nan = 0
+        n_clip = 0
 
         old_flags = self.flag
         if "NAN" in operations:
             nan_flag_mask = da.isnan(abs_vis)
+            n_nan = da.sum(nan_flag_mask)
             nan_updated_flags = da.logical_or(nan_flag_mask, old_flags)
             update = True
         else:
@@ -107,6 +111,7 @@ class DaskMS:
             min_flag_mask = da.less_equal(abs_vis, clip_min)
             max_flag_mask = da.greater_equal(abs_vis, clip_max)
             clip_flag_mask = da.logical_or(min_flag_mask, max_flag_mask)
+            n_clip = da.sum(clip_flag_mask)
             clip_updated_flags = da.logical_or(clip_flag_mask, nan_updated_flags)
             update = True
         else:
@@ -115,6 +120,24 @@ class DaskMS:
         if update:
             self.ds["FLAG"].data = clip_updated_flags
             self.changed["FLAG"] = True
+            total_vis = da.prod(da.array(self.ds.FLAG.shape))
+            n_nan_v, n_clip_v, total_v = dask.compute(n_nan, n_clip, total_vis)
+            if "NAN" in operations:
+                logger.info(
+                    "flag_data (NaN): flagged %d / %d visibilities (%.2f%%)",
+                    int(n_nan_v),
+                    int(total_v),
+                    100.0 * int(n_nan_v) / int(total_v),
+                )
+            if "CLIP" in operations:
+                logger.info(
+                    "flag_data (clip [%s, %s]): flagged %d / %d visibilities (%.2f%%)",
+                    clip_min,
+                    clip_max,
+                    int(n_clip_v),
+                    int(total_v),
+                    100.0 * int(n_clip_v) / int(total_v),
+                )
 
     def summary(self):
         num_flagged = da.sum(self.ds.FLAG)

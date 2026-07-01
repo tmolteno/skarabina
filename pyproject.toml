@@ -1,3 +1,4 @@
+# Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 [project]
 name = "skarabina"
 version = "0.2.4"
@@ -18,7 +19,7 @@ dependencies = [
 skarabina = "skarabina.main:main"
 
 [dependency-groups]
-dev = ["pytest>=8.4.0"]
+dev = ["pytest>=8.4.0", "flake8>=7.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
