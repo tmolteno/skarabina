@@ -547,8 +547,13 @@ class DaskMS:
             )
             updates[var_name] = (var.dims, var.data[indexer])
 
-        # Apply all updates at once to avoid dimension conflicts
-        self.ds = self.ds.assign(updates)
+        # Apply all updates at once.  We construct a fresh Dataset rather
+        # than using .assign(), because .assign() merges the updates with
+        # the original data_vars (which still have the old row count),
+        # causing dimension conflicts.
+        import xarray as xr
+
+        self.ds = xr.Dataset(updates, attrs=self.ds.attrs)
         for col in updates:
             if row_dim in self.ds[col].dims:
                 self.changed[col] = True
