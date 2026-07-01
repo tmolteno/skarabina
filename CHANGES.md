@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-07-02
+
+### Fixed
+
+- `skarabina/dask_ms.py` — `optimize()` was broken in two ways:
+  - Only `DATA` and `FLAG_ROW` were filtered when removing flagged rows; all other row-indexed columns (`UVW`, `TIME`, `ANTENNA1`, `ANTENNA2`, `FLAG`, `WEIGHT_SPECTRUM`, etc.) were left at their original length, causing a dimension mismatch when writing the output MS.
+  - The new `FLAG_ROW` array was created with `da.zeros_like(self.ds.FLAG_ROW)` (original row count) instead of matching the filtered row count.
+- `skarabina/dask_ms.py` — `optimize()` now also removes rows where every individual visibility in `FLAG` is set (all channels × correlations flagged), even if `FLAG_ROW` is not explicitly `True`. Previously, rows with `FLAG_ROW=False` but `FLAG=True` everywhere would be retained as noise-only garbage.
+
 ## [0.2.0] - 2026-07-01
 
 ### Changed
