@@ -490,11 +490,18 @@ class DaskMS:
         for col, s in [
             ("UVW", shape_uvw),
             ("TIME", shape_1d),
+        ]:
+            if col in self.ds.data_vars:
+                averaged[col] = da.mean(_reshape(self.ds[col].data, s), axis=1)
+
+        # INTERVAL and EXPOSURE are summed: combining N integrations
+        # multiplies the integration time by N.
+        for col, s in [
             ("INTERVAL", shape_1d),
             ("EXPOSURE", shape_1d),
         ]:
             if col in self.ds.data_vars:
-                averaged[col] = da.mean(_reshape(self.ds[col].data, s), axis=1)
+                averaged[col] = da.sum(_reshape(self.ds[col].data, s), axis=1)
 
         for col, s in [
             ("FLAG", shape_3d),
