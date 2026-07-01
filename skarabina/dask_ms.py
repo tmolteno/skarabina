@@ -447,6 +447,18 @@ class DaskMS:
         with ProgressBar():
             dask.compute(writes)
 
+        # Copy subtables (SPECTRAL_WINDOW, ANTENNA, FIELD, etc.) from
+        # the input MS.  xds_to_table only writes the main table.
+        for sub in self.sub_table_names:
+            sub_name = os.path.basename(sub)
+            dest = os.path.join(name, sub_name)
+            if os.path.exists(dest):
+                shutil.rmtree(dest)
+            t = table(sub, ack=False)
+            t.copy(dest, deep=True)
+            t.close()
+            logger.debug("  copied subtable %s", sub_name)
+
     def update_ms(self, name, clobber):
         """
         Update MS in place
