@@ -4,6 +4,7 @@ import shutil
 
 import dask
 import dask.array as da
+import numpy as np
 from casacore.tables import table
 from dask.diagnostics import ProgressBar
 from daskms import xds_from_ms, xds_to_table
@@ -212,29 +213,21 @@ class DaskMS:
         # Find the row dimension name from DATA (typically "row")
         row_dim = self.ds.DATA.dims[0]
 
-        # Materialize the mask now — dask boolean indexing produces
-        # unknown chunk sizes, which xarray rejects at assignment.
-        # A boolean mask of shape (nrow,) is small enough to hold in memory.
+        # Materialize the mask and convert to integer indices.
+        # We use isel (integer indexing) rather than boolean indexing
+        # because assigning variables one-by-one with boolean masks
+        # causes xarray dimension conflicts: the first assigned variable
+        # shrinks the row dimension, then subsequent variables fail.
+        # isel filters all variables atomically in one operation.
         keep_mask = unflagged_rows.compute()
+        keep_indices = np.nonzero(keep_mask)[0]
 
-        # Filter every variable that depends on the row dimension
-        for var_name in list(self.ds.data_vars):
-            var = self.ds[var_name]
-            if row_dim not in var.dims:
-                continue  # Skip non-row-indexed variables
+        self.ds = self.ds.isel({row_dim: keep_indices})
 
-            # Build an indexer tuple: use keep_mask for the row axis,
-            # slice(None) for all other axes.
-            row_axis = var.dims.index(row_dim)
-            indexer = tuple(
-                keep_mask if i == row_axis else slice(None)
-                for i in range(len(var.dims))
-            )
-
-            new_data = var.data[indexer]
-            self.ds[var_name] = (var.dims, new_data)
-            self.changed[var_name] = True
-            logger.debug(f"  Filtered {var_name}: {var.shape} → {new_data.shape}")
+        # Mark all row-indexed variables as changed
+        for var_name in self.ds.data_vars:
+            if row_dim in self.ds[var_name].dims:
+                self.changed[var_name] = True
 
         logger.info(f"Optimize complete. New row count: {int(n_unflagged)}")
 

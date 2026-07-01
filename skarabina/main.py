@@ -1,6 +1,7 @@
 import datetime
 import logging
 from importlib import resources
+from importlib.metadata import version as get_version
 
 import click
 from omegaconf import OmegaConf
@@ -16,6 +17,11 @@ logger = logging.getLogger(__name__)
 
 @click.command("skarabina")
 @clickify_parameters(schemas.cabs.get("skarabina"))
+@click.version_option(
+    version=get_version("skarabina"),
+    prog_name="skarabina",
+    message="%(prog)s %(version)s",
+)
 def main(**kw):
     print("Mupati (skarabina): The 1GC flagger")
     opts = OmegaConf.create(kw)

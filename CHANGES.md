@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-07-02
+
+### Added
+
+- `--version` CLI option that prints the package version and exits.
+
+### Fixed
+
+- `skarabina/dask_ms.py` — `optimize()`: switched from per-variable boolean-index assignment to a single `isel` call. The per-variable approach caused xarray dimension conflicts: after the first variable shrank the row dimension, subsequent variables with the old row count were rejected.
+
 ## [0.2.3] - 2026-07-02
 
 ### Fixed
