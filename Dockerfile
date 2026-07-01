@@ -1,3 +1,4 @@
+# Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 FROM python:3.11-slim AS base
 
 RUN apt-get update \

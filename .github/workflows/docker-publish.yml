@@ -1,17 +1,16 @@
+# Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 name: Docker
 
 on:
   push:
-    tags: [ 'v*.*.*' ]
+    tags: ["v*.*.*"]
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
-
 jobs:
   build:
-
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -71,9 +70,9 @@ jobs:
       ## transparency data even for private images, pass --force to cosign below.
       ## https://github.com/sigstore/cosign
       #- name: Sign the published Docker image
-        #if: ${{ github.event_name != 'pull_request' }}
-        #env:
-          #COSIGN_EXPERIMENTAL: "true"
-        ## This step uses the identity token to provision an ephemeral certificate
-        ## against the sigstore community Fulcio instance.
-        #run: cosign sign ${{ steps.meta.outputs.tags }}@${{ steps.build-and-push.outputs.digest }}
+      #if: ${{ github.event_name != 'pull_request' }}
+      #env:
+      #COSIGN_EXPERIMENTAL: "true"
+      ## This step uses the identity token to provision an ephemeral certificate
+      ## against the sigstore community Fulcio instance.
+      #run: cosign sign ${{ steps.meta.outputs.tags }}@${{ steps.build-and-push.outputs.digest }}

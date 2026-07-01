@@ -1,3 +1,4 @@
+# Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 import datetime
 import logging
 from importlib import resources
@@ -26,10 +27,15 @@ def main(**kw):
     print("Mupati (skarabina): The 1GC flagger")
     opts = OmegaConf.create(kw)
 
-    level = logging.DEBUG if opts.debug else logging.ERROR
+    level = logging.DEBUG if opts.debug else logging.INFO
     logging.basicConfig(level=level)
     root = logging.getLogger()
     root.setLevel(level)
+
+    # dask-ms emits noisy warnings/tracebacks for unpopulated MS columns
+    # (MODEL_DATA shape guessing, FLAG_CATEGORY with no rows). These are
+    # harmless — the columns exist in schema but were never written to.
+    logging.getLogger("daskms").setLevel(logging.ERROR)
 
     if opts.debug:
         ts = datetime.datetime.now().timestamp()

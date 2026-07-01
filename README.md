@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Skarabina
 
 skarabina: a basic 1GC radio astronomy RFI flagger

@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -10,10 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `--version` CLI option that prints the package version and exits.
+- Copyright headers on all source files (Tim Molteno, 2025-2026).
+- `flake8` linting: dev dependency, `.flake8` config (100-char lines, E203/W503 ignored), and `make lint` target.
+
+### Changed
+
+- Default log level changed from `ERROR` to `INFO`. All operational output (`flag_uv_above`, `flag_data`, `optimize`, etc.) is now visible without `--debug`.
+- `skarabina/dask_ms.py` — `flag_data()` now reports a flag-count summary (flagged / total visibilities with percentage) for NaN and clip operations.
 
 ### Fixed
 
 - `skarabina/dask_ms.py` — `optimize()`: switched from per-variable boolean-index assignment to a single `isel` call. The per-variable approach caused xarray dimension conflicts: after the first variable shrank the row dimension, subsequent variables with the old row count were rejected.
+- `skarabina/main.py` — suppressed noisy dask-ms `WARNING`/`ERROR` log output for unpopulated MS columns (`MODEL_DATA`, `FLAG_CATEGORY`) by setting the `daskms` logger to `ERROR` level.
 
 ## [0.2.3] - 2026-07-02
 
