@@ -381,10 +381,20 @@ class DaskMS:
                         field_names[i] = name.strip()
                 except Exception:
                     pass
-        field_ids = self.ds.FIELD_ID.data
-        unique_ids = da.unique(field_ids).compute()
+
+        # FIELD_ID may be a data variable (multi-field MS) or an
+        # attribute (single-field MS).
+        if "FIELD_ID" in self.ds.data_vars:
+            field_ids = self.ds.FIELD_ID.data
+            unique_ids = da.unique(field_ids).compute()
+        else:
+            unique_ids = [int(self.ds.attrs.get("FIELD_ID", 0))]
+
         for fid in sorted(unique_ids):
-            n = int(da.sum(field_ids == fid).compute())
+            if "FIELD_ID" in self.ds.data_vars:
+                n = int(da.sum(field_ids == fid).compute())
+            else:
+                n = int(self.ds.FLAG.shape[0])
             name = field_names.get(int(fid), f"FIELD_ID={fid}")
             print(f"        {fid}: {name:20s} {n:8d} rows")
 
