@@ -8,40 +8,44 @@ correlated electric field over an integration time Δt.  As the Earth rotates,
 the geometric delay between antennas changes — this is *fringe rotation*.
 If Δt is too long the visibility amplitude decorrelates (smears).
 
-The fringe rate (rate of phase change) for a baseline *B* at frequency *ν* is:
+Following Wijnholds (2018, MNRAS), the amplitude loss for time averaging
+at an angular distance ℓ from the phase centre is:
 
-$$ f_\text{fringe} = \frac{\omega_\oplus \cdot B \cdot \nu}{c} $$
+$$ \rho = \text{sinc}\left( \frac{\pi \cdot \omega_\oplus \cdot \Delta t \cdot B \cdot \nu \cdot \ell}{c} \right) $$
 
-where:
+For small amplitude loss $L = 1 - |\rho|$:
 
-| Symbol         | Value / units               |
-|----------------|-----------------------------|
-| *ω*⊕           | 7.2921150 × 10⁻⁵ rad s⁻¹   |
-| *B*            | baseline length (m)         |
-| *ν*            | observing frequency (Hz)    |
-| *c*            | 299 792 458 m s⁻¹           |
+$$ \Delta t_\text{max} = \frac{c \cdot \sqrt{6L}}{\pi \cdot \omega_\oplus \cdot B_\text{max} \cdot \nu_\text{max} \cdot \ell} $$
 
-The phase accumulated over Δt is Δφ = 2π · *f*<sub>fringe</sub> · Δt.
-To avoid significant decorrelation we require the visibility amplitude
-|V|/|V₀| = sinc(ω⊕ B ν Δt / c) to stay close to unity, giving the
-approximate upper limit:
+| Symbol      | Value / units               |
+|-------------|-----------------------------|
+| *c*         | 299 792 458 m s⁻¹          |
+| *ω*⊕        | 7.292 115 0 × 10⁻⁵ rad s⁻¹|
+| *ℓ*         | Distance from phase centre (rad). Derived from `--field-of-view` in degrees (default 1° → 0.0175 rad). |
+| *B*<sub>max</sub> | Longest baseline (m)   |
+| *ν*<sub>max</sub> | Highest channel frequency (Hz) |
+| *L*         | Allowed amplitude loss (1% → 0.01, 3% → 0.03, 5% → 0.05) |
 
-$$ \Delta t_\text{max} \approx \frac{c}{\nu \cdot \omega_\oplus \cdot B} $$
-
-### Example values
+### Example values (ℓ = 1 rad, 1% loss)
 
 | Baseline | Frequency | Δt<sub>max</sub> |
 |----------|-----------|-------------------|
-| 100 m   | 1.4 GHz  | 29.4 s            |
-| 1 km    | 1.4 GHz  | 2.94 s            |
-| 10 km   | 1.4 GHz  | 0.294 s           |
-| 1 km    | 150 MHz  | 27.4 s            |
-| 1 km    | 5 GHz    | 0.82 s            |
+| 100 m   | 1.4 GHz  | 2.29 s            |
+| 1 km    | 1.4 GHz  | 0.229 s           |
+| 10 km   | 1.4 GHz  | 22.9 ms           |
+| 1 km    | 150 MHz  | 2.14 s            |
+| 1 km    | 5 GHz    | 64.2 ms           |
 
-### Usage in skarabina
+### Usage
 
-The `summary()` function reports Δt<sub>max</sub> for the measurement set
-using the maximum UV distance (longest baseline) and the highest channel
-frequency.  The output is purely informational — no averaging is currently
-performed.  A future `--average` option could combine visibilities over
-consecutive time steps subject to this limit.
+The `summary()` function reports:
+- Δt<sub>max</sub> for 1%, 3%, and 5% loss using the MS's maximum UV distance
+  and highest channel frequency.
+- The current integration time from the MS's `INTERVAL` or `EXPOSURE` column.
+
+The field-of-view half-width ℓ defaults to 1° (≈ 0.0175 rad) and can be set
+via `--field-of-view`.
+
+The `--time-average-factor N` option combines every N consecutive rows by
+averaging DATA, UVW, and scalar columns, and OR-ing FLAG columns.  This
+reduces data volume before `--optimize`.
