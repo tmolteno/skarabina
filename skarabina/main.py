@@ -63,7 +63,7 @@ def main(**kw):
     ms.flag_data(flag_data_operations)
 
     if opts.flag_spectral_window is not None:
-        logger.info("flag_spectral_window: %s", opts.flag_spectral_window)
+        print(f"flag_spectral_window: {opts.flag_spectral_window}")
         ms.flag_spectral_window(opts.flag_spectral_window)
 
     # --- Read-only operations ---

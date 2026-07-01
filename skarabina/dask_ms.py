@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class DaskMS:
     def __init__(self, ms_name):
         self.name = ms_name
-        logger.info(f"Getting Data from MS file: {self.name}")
+        print(f"Getting Data from MS file: {self.name}")
 
         if not os.path.exists(ms_name):
             raise RuntimeError(f"Measurement set {self.name} not found")
@@ -84,7 +84,7 @@ class DaskMS:
         """
         Flag rows where sqrt(u^2 + v^2) exceeds uv_limit (in meters).
         """
-        logger.info("flag_uv_above: %.1f m", uv_limit)
+        print("flag_uv_above: %.1f m" % uv_limit)
 
         abs_uv = self.u_arr * self.u_arr + self.v_arr * self.v_arr
         uv_flag_mask = da.greater(abs_uv, uv_limit * uv_limit)
@@ -98,12 +98,10 @@ class DaskMS:
         n_old_v, n_new_v, n_uv_v, max_uv_v = dask.compute(n_old, n_new, n_uv, max_uv)
 
         n_added = int(n_new_v) - int(n_old_v)
-        logger.info("flag_uv_above: max UV distance = %.1f m", max_uv_v)
-        logger.info(
-            "flag_uv_above: %d rows above uv limit, %d newly flagged (total: %d)",
-            int(n_uv_v),
-            n_added,
-            int(n_new_v),
+        print("flag_uv_above: max UV distance = %.1f m" % max_uv_v)
+        print(
+            "flag_uv_above: %d rows above uv limit, %d newly flagged (total: %d)"
+            % (int(n_uv_v), n_added, int(n_new_v))
         )
 
         self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, new_flag_row)
@@ -175,14 +173,16 @@ class DaskMS:
             if uv_above is not None:
                 uv_info += f", UV > {uv_above} m"
 
-            logger.info(
+            print(
                 "flag_spectral_window[%d]: %d channels in %d range(s),"
-                " flagged %d visibilities%s",
-                idx,
-                int(n_chan_flagged_v),
-                len(spw_ranges),
-                int(n_flagged_v),
-                uv_info,
+                " flagged %d visibilities%s"
+                % (
+                    idx,
+                    int(n_chan_flagged_v),
+                    len(spw_ranges),
+                    int(n_flagged_v),
+                    uv_info,
+                )
             )
 
             new_flags = da.logical_or(new_flags, spw_flag)
@@ -227,20 +227,20 @@ class DaskMS:
             total_vis = da.prod(da.array(self.ds.FLAG.shape))
             n_nan_v, n_clip_v, total_v = dask.compute(n_nan, n_clip, total_vis)
             if "NAN" in operations:
-                logger.info(
-                    "flag_data (NaN): flagged %d / %d visibilities (%.2f%%)",
-                    int(n_nan_v),
-                    int(total_v),
-                    100.0 * int(n_nan_v) / int(total_v),
+                print(
+                    "flag_data (NaN): flagged %d / %d visibilities (%.2f%%)"
+                    % (int(n_nan_v), int(total_v), 100.0 * int(n_nan_v) / int(total_v))
                 )
             if "CLIP" in operations:
-                logger.info(
-                    "flag_data (clip [%s, %s]): flagged %d / %d visibilities (%.2f%%)",
-                    clip_min,
-                    clip_max,
-                    int(n_clip_v),
-                    int(total_v),
-                    100.0 * int(n_clip_v) / int(total_v),
+                print(
+                    "flag_data (clip [%s, %s]): flagged %d / %d visibilities (%.2f%%)"
+                    % (
+                        clip_min,
+                        clip_max,
+                        int(n_clip_v),
+                        int(total_v),
+                        100.0 * int(n_clip_v) / int(total_v),
+                    )
                 )
 
     def summary(self):
@@ -361,7 +361,7 @@ class DaskMS:
 
         All row-indexed columns are filtered consistently.
         """
-        logger.info("Remove all flagged rows...")
+        print("Remove all flagged rows...")
 
         # Rows explicitly flagged via FLAG_ROW
         row_flagged = self.ds["FLAG_ROW"].data  # (nrow,)
@@ -394,12 +394,12 @@ class DaskMS:
 
         n_extra = int(n_all_data_flagged) - int(n_overlap)
 
-        logger.info(f"Total rows:           {int(n_total):8d}")
-        logger.info(f"  FLAG_ROW flagged:   {int(n_row_flagged):8d}")
-        logger.info(f"  All-data-flagged:   {int(n_all_data_flagged):8d}")
-        logger.info(f"  Combined to remove: {int(n_combined):8d}")
-        logger.info(f"  Remaining:          {int(n_unflagged):8d}")
-        logger.info(f"  Extra rows caught by all(FLAG) check: {n_extra}")
+        print(f"Total rows:           {int(n_total):8d}")
+        print(f"  FLAG_ROW flagged:   {int(n_row_flagged):8d}")
+        print(f"  All-data-flagged:   {int(n_all_data_flagged):8d}")
+        print(f"  Combined to remove: {int(n_combined):8d}")
+        print(f"  Remaining:          {int(n_unflagged):8d}")
+        print(f"  Extra rows caught by all(FLAG) check: {n_extra}")
 
         if int(n_unflagged) == 0:
             raise RuntimeError(
@@ -425,14 +425,14 @@ class DaskMS:
             if row_dim in self.ds[var_name].dims:
                 self.changed[var_name] = True
 
-        logger.info(f"Optimize complete. New row count: {int(n_unflagged)}")
+        print(f"Optimize complete. New row count: {int(n_unflagged)}")
 
     def write_new_ms(self, name, clobber):
         """
         Write a new MS, and make sure it doesn't already exist
         """
         all_tables = list(self.ds.keys())
-        logger.info(f"Writing {all_tables} to {name}")
+        print(f"Writing {all_tables} to {name}")
 
         if os.path.exists(name):
             if not clobber:
@@ -471,7 +471,7 @@ class DaskMS:
 
         for to_update in self.changed.keys():
             if self.changed[to_update]:
-                logger.info(f"Updating table: {to_update} in {name}")
+                print(f"Updating table: {to_update} in {name}")
                 logger.debug(f"    ds={self.ds[to_update]}")
                 writes = xds_to_table(self.ds, f"{name}", to_update)
                 with ProgressBar():
