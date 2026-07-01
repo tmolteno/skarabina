@@ -42,7 +42,7 @@ cabs:
       flag:
         uv-above:
           dtype: float
-          info: Flag UVW above this limit.
+          info: Flag UVW above this limit (in meters).
         nan:
           dtype: bool
           info: Flag NaN

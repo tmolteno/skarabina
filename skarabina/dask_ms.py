@@ -67,9 +67,9 @@ class DaskMS:
 
     def flag_uv_above(self, uv_limit):
         """
-        Flag rows where sqrt(u^2 + v^2) exceeds uv_limit.
+        Flag rows where sqrt(u^2 + v^2) exceeds uv_limit (in meters).
         """
-        logger.info("flag_uv_above: %.1f wavelengths", uv_limit)
+        logger.info("flag_uv_above: %.1f m", uv_limit)
 
         abs_uv = self.u_arr * self.u_arr + self.v_arr * self.v_arr
         uv_flag_mask = da.greater(abs_uv, uv_limit * uv_limit)
@@ -83,7 +83,7 @@ class DaskMS:
         n_old_v, n_new_v, n_uv_v, max_uv_v = dask.compute(n_old, n_new, n_uv, max_uv)
 
         n_added = int(n_new_v) - int(n_old_v)
-        logger.info("flag_uv_above: max UV distance = %.1f wavelengths", max_uv_v)
+        logger.info("flag_uv_above: max UV distance = %.1f m", max_uv_v)
         logger.info(
             "flag_uv_above: %d rows above uv limit, %d newly flagged (total: %d)",
             int(n_uv_v),
