@@ -1,42 +1,36 @@
-import click
-from scabha.schema_utils import clickify_parameters
-from omegaconf import OmegaConf
+import datetime
+import logging
 from importlib import resources
 
-import datetime
+import click
+from omegaconf import OmegaConf
+from scabha.schema_utils import clickify_parameters
 
-import logging
+from skarabina import barber, dask_ms
 
-from skarabina import dask_ms
-from skarabina import barber
-recipe = resources.files('skarabina').joinpath('skarabina.yml')
+recipe = resources.files("skarabina").joinpath("skarabina.yml")
 schemas = OmegaConf.load(recipe)
 
-logging.basicConfig()
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 @click.command("skarabina")
-@clickify_parameters(schemas.cabs.get('skarabina'))
+@clickify_parameters(schemas.cabs.get("skarabina"))
 def main(**kw):
     print("Mupati (skarabina): The 1GC flagger")
     opts = OmegaConf.create(kw)
-    print(opts.keys())
-    print(kw)
 
-    if opts.debug:
-        level = logging.DEBUG
-    else:
-        level = logging.ERROR
-
-    logger.setLevel(level)
+    level = logging.DEBUG if opts.debug else logging.ERROR
+    logging.basicConfig(level=level)
+    root = logging.getLogger()
+    root.setLevel(level)
 
     if opts.debug:
         ts = datetime.datetime.now().timestamp()
         fh = logging.FileHandler(filename=f"skarabina.{ts}.log")
         fh.setLevel(level)
-
-        logger.addHandler(fh)
+        root.addHandler(fh)
+        root.debug(f"options: {dict(opts)}")
 
     ms = dask_ms.DaskMS(opts.ms)
 
@@ -47,10 +41,10 @@ def main(**kw):
 
     flag_data_operations = {}
     if opts.flag_nan is not None:
-        flag_data_operations['NAN'] = True
+        flag_data_operations["NAN"] = True
 
     if opts.flag_clip is not None:
-        flag_data_operations['CLIP'] = opts.flag_clip
+        flag_data_operations["CLIP"] = opts.flag_clip
         print(f"flag_clip {opts.flag_clip}")
 
     ms.flag_data(flag_data_operations)
@@ -68,4 +62,3 @@ def main(**kw):
         ms.write_new_ms(opts.msout, opts.clobber)
     elif opts.apply:
         ms.update_ms(opts.ms, opts.clobber)
-

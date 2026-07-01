@@ -1,38 +1,28 @@
 [project]
 name = "skarabina"
-version = "0.1.4"
+version = "0.2.0"
 description = "Skarabina (dungbeetle): An all purpose 1GC flagger"
 authors = [
-    {name = "Tim Molteno",email = "tim@elec.ac.nz"}
+    { name = "Tim Molteno", email = "tim@elec.ac.nz" }
 ]
-license = {text = "GPLv3"}
+license = { text = "GPLv3" }
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
-packages = [{include = "skarabina"}]
-
 dependencies = [
-    "dask-ms[xarray,zarr]",
-    "stimela >=2.1.2",
-    "zarr (>=2.0)"
+    "dask-ms[xarray,zarr] @ git+https://github.com/tmolteno/dask-ms",
+    "stimela>=2.1.2",
+    "zarr>=2.0",
 ]
 
-
-[tool.poetry]
-
-[tool.poetry.scripts]
+[project.scripts]
 skarabina = "skarabina.main:main"
 
-[tool.poetry.dependencies]
-dask-ms = { git = "https://github.com/tmolteno/dask-ms" }
+[dependency-groups]
+dev = ["pytest>=8.4.0"]
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^8.4.0"
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [build-system]
-requires = [
-    "poetry-core>=2.0.0,<3.0.0",
-    "antlr4-tools"
-    ]
-build-backend = "poetry.core.masonry.api"
-
-
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -14,7 +14,7 @@ barber:
 opt:
 	skarabina --ms foo.ms --optimize --msout "bar.ms" --clobber
 install:
-	poetry install
+	uv sync
 
 stimela:
 	stimela run --native skarabina-stimela-recipe.yml ms=${MS}
