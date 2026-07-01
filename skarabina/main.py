@@ -46,8 +46,9 @@ def main(**kw):
 
     ms = dask_ms.DaskMS(opts.ms)
 
+    # --- Flagging operations (order-independent) ---
+
     if opts.flag_uv_above is not None:
-        # Set the flag Variable on first Dataset to it's inverse
         print(f"uv_above {opts.flag_uv_above} m")
         ms.flag_uv_above(opts.flag_uv_above)
 
@@ -61,14 +62,24 @@ def main(**kw):
 
     ms.flag_data(flag_data_operations)
 
+    if opts.flag_spectral_window is not None:
+        logger.info("flag_spectral_window: %s", opts.flag_spectral_window)
+        ms.flag_spectral_window(opts.flag_spectral_window)
+
+    # --- Read-only operations ---
+
     if opts.summary:
         ms.summary()
 
     if opts.barber:
         barber.barber(ms, opts.barber_pol)
 
+    # --- Row removal (MUST be last before writing) ---
+
     if opts.optimize:
         ms.optimize()
+
+    # --- Write output ---
 
     if opts.msout:
         ms.write_new_ms(opts.msout, opts.clobber)

@@ -13,11 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--version` CLI option that prints the package version and exits.
 - Copyright headers on all source files (Tim Molteno, 2025-2026).
 - `flake8` linting: dev dependency, `.flake8` config (100-char lines, E203/W503 ignored), and `make lint` target.
+- `--flag-spectral-window` CLI option: takes a YAML file defining frequency ranges and optional UV constraints to flag. Includes `spectral-flags.example.yml` with band-edge, Galactic HI, and short-baseline RFI rules.
 
 ### Changed
 
-- Default log level changed from `ERROR` to `INFO`. All operational output (`flag_uv_above`, `flag_data`, `optimize`, etc.) is now visible without `--debug`.
+- Default log level changed from `ERROR` to `INFO`. All operational output (`flag_uv_above`, `flag_data`, `flag_spectral_window`, `optimize`, etc.) is now visible without `--debug`.
 - `skarabina/dask_ms.py` — `flag_data()` now reports a flag-count summary (flagged / total visibilities with percentage) for NaN and clip operations.
+- `skarabina/dask_ms.py` — `flag_uv_above()` now reports max UV distance, rows above the limit, and how many were newly flagged vs already flagged. Labels units as meters.
+- `skarabina/dask_ms.py` — `summary()` now includes a row-level flagging histogram (% of unflagged visibilities per row) and a row-size consistency check.
+- `skarabina/main.py` — pipeline reorganized with explicit section markers; `optimize()` is guaranteed to run after all flagging operations.
 
 ### Fixed
 

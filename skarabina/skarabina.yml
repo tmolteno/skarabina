@@ -49,6 +49,9 @@ cabs:
         clip:
           dtype: Tuple[float, float]
           info: Flag clip.
+        spectral-window:
+          dtype: File
+          info: YAML file with spectral window flagging rules.
       # field:
       #     dtype: List[int]
       #     info: Use this FIELD_ID from the measurement set
