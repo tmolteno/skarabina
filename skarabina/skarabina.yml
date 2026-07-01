@@ -30,6 +30,10 @@ cabs:
         dtype: int
         info: Combine every N consecutive rows by averaging UVW and visibility data. Must run before optimize.
         default: 1
+      frequency-average-factor:
+        dtype: int
+        info: Combine every N consecutive frequency channels by averaging. Flagged data is excluded from the average.
+        default: 1
       clobber:
         dtype: bool
         info: Replace the output measurement set
