@@ -6,6 +6,7 @@ import shutil
 import dask
 import dask.array as da
 import numpy as np
+import yaml
 from casacore.tables import table
 from dask.diagnostics import ProgressBar
 from daskms import xds_from_ms, xds_to_table
@@ -65,6 +66,17 @@ class DaskMS:
         #         pass
         self.changed = {}
 
+        # Load channel frequencies from SPECTRAL_WINDOW subtable (Hz)
+        self.chan_freq_hz = None
+        for s in self.sub_table_names:
+            if "SPECTRAL_WINDOW" in s:
+                try:
+                    sw = table(s, ack=False)
+                    self.chan_freq_hz = sw.getcol("CHAN_FREQ")[0]
+                    sw.close()
+                except Exception:
+                    logger.warning("Could not read CHAN_FREQ from %s", s)
+
     def flag_uv_above(self, uv_limit):
         """
         Flag rows where sqrt(u^2 + v^2) exceeds uv_limit (in meters).
@@ -93,6 +105,87 @@ class DaskMS:
 
         self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, new_flag_row)
         self.changed["FLAG_ROW"] = True
+
+    def flag_spectral_window(self, yaml_file):
+        """
+        Flag spectral windows from a YAML configuration file.
+
+        YAML format — a list of entries, each with:
+          spw: [[fmin_MHz, fmax_MHz], ...]   # frequency ranges to flag
+          uv_below: <meters>                  # optional: only flag rows with UV < this
+          uv_above: <meters>                  # optional: only flag rows with UV > this
+        """
+        if self.chan_freq_hz is None:
+            raise RuntimeError(
+                "No SPECTRAL_WINDOW/CHAN_FREQ found in MS — cannot flag by frequency"
+            )
+
+        with open(yaml_file) as f:
+            entries = yaml.safe_load(f)
+
+        if not isinstance(entries, list):
+            raise RuntimeError("Spectral window YAML must be a list of entries")
+
+        nchan = len(self.chan_freq_hz)
+        uv_dist = da.sqrt(self.u_arr * self.u_arr + self.v_arr * self.v_arr)
+        old_flags = self.flag
+        new_flags = old_flags
+
+        for idx, entry in enumerate(entries):
+            spw_ranges = entry.get("spw", [])
+            uv_below = entry.get("uv_below")
+            uv_above = entry.get("uv_above")
+
+            # Build channel mask: True where frequency falls in any range
+            chan_mask = da.zeros(nchan, dtype=bool)
+            for fmin_mhz, fmax_mhz in spw_ranges:
+                fmin_hz = float(fmin_mhz) * 1e6
+                fmax_hz = float(fmax_mhz) * 1e6
+                chan_mask = da.logical_or(
+                    chan_mask,
+                    (self.chan_freq_hz >= fmin_hz) & (self.chan_freq_hz <= fmax_hz),
+                )
+
+            n_chan_flagged = da.sum(chan_mask)
+
+            # Broadcast channel mask to (nrow, nchan, ncorr)
+            # FLAG shape: (nrow, nchan, ncorr) — mask on axis=1
+            spw_flag = da.broadcast_to(
+                chan_mask[np.newaxis, :, np.newaxis],
+                self.ds.FLAG.shape,
+            )
+
+            # Apply UV constraint if specified
+            if uv_below is not None:
+                uv_mask = uv_dist < float(uv_below)
+                spw_flag = da.logical_and(spw_flag, uv_mask[:, np.newaxis, np.newaxis])
+            if uv_above is not None:
+                uv_mask = uv_dist > float(uv_above)
+                spw_flag = da.logical_and(spw_flag, uv_mask[:, np.newaxis, np.newaxis])
+
+            n_flagged = da.sum(spw_flag)
+            n_chan_flagged_v, n_flagged_v = dask.compute(n_chan_flagged, n_flagged)
+
+            uv_info = ""
+            if uv_below is not None:
+                uv_info += f", UV < {uv_below} m"
+            if uv_above is not None:
+                uv_info += f", UV > {uv_above} m"
+
+            logger.info(
+                "flag_spectral_window[%d]: %d channels in %d range(s),"
+                " flagged %d visibilities%s",
+                idx,
+                int(n_chan_flagged_v),
+                len(spw_ranges),
+                int(n_flagged_v),
+                uv_info,
+            )
+
+            new_flags = da.logical_or(new_flags, spw_flag)
+
+        self.ds["FLAG"].data = new_flags
+        self.changed["FLAG"] = True
 
     def flag_data(self, operations=None):
         """

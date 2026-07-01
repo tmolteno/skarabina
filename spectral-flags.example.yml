@@ -1,0 +1,32 @@
+# Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
+# Example spectral window flagging configuration for skarabina.
+#
+# Usage:
+#   skarabina --ms foo.ms --flag-spectral-window spectral-flags.yml --msout bar.ms
+
+# --- Flag all baselines ---
+# Lower band edge, upper bandpass edge, Galactic HI
+- spw:
+    - [850, 900]
+    - [1658, 1800]
+    - [1419.8, 1421.3]
+
+# --- Flag short baselines ---
+# RFI that dominates on short spacings (uvrange < 600 m)
+- spw:
+    - [900, 915]
+    - [925, 960]
+    - [1080, 1095]
+    - [1565, 1585]
+    - [1217, 1237]
+    - [1375, 1387]
+    - [1166, 1186]
+    - [1592, 1610]
+    - [1242, 1249]
+    - [1191, 1217]
+    - [1260, 1300]
+    - [1453, 1490]
+    - [1616, 1626]
+    - [1526, 1554]
+    - [1600, 1600]   # single-frequency spike
+  uv_below: 600
