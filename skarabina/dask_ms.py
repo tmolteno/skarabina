@@ -157,20 +157,81 @@ class DaskMS:
     def optimize(self):
         """
         Run through the flags, and remove all completely flagged rows.
+
+        A row is removed if either:
+        - FLAG_ROW is True (explicitly marked as bad), or
+        - Every individual visibility in FLAG is True (all channels × correlations flagged).
+
+        All row-indexed columns are filtered consistently.
         """
         logger.info("Remove all flagged rows...")
-        unflagged_rows = da.logical_not(self.ds["FLAG_ROW"])
-        n_unflagged = da.sum(unflagged_rows)
-        logger.info(f"Unflagged Rows: {n_unflagged.compute()}")
 
-        new_data = self.data[unflagged_rows, :, :]
-        logger.info(f"New Data Shape: {new_data.shape}")
-        new_flag_row = da.zeros_like(self.ds.FLAG_ROW)
-        self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, new_flag_row)
-        self.ds["DATA"] = (self.ds.DATA.dims, new_data)
+        # Rows explicitly flagged via FLAG_ROW
+        row_flagged = self.ds["FLAG_ROW"].data  # (nrow,)
 
-        self.changed["DATA"] = True
-        self.changed["FLAG_ROW"] = True
+        # Rows where every single visibility is individually flagged.
+        # FLAG shape: (nrow, nchan, ncorr) → all over chan (axis=1) and corr (axis=2) → (nrow,)
+        all_data_flagged = da.all(self.ds["FLAG"].data, axis=(1, 2))
+
+        # Combined: a row is removed if EITHER condition is true
+        is_flagged = da.logical_or(row_flagged, all_data_flagged)
+        unflagged_rows = da.logical_not(is_flagged)
+
+        # Compute all statistics in one pass
+        n_overlap = da.sum(da.logical_and(row_flagged, all_data_flagged))
+        (
+            n_total,
+            n_row_flagged,
+            n_all_data_flagged,
+            n_combined,
+            n_unflagged,
+            n_overlap,
+        ) = dask.compute(
+            row_flagged.size,
+            da.sum(row_flagged),
+            da.sum(all_data_flagged),
+            da.sum(is_flagged),
+            da.sum(unflagged_rows),
+            n_overlap,
+        )
+
+        n_extra = int(n_all_data_flagged) - int(n_overlap)
+
+        logger.info(f"Total rows:           {int(n_total):8d}")
+        logger.info(f"  FLAG_ROW flagged:   {int(n_row_flagged):8d}")
+        logger.info(f"  All-data-flagged:   {int(n_all_data_flagged):8d}")
+        logger.info(f"  Combined to remove: {int(n_combined):8d}")
+        logger.info(f"  Remaining:          {int(n_unflagged):8d}")
+        logger.info(f"  Extra rows caught by all(FLAG) check: {n_extra}")
+
+        if int(n_unflagged) == 0:
+            raise RuntimeError(
+                "No unflagged rows remain after optimize — nothing to write"
+            )
+
+        # Find the row dimension name from DATA (typically "row")
+        row_dim = self.ds.DATA.dims[0]
+
+        # Filter every variable that depends on the row dimension
+        for var_name in list(self.ds.data_vars):
+            var = self.ds[var_name]
+            if row_dim not in var.dims:
+                continue  # Skip non-row-indexed variables
+
+            # Build an indexer tuple: use unflagged_rows for the row axis,
+            # slice(None) for all other axes.
+            row_axis = var.dims.index(row_dim)
+            indexer = tuple(
+                unflagged_rows if i == row_axis else slice(None)
+                for i in range(len(var.dims))
+            )
+
+            new_data = var.data[indexer]
+            self.ds[var_name] = (var.dims, new_data)
+            self.changed[var_name] = True
+            logger.debug(f"  Filtered {var_name}: {var.shape} → {new_data.shape}")
+
+        logger.info(f"Optimize complete. New row count: {int(n_unflagged)}")
 
     def write_new_ms(self, name, clobber):
         """
