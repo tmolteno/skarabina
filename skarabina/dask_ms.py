@@ -547,6 +547,16 @@ class DaskMS:
             )
             updates[var_name] = (var.dims, var.data[indexer])
 
+        # Also subsample row-indexed coordinates (e.g. ROWID)
+        for coord_name, coord in self.ds.coords.items():
+            if row_dim in coord.dims:
+                row_axis = coord.dims.index(row_dim)
+                indexer = tuple(
+                    slice(0, trim, factor) if i == row_axis else slice(None)
+                    for i in range(len(coord.dims))
+                )
+                updates[coord_name] = (coord.dims, coord.data[indexer])
+
         # Apply all updates at once.  We construct a fresh Dataset rather
         # than using .assign(), because .assign() merges the updates with
         # the original data_vars (which still have the old row count),
