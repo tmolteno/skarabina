@@ -78,6 +78,9 @@ def main(**kw):
 
     # --- Row removal / averaging (MUST be last before writing) ---
 
+    if opts.frequency_average_factor is not None and opts.frequency_average_factor > 1:
+        ms.frequency_average(opts.frequency_average_factor)
+
     if opts.time_average_factor is not None and opts.time_average_factor > 1:
         ms.time_average(opts.time_average_factor)
 
