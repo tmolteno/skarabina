@@ -518,7 +518,13 @@ class DaskMS:
         # Step 3: replace the averaged columns.  Since isel already
         # reduced all variables to n_new rows, per-column assignment
         # against the same row count is safe.
+        # Rechunk to match the existing row chunking from isel.
+        row_chunks = self.ds.chunks.get(row_dim, None)
         for col, arr in averaged.items():
+            if row_chunks is not None and len(arr.shape) >= 1:
+                chunks = list(arr.chunks)
+                chunks[0] = row_chunks
+                arr = arr.rechunk(tuple(chunks))
             self.ds[col] = (self.ds[col].dims, arr)
             self.changed[col] = True
 
