@@ -467,6 +467,11 @@ class DaskMS:
         def _reshape(arr, shape):
             return arr[:trim].reshape(shape)
 
+        # Collect all updated variables before assigning,
+        # to avoid xarray dimension conflicts.
+        updates = {}
+        row_dim = self.ds.DATA.dims[0]
+
         # DATA: average only unflagged visibilities
         if "DATA" in self.ds.data_vars:
             d = _reshape(self.ds["DATA"].data, shape_3d)
@@ -474,11 +479,10 @@ class DaskMS:
             d_masked = da.where(f, 0j, d)
             n_unflagged = da.sum(da.logical_not(f), axis=1)
             n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
-            self.ds["DATA"] = (
+            updates["DATA"] = (
                 self.ds["DATA"].dims,
                 da.sum(d_masked, axis=1) / n_safe,
             )
-            self.changed["DATA"] = True
 
         # WEIGHT_SPECTRUM: same logic
         if "WEIGHT_SPECTRUM" in self.ds.data_vars:
@@ -487,11 +491,10 @@ class DaskMS:
             w_masked = da.where(f, 0, w)
             n_unflagged = da.sum(da.logical_not(f), axis=1)
             n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
-            self.ds["WEIGHT_SPECTRUM"] = (
+            updates["WEIGHT_SPECTRUM"] = (
                 self.ds["WEIGHT_SPECTRUM"].dims,
                 da.sum(w_masked, axis=1) / n_safe,
             )
-            self.changed["WEIGHT_SPECTRUM"] = True
 
         # UVW, TIME, INTERVAL, EXPOSURE: simple average (per-row metadata)
         for col, s in [
@@ -501,11 +504,10 @@ class DaskMS:
             ("EXPOSURE", shape_1d),
         ]:
             if col in self.ds.data_vars:
-                self.ds[col] = (
+                updates[col] = (
                     self.ds[col].dims,
                     da.mean(_reshape(self.ds[col].data, s), axis=1),
                 )
-                self.changed[col] = True
 
         # FLAG columns: OR (any flagged → flagged)
         for col, s in [
@@ -513,11 +515,10 @@ class DaskMS:
             ("FLAG_ROW", shape_1d),
         ]:
             if col in self.ds.data_vars:
-                self.ds[col] = (
+                updates[col] = (
                     self.ds[col].dims,
                     da.any(_reshape(self.ds[col].data, s), axis=1),
                 )
-                self.changed[col] = True
 
         # ANTENNA: take first of each block
         for col, s in [
@@ -525,10 +526,15 @@ class DaskMS:
             ("ANTENNA2", shape_1d),
         ]:
             if col in self.ds.data_vars:
-                self.ds[col] = (
+                updates[col] = (
                     self.ds[col].dims,
                     _reshape(self.ds[col].data, s)[:, 0],
                 )
+
+        # Apply all updates at once to avoid dimension conflicts
+        self.ds = self.ds.assign(updates)
+        for col in updates:
+            if row_dim in self.ds[col].dims:
                 self.changed[col] = True
 
     def optimize(self):
