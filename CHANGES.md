@@ -6,11 +6,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.5] - 2026-07-02
+## [0.3.0] - 2026-07-02
 
 ### Added
 
 - `skarabina/dask_ms.py` — `summary()` now reports spectral window count, channel count, frequency range, and bandwidth.
+- `skarabina/dask_ms.py` — `summary()` now lists all fields with row counts, reading field names from the FIELD subtable. Handles both single-field (attribute) and multi-field (data variable) MS layouts.
 
 ### Changed
 
