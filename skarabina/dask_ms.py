@@ -31,7 +31,7 @@ class DaskMS:
             logger.info(f"    {s}")
 
         self.datasets = xds_from_ms(self.name)
-        logger.info(self.datasets)
+        logger.debug(self.datasets)
 
         self.ds = self.datasets[0]
         self.flag = da.asarray(self.ds.FLAG)
