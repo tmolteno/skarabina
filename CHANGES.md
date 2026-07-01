@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-07-02
+
+### Added
+
+- `skarabina/dask_ms.py` — `summary()` now reports spectral window count, channel count, frequency range, and bandwidth.
+
+### Changed
+
+- `skarabina/dask_ms.py` — `optimize()` now removes fully-flagged channels (all rows × all correlations flagged) in addition to fully-flagged rows. This reduces the channel dimension after `--flag-spectral-window`.
+- All `logger.info()` calls replaced with `print()` for clean CLI output without the `INFO:module:` prefix. `logger.debug()` still requires `--debug`.
+- Verbose xarray dataset dump and sub-table name listing moved to `debug` level.
+
+### Fixed
+
+- `skarabina/dask_ms.py` — `write_new_ms()` now deep-copies all subtables (SPECTRAL_WINDOW, ANTENNA, etc.) to the output MS. Previously only the main table was written, so `CHAN_FREQ` and other subtable metadata were missing from `--msout`.
+- Suppressed casacore C++ stderr noise (`SORT_COLUMNS`, `SORT_ORDER`) during subtable copy unless `--debug` is set.
+
 ## [0.2.4] - 2026-07-02
 
 ### Added

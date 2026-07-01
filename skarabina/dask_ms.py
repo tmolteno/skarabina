@@ -2,6 +2,8 @@
 import logging
 import os
 import shutil
+import sys
+from contextlib import contextmanager
 
 import dask
 import dask.array as da
@@ -12,6 +14,21 @@ from dask.diagnostics import ProgressBar
 from daskms import xds_from_ms, xds_to_table
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _maybe_quiet_stderr():
+    """Suppress stderr unless root logger is at DEBUG level."""
+    if logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
+        yield
+    else:
+        with open(os.devnull, "w") as devnull:
+            old_stderr = sys.stderr
+            sys.stderr = devnull
+            try:
+                yield
+            finally:
+                sys.stderr = old_stderr
 
 
 class DaskMS:
@@ -471,15 +488,18 @@ class DaskMS:
 
         # Copy subtables (SPECTRAL_WINDOW, ANTENNA, FIELD, etc.) from
         # the input MS.  xds_to_table only writes the main table.
-        for sub in self.sub_table_names:
-            sub_name = os.path.basename(sub)
-            dest = os.path.join(name, sub_name)
-            if os.path.exists(dest):
-                shutil.rmtree(dest)
-            t = table(sub, ack=False)
-            t.copy(dest, deep=True)
-            t.close()
-            logger.debug("  copied subtable %s", sub_name)
+        # Suppress casacore C++ stderr noise (SORT_COLUMNS etc.) unless
+        # --debug is set.
+        with _maybe_quiet_stderr():
+            for sub in self.sub_table_names:
+                sub_name = os.path.basename(sub)
+                dest = os.path.join(name, sub_name)
+                if os.path.exists(dest):
+                    shutil.rmtree(dest)
+                t = table(sub, ack=False)
+                t.copy(dest, deep=True)
+                t.close()
+                logger.debug("  copied subtable %s", sub_name)
 
     def update_ms(self, name, clobber):
         """
