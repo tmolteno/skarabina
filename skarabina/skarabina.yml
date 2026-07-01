@@ -26,6 +26,10 @@ cabs:
         dtype: bool
         info: Opotimize the size of the measurement set while keeping all rows of equal length.
         default: false
+      time-average-factor:
+        dtype: int
+        info: Combine every N consecutive rows by averaging UVW and visibility data. Must run before optimize.
+        default: 1
       clobber:
         dtype: bool
         info: Replace the output measurement set
@@ -59,6 +63,10 @@ cabs:
         info: Switch on debugging output
         dtype: bool
         default: false
+      field-of-view:
+        dtype: float
+        info: Field-of-view half-width from phase centre (degrees). Used for fringe-rotation integration time calculation. Default 1.0°.
+        default: 1.0
     outputs:
       msout:
         dtype: MS

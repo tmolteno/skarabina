@@ -368,23 +368,46 @@ class DaskMS:
                 f" bandwidth: {bw:.1f} MHz)"
             )
 
-            # Fringe-rotation integration time limit.
-            # A visibility is the average of the electric field over
-            # the integration time Δt.  The sky rotates at ω_earth,
-            # producing a fringe rate that depends on baseline length
-            # and frequency.  Exceeding this limit causes decorrelation
-            # (smearing).
+            # Fringe-rotation integration time limit (Wijnholds 2018, MNRAS).
+            # Time averaging causes decorrelation that depends on baseline
+            # length, frequency, and angular distance ℓ from the phase center.
+            # The amplitude loss factor is:
             #
-            #   Δt_max ≈ c / (ν_max · ω_earth · B_max)
+            #   ρ = sinc(π · ω_⊕ · Δt · B · ν · ℓ / c)
             #
-            c_ms = 299792458.0  # speed of light (m/s)
-            omega_earth = 7.2921150e-5  # Earth sidereal rotation (rad/s)
+            # For small loss L = 1 − |ρ|:
+            #
+            #   Δt_max = c · √(6L) / (π · ω_⊕ · B_max · ν_max · ℓ)
+            #
+            c_ms = 299792458.0
+            omega_earth = 7.2921150e-5
             max_uv = percentile_values[-1]
-            nu_max = fmax * 1e6  # Hz
-            dt_max_s = (
-                c_ms / (nu_max * omega_earth * max_uv) if max_uv > 0 else float("inf")
-            )
-            print(f"    Max integration time (fringe-rotation limit): {dt_max_s:.1f} s")
+            nu_max = fmax * 1e6
+
+            # Distance from phase centre in radians (converted from
+            # --field-of-view degrees).  Default ℓ ≈ 0.0175 rad (1°).
+            ell = getattr(self, "_fov_rad", 0.0174533)
+
+            def dt_max(loss):
+                if max_uv <= 0 or nu_max <= 0 or ell <= 0:
+                    return float("inf")
+                return (
+                    c_ms
+                    * (6.0 * loss) ** 0.5
+                    / (3.14159 * omega_earth * max_uv * nu_max * ell)
+                )
+
+            print("    Max integration time (fringe-rotation lim., ℓ=%.2f rad):" % ell)
+            print("        1%% loss:  %5.1f s" % dt_max(0.01))
+            print("        3%% loss:  %5.1f s" % dt_max(0.03))
+            print("        5%% loss:  %5.1f s" % dt_max(0.05))
+
+            if "INTERVAL" in self.ds.data_vars:
+                dt_current = float(self.ds.INTERVAL.data[0].compute())
+                print("    Current integration time: %.1f s" % dt_current)
+            elif "EXPOSURE" in self.ds.data_vars:
+                dt_current = float(self.ds.EXPOSURE.data[0].compute())
+                print("    Current integration time: %.1f s" % dt_current)
 
         # Field listing
         print("    Fields:")
@@ -415,6 +438,98 @@ class DaskMS:
                 n = int(self.ds.FLAG.shape[0])
             name = field_names.get(int(fid), f"FIELD_ID={fid}")
             print(f"        {fid}: {name:20s} {n:8d} rows")
+
+    def time_average(self, factor):
+        """
+        Average every <factor> consecutive rows into a single row.
+
+        DATA and WEIGHT_SPECTRUM average only unflagged visibilities
+        (flagged entries are excluded from the mean).  UVW, TIME, and
+        INTERVAL are simple averages (per-row metadata).  FLAG and
+        FLAG_ROW are OR'd (any flagged → flagged).
+        """
+        if factor < 2:
+            return
+
+        nrow = self.ds.FLAG.shape[0]
+        n_new = nrow // factor
+        trim = n_new * factor
+
+        print(
+            "Time-averaging: factor %d"
+            " → %d rows (discarding %d trailing rows)" % (factor, n_new, nrow - trim)
+        )
+
+        shape_3d = (n_new, factor, self.ds.FLAG.shape[1], self.ds.FLAG.shape[2])
+        shape_uvw = (n_new, factor, 3)
+        shape_1d = (n_new, factor)
+
+        def _reshape(arr, shape):
+            return arr[:trim].reshape(shape)
+
+        # DATA: average only unflagged visibilities
+        if "DATA" in self.ds.data_vars:
+            d = _reshape(self.ds["DATA"].data, shape_3d)
+            f = _reshape(self.ds["FLAG"].data, shape_3d)
+            d_masked = da.where(f, 0j, d)
+            n_unflagged = da.sum(da.logical_not(f), axis=1)
+            n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
+            self.ds["DATA"] = (
+                self.ds["DATA"].dims,
+                da.sum(d_masked, axis=1) / n_safe,
+            )
+            self.changed["DATA"] = True
+
+        # WEIGHT_SPECTRUM: same logic
+        if "WEIGHT_SPECTRUM" in self.ds.data_vars:
+            w = _reshape(self.ds["WEIGHT_SPECTRUM"].data, shape_3d)
+            f = _reshape(self.ds["FLAG"].data, shape_3d)
+            w_masked = da.where(f, 0, w)
+            n_unflagged = da.sum(da.logical_not(f), axis=1)
+            n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
+            self.ds["WEIGHT_SPECTRUM"] = (
+                self.ds["WEIGHT_SPECTRUM"].dims,
+                da.sum(w_masked, axis=1) / n_safe,
+            )
+            self.changed["WEIGHT_SPECTRUM"] = True
+
+        # UVW, TIME, INTERVAL, EXPOSURE: simple average (per-row metadata)
+        for col, s in [
+            ("UVW", shape_uvw),
+            ("TIME", shape_1d),
+            ("INTERVAL", shape_1d),
+            ("EXPOSURE", shape_1d),
+        ]:
+            if col in self.ds.data_vars:
+                self.ds[col] = (
+                    self.ds[col].dims,
+                    da.mean(_reshape(self.ds[col].data, s), axis=1),
+                )
+                self.changed[col] = True
+
+        # FLAG columns: OR (any flagged → flagged)
+        for col, s in [
+            ("FLAG", shape_3d),
+            ("FLAG_ROW", shape_1d),
+        ]:
+            if col in self.ds.data_vars:
+                self.ds[col] = (
+                    self.ds[col].dims,
+                    da.any(_reshape(self.ds[col].data, s), axis=1),
+                )
+                self.changed[col] = True
+
+        # ANTENNA: take first of each block
+        for col, s in [
+            ("ANTENNA1", shape_1d),
+            ("ANTENNA2", shape_1d),
+        ]:
+            if col in self.ds.data_vars:
+                self.ds[col] = (
+                    self.ds[col].dims,
+                    _reshape(self.ds[col].data, s)[:, 0],
+                )
+                self.changed[col] = True
 
     def optimize(self):
         """

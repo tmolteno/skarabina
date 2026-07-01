@@ -45,6 +45,8 @@ def main(**kw):
         root.debug(f"options: {dict(opts)}")
 
     ms = dask_ms.DaskMS(opts.ms)
+    fov_deg = opts.field_of_view if opts.field_of_view is not None else 1.0
+    ms._fov_rad = fov_deg * 3.14159265 / 180.0
 
     # --- Flagging operations (order-independent) ---
 
@@ -74,7 +76,10 @@ def main(**kw):
     if opts.barber:
         barber.barber(ms, opts.barber_pol)
 
-    # --- Row removal (MUST be last before writing) ---
+    # --- Row removal / averaging (MUST be last before writing) ---
+
+    if opts.time_average_factor is not None and opts.time_average_factor > 1:
+        ms.time_average(opts.time_average_factor)
 
     if opts.optimize:
         ms.optimize()
