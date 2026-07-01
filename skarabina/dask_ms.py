@@ -368,6 +368,24 @@ class DaskMS:
                 f" bandwidth: {bw:.1f} MHz)"
             )
 
+            # Fringe-rotation integration time limit.
+            # A visibility is the average of the electric field over
+            # the integration time Δt.  The sky rotates at ω_earth,
+            # producing a fringe rate that depends on baseline length
+            # and frequency.  Exceeding this limit causes decorrelation
+            # (smearing).
+            #
+            #   Δt_max ≈ c / (ν_max · ω_earth · B_max)
+            #
+            c_ms = 299792458.0  # speed of light (m/s)
+            omega_earth = 7.2921150e-5  # Earth sidereal rotation (rad/s)
+            max_uv = percentile_values[-1]
+            nu_max = fmax * 1e6  # Hz
+            dt_max_s = (
+                c_ms / (nu_max * omega_earth * max_uv) if max_uv > 0 else float("inf")
+            )
+            print(f"    Max integration time (fringe-rotation limit): {dt_max_s:.1f} s")
+
         # Field listing
         print("    Fields:")
         field_names = {}
