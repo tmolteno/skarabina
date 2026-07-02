@@ -13,12 +13,9 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # Test-build both Dockerfiles on every push and PR.
+  # Test-build the Dockerfile on every push and PR.
   test-build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        dockerfile: [Dockerfile, Dockerfile.conda, Dockerfile.source]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,16 +23,15 @@ jobs:
       - name: Setup Docker buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build ${{ matrix.dockerfile }}
+      - name: Build
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Build and push multi-arch images on tag pushes.
+  # Build and push multi-arch image on tag pushes.
   publish:
     if: startsWith(github.ref, 'refs/tags/')
     needs: test-build
@@ -68,29 +64,13 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
-      # x86_64 image (default Dockerfile)
-      - name: Build and push (x86_64)
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # aarch64 image (conda Dockerfile)
-      - name: Build and push (aarch64, conda)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.conda
-          platforms: linux/arm64
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.tags }}-conda
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
