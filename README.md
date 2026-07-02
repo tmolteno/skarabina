@@ -38,14 +38,15 @@ See [doc/](doc/index.md) for full documentation:
     pip install skarabina
 
 On **aarch64** (e.g. NVIDIA DGX Spark, Raspberry Pi, AWS Graviton),
-`stimela` and `python-casacore` pull in packages that need compilation.
-Install build tools and casacore development headers first:
+`python-casacore` needs building from source.  Install casacore and
+its dependencies first, then pip-install skarabina:
 
-    sudo apt-get install python3-dev gcc casacore-dev libwcs-dev
+    sudo apt-get install casacore-dev python3-dev gcc
     pip install skarabina
 
-If `casacore-dev` is not available for your distribution, build
-casacore from source: https://github.com/casacore/casacore
+If the above doesn't find `wcslib` or `cfitsio`, also run:
+
+    sudo apt-get install wcslib-dev libcfitsio-dev
 
 ## Quick start
 
