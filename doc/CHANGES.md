@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `skarabina/dask_ms.py` — `write_new_ms()` now deep-copies all subtables (SPECTRAL_WINDOW, ANTENNA, etc.) to the output MS. Previously only the main table was written, so `CHAN_FREQ` and other subtable metadata were missing from `--msout`.
 - Suppressed casacore C++ stderr noise (`SORT_COLUMNS`, `SORT_ORDER`) during subtable copy unless `--debug` is set.
 
+## [0.5.1] - 2026-07-02
+
+### Changed
+
+- Documentation reorganised into `doc/` directory with cross-linked markdown files (`index.md`, `usage.md`, `AVERAGING.md`, `ANALYZE.md`, `CHANGES.md`).
+
+### Fixed
+
+- `skarabina/dask_ms.py` — `WEIGHT_SPECTRUM` now uses **sum** (not masked mean) when time- or frequency-averaging. Weight w = 1/σ²; combined weight = Σ wᵢ for unflagged visibilities.
+- `skarabina/dask_ms.py` — `SIGMA_SPECTRUM` now uses inverse-variance weighting (σ̄ = 1/√(Σ 1/σ²)) rather than a simple mean when time- or frequency-averaging.
+- Unit tests added for WEIGHT_SPECTRUM sum (1 test) and SIGMA_SPECTRUM inverse-variance (2 tests).
+
 ## [0.5.0] - 2026-07-02
 
 ### Added
