@@ -68,14 +68,6 @@ def main(**kw):
         print(f"flag_spectral_window: {opts.flag_spectral_window}")
         ms.flag_spectral_window(opts.flag_spectral_window)
 
-    # --- Read-only operations ---
-
-    if opts.summary:
-        ms.summary()
-
-    if opts.barber:
-        barber.barber(ms, opts.barber_pol)
-
     # --- Row removal / averaging (MUST be last before writing) ---
 
     if opts.frequency_average_factor is not None and opts.frequency_average_factor > 1:
@@ -86,6 +78,14 @@ def main(**kw):
 
     if opts.optimize:
         ms.optimize()
+
+    # --- Read-only reports (after all processing) ---
+
+    if opts.summary:
+        ms.summary()
+
+    if opts.barber:
+        barber.barber(ms, opts.barber_pol)
 
     # --- Write output ---
 
