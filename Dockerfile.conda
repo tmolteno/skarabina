@@ -1,0 +1,17 @@
+# Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
+#
+# Conda-based Dockerfile for aarch64 (DGX Spark, AWS Graviton, etc.)
+# where python-casacore can't compile from source against system casacore.
+#
+# Build:  docker build -f Dockerfile.conda -t skarabina .
+# Run:    docker run --rm -it -v $(pwd):/data skarabina \
+#           --ms /data/foo.ms --summary
+
+FROM condaforge/miniforge3
+
+RUN conda install -y -c conda-forge python-casacore \
+    && conda clean -afy
+
+RUN pip install --no-cache-dir skarabina
+
+ENTRYPOINT ["skarabina"]
