@@ -27,11 +27,14 @@ forwarded to that command.
 To build the images locally:
 
 ```sh
-# x86_64
+# x86_64 (uses pre-built wheels)
 docker build -t skarabina .
 
-# aarch64 (or any arch with Docker Buildx + QEMU)
+# aarch64 via conda (pre-built binaries)
 docker build -f Dockerfile.conda -t skarabina .
+
+# any architecture, build python-casacore from source (scikit-build-core)
+docker build -f Dockerfile.source -t skarabina .
 ```
 
 ## aarch64 (NVIDIA DGX Spark, Raspberry Pi, AWS Graviton)
@@ -82,10 +85,18 @@ error: 'struct casacore::Allocator_private::BulkAllocator<...>' has no member na
 your system casacore was compiled with an older C++ standard than the
 one `python-casacore` needs (C++17 removed `pointer`, `reference`,
 `rebind` etc. from `std::allocator`; they were deprecated in C++17 and
-removed in C++20).  This is an upstream incompatibility between your
-distro's casacore packages and the version of `python-casacore` you
-are building.  Use conda instead, or install casacore from source with
-`-std=c++17`.
+removed in C++20).  Work around it by forcing C++17:
+
+```sh
+CMAKE_ARGS="-DCMAKE_CXX_STANDARD=17" pip install python-casacore
+pip install skarabina
+```
+
+This tells scikit-build-core (the build backend `python-casacore` uses)
+to compile with C++17 where those allocator typedefs still exist.
+
+Alternatively, use conda or the `Dockerfile.source` which sets this flag
+automatically, or install casacore from source with `-std=c++17`.
 
 ## Development install
 

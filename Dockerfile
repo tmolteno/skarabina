@@ -8,8 +8,9 @@
 # Run (analyze): docker run --rm -it -v $(pwd):/data skarabina analyze \
 #                  --ms /data/foo.ms --image-fov 2.5
 #
-# On aarch64 (DGX Spark, Graviton), use the conda-based Dockerfile instead:
-#   docker build -f Dockerfile.conda -t skarabina .
+# On aarch64 (DGX Spark, Graviton) use Dockerfile.conda or Dockerfile.source:
+#   docker build -f Dockerfile.conda -t skarabina .   # conda pre-built binaries
+#   docker build -f Dockerfile.source -t skarabina .  # build from source (C++17)
 
 FROM python:3.11-slim
 
