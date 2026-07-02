@@ -7,6 +7,7 @@
 # (needed because system casacore headers use std::allocator typedefs
 #  that C++20 removed).
 #
+# Pre-built images: docker pull ghcr.io/tmolteno/skarabina:latest
 # Build:  docker build -t skarabina .
 # Run (flag):    docker run --rm -it -v $(pwd):/data skarabina run \
 #                  --ms /data/foo.ms --summary
