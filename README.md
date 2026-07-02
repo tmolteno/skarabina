@@ -22,7 +22,7 @@ skarabina: a basic 1GC radio astronomy RFI flagger
 Author: Tim Molteno (tim@elec.ac.nz)
 
 Intended to reduce I/O costs by performing the standard flagging during
-1GC efficiently, and with low memory requirements.
+1GC efficiently, and with low memory requirements. Skarabina can also do averaging to reduce data volume, and measurement set analysis to recommend image size.
 
 ## Documentation
 
