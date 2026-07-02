@@ -2,31 +2,21 @@
 # Skarabina
 
 ```
-              __
-      _______/  \_______
-     /                   \
-    /                     \
-   /         _____         \
-  /         /     \         \
- /         -  0 0  -         \
-|           \ ___ /           |
- \          |_____|          /
-  \          \   /          /
-   \          \_/          /
-    \       ___|___       /
-     \     /       \     /
-      \   /  BALL   \   /
-       \_/           \_/
-        \             /
-         \_   _   _ _/
-           | | | |
-           | | | |
-        ___| | | |___
-       /    | | |    \
-      /     | | |     \
-     /      | | |      \
+      ,--.                              ___
+     /    \                           .'   '.
+    (  0 0 )     skarabina           /       \
+     \  v  /    dung beetle         |   BALL  |
+      '=|='     flagger             |         |
+        |                             \       /
+       / \                             `.   .'
+      /   \                              \_/
+    _/     \_
+   |         |
+  /           \
+ (   FRONT     )
+  \   LEGS    /
+   \_________/
 ```
-       skarabina — the dung beetle flagger
 
 skarabina: a basic 1GC radio astronomy RFI flagger
 
