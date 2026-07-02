@@ -37,6 +37,13 @@ See [doc/](doc/index.md) for full documentation:
 
     pip install skarabina
 
+On **aarch64** (e.g. NVIDIA DGX Spark, Raspberry Pi, AWS Graviton),
+`stimela` pulls in `psutil` which may need compilation.  Install build
+tools first:
+
+    sudo apt-get install python3-dev gcc
+    pip install skarabina
+
 ## Quick start
 
 ```sh
