@@ -49,3 +49,48 @@ via `--field-of-view`.
 The `--time-average-factor N` option combines every N consecutive rows by
 averaging DATA, UVW, and scalar columns, and OR-ing FLAG columns.  This
 reduces data volume before `--optimize`.
+
+## Time averaging (`--time-average-factor`)
+
+Averages every *N* consecutive rows into a single row, reducing the
+measurement set size by a factor of *N* (≈ *N*).
+
+| Column          | Operation | Notes |
+|-----------------|-----------|-------|
+| DATA            | Masked mean | Flagged visibilities excluded |
+| WEIGHT_SPECTRUM | Masked mean | Same mask as DATA |
+| FLAG, FLAG_ROW  | OR          | Any flagged → flagged |
+| UVW             | Mean        | Per-row metadata |
+| TIME            | Mean        | Averaged timestamp |
+| INTERVAL        | Sum         | Integration time × N |
+| EXPOSURE        | Sum         | |
+| ANTENNA1/2      | First       | Same baseline in block |
+
+Trailing rows (fewer than *N*) are discarded.  Run `--summary` afterward
+to see the updated integration time.
+
+## Frequency averaging (`--frequency-average-factor`)
+
+Averages every *N* consecutive frequency channels into one, reducing the
+channel count by a factor of *N*.
+
+| Column          | Operation | Notes |
+|-----------------|-----------|-------|
+| DATA            | Masked mean | Flagged visibilities excluded |
+| WEIGHT_SPECTRUM | Masked mean | Same mask as DATA |
+| FLAG            | OR          | Any flagged → flagged |
+| SIGMA_SPECTRUM  | Mean        | |
+| CHAN_FREQ       | Mean        | SPECTRAL_WINDOW updated |
+
+Trailing channels (fewer than *N*) are combined into a final narrower
+channel rather than discarded.  The SPECTRAL_WINDOW `CHAN_FREQ` column
+in the output MS is updated to reflect the new channel count.
+
+### Pipeline order
+
+Frequency averaging runs before time averaging and optimization, so all
+operations see the reduced channel count:
+
+```
+flagging → frequency-average → time-average → optimize → summary → write
+```

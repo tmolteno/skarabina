@@ -24,6 +24,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `skarabina/dask_ms.py` — `write_new_ms()` now deep-copies all subtables (SPECTRAL_WINDOW, ANTENNA, etc.) to the output MS. Previously only the main table was written, so `CHAN_FREQ` and other subtable metadata were missing from `--msout`.
 - Suppressed casacore C++ stderr noise (`SORT_COLUMNS`, `SORT_ORDER`) during subtable copy unless `--debug` is set.
 
+## [0.4.1] - 2026-07-02
+
+### Added
+
+- `--frequency-average-factor N` CLI option: averages groups of N consecutive frequency channels. Flagged visibilities are excluded from the mean; FLAG is OR'd. Trailing channels (< N) are combined into a final narrower channel. CHAN_FREQ in the SPECTRAL_WINDOW subtable is updated accordingly.
+- Unit tests for frequency averaging logic (7 tests): exact division, trailing channels, flagged exclusion, all-flagged groups, FLAG OR, and CHAN_FREQ averaging.
+
+### Changed
+
+- `--summary` and `--barber` now run after all flagging, averaging, and optimization, so they always reflect the final state of the data.
+- Tests split into logical files: `test_schema.py`, `test_barber.py`, `test_integration_time.py`, `test_frequency_average.py`.
+
+### Fixed
+
+- `skarabina/dask_ms.py` — `write_new_ms()` now updates the output SPECTRAL_WINDOW's `CHAN_FREQ` column when channels have been reduced by `--frequency-average-factor` or `--optimize`.
+- `skarabina/dask_ms.py` — `__init__()` truncates `CHAN_FREQ` to match the actual data channels if the subtable has more entries (handles pre-fix averaged MS files).
+- `skarabina/dask_ms.py` — `frequency_average()` trailing channels are combined into a final narrower channel rather than discarded.
+
 ## [0.4.0] - 2026-07-02
 
 ### Added
