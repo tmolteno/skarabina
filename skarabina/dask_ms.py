@@ -541,6 +541,8 @@ class DaskMS:
 
         DATA and WEIGHT_SPECTRUM average only unflagged visibilities.
         FLAG is OR'd (any flagged → flagged).
+        Trailing channels (fewer than <factor>) are combined into a
+        single narrower channel rather than discarded.
         """
         if factor < 2:
             return
@@ -548,53 +550,86 @@ class DaskMS:
         nrow = self.ds.FLAG.shape[0]
         nchan = self.ds.FLAG.shape[1]
         ncorr = self.ds.FLAG.shape[2]
-        n_new = nchan // factor
-        trim = n_new * factor
+        n_full = nchan // factor
+        n_rem = nchan % factor
+        n_new = n_full + (1 if n_rem > 0 else 0)
+        trim = n_full * factor
 
-        print(
-            "Frequency-averaging: factor %d"
-            " → %d channels (discarding %d trailing channels)"
-            % (factor, n_new, nchan - trim)
-        )
+        msg = "Frequency-averaging: factor %d → %d channels" % (factor, n_new)
+        if n_rem > 0:
+            msg += " (last channel from %d trailing)" % n_rem
+        print(msg)
 
         chan_dim = self.ds.DATA.dims[1]
-        # shape: (nrow, n_new, factor, ncorr)
-        shape_3d = (nrow, n_new, factor, ncorr)
+        shape_full = (nrow, n_full, factor, ncorr)
 
-        def _reshape(arr):
-            # arr is (nrow, nchan, ncorr)
-            return arr[:, :trim, :].reshape(shape_3d)
-
+        # --- Compute averaged arrays ---
         averaged = {}
-        if "DATA" in self.ds.data_vars:
-            d = _reshape(self.ds["DATA"].data)
-            f = _reshape(self.ds["FLAG"].data)
-            d_masked = da.where(f, 0j, d)
-            n_unflagged = da.sum(da.logical_not(f), axis=2)
-            n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
-            averaged["DATA"] = da.sum(d_masked, axis=2) / n_safe
 
-        if "WEIGHT_SPECTRUM" in self.ds.data_vars:
-            w = _reshape(self.ds["WEIGHT_SPECTRUM"].data)
-            f = _reshape(self.ds["FLAG"].data)
-            w_masked = da.where(f, 0, w)
-            n_unflagged = da.sum(da.logical_not(f), axis=2)
-            n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
-            averaged["WEIGHT_SPECTRUM"] = da.sum(w_masked, axis=2) / n_safe
+        for col in ["DATA", "WEIGHT_SPECTRUM"]:
+            if col not in self.ds.data_vars:
+                continue
+            d = self.ds[col].data[:, :trim, :].reshape(shape_full)
+            f = self.ds["FLAG"].data[:, :trim, :].reshape(shape_full)
+            z = 0j if d.dtype.kind == "c" else 0
+            d_masked = da.where(f, z, d)
+            n_unf = da.sum(da.logical_not(f), axis=2)
+            n_safe = da.where(n_unf == 0, 1, n_unf)
+            avg = da.sum(d_masked, axis=2) / n_safe
+            if n_rem > 0:
+                d_rem = self.ds[col].data[:, trim:, :]
+                f_rem = self.ds["FLAG"].data[:, trim:, :]
+                z = 0j if d_rem.dtype.kind == "c" else 0
+                d_rem_m = da.where(f_rem, z, d_rem)
+                n_unf_r = da.sum(da.logical_not(f_rem), axis=1)
+                n_safe_r = da.where(n_unf_r == 0, 1, n_unf_r)
+                avg_rem = (da.sum(d_rem_m, axis=1) / n_safe_r)[:, None, :]
+                avg = da.concatenate([avg, avg_rem], axis=1)
+            averaged[col] = avg
 
-            if "FLAG" in self.ds.data_vars:
-                averaged["FLAG"] = da.any(
-                    _reshape(self.ds["FLAG"].data), axis=2
+        if "FLAG" in self.ds.data_vars:
+            f = self.ds["FLAG"].data[:, :trim, :].reshape(shape_full)
+            avg = da.any(f, axis=2)
+            if n_rem > 0:
+                f_rem = self.ds["FLAG"].data[:, trim:, :]
+                avg_rem = da.any(f_rem, axis=1, keepdims=True)
+                avg = da.concatenate([avg, avg_rem], axis=1)
+            averaged["FLAG"] = avg
+
+        if "SIGMA_SPECTRUM" in self.ds.data_vars:
+            s = self.ds["SIGMA_SPECTRUM"].data[:, :trim, :].reshape(shape_full)
+            avg = da.mean(s, axis=2)
+            if n_rem > 0:
+                s_rem = da.mean(
+                    self.ds["SIGMA_SPECTRUM"].data[:, trim:, :],
+                    axis=1, keepdims=True,
                 )
+                avg = da.concatenate([avg, s_rem], axis=1)
+            averaged["SIGMA_SPECTRUM"] = avg
 
-            if "SIGMA_SPECTRUM" in self.ds.data_vars:
-                averaged["SIGMA_SPECTRUM"] = da.mean(
-                    _reshape(self.ds["SIGMA_SPECTRUM"].data), axis=2
-                )
+        # --- Apply to dataset ---
+        keep_idx = np.arange(0, trim, factor)
+        if n_rem > 0:
+            keep_idx = np.append(keep_idx, trim)  # one extra for tail
+        self.ds = self.ds.isel({chan_dim: keep_idx})
 
-            # Subsample channel-indexed variables, then replace averaged ones
-            keep_idx = np.arange(0, trim, factor)
-            self.ds = self.ds.isel({chan_dim: keep_idx})
+        chan_chunks = self.ds.chunks.get(chan_dim, None)
+        for col, arr in averaged.items():
+            if chan_chunks is not None:
+                new_chunks = list(arr.chunks)
+                new_chunks[1] = chan_chunks
+                arr = arr.rechunk(tuple(new_chunks))
+            self.ds[col] = (self.ds[col].dims, arr)
+            self.changed[col] = True
+
+        # Update the SPECTRAL_WINDOW CHAN_FREQ to match
+        if self.chan_freq_hz is not None:
+            freq_reshaped = self.chan_freq_hz[:trim].reshape(n_full, factor)
+            avg_freq = np.mean(freq_reshaped, axis=1)
+            if n_rem > 0:
+                avg_rem = np.mean(self.chan_freq_hz[trim:])
+                avg_freq = np.append(avg_freq, avg_rem)
+            self.chan_freq_hz = avg_freq
 
             chan_chunks = self.ds.chunks.get(chan_dim, None)
             for col, arr in averaged.items():
