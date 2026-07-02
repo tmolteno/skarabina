@@ -2,16 +2,20 @@
 # Skarabina
 
 ```
-       ___
-      /   \
-      |. .|
-      | _ |    skarabina
-     (|/ \|)   the dung beetle flagger
-    _/|   |\_
-  _/  |   |  \_
- / (  |   |  ) \
-(  /\ |   | /\  )
- \/  \|___|/  \/
+     ___
+    /   \
+    |\_/|    skarabina
+   -|0 0|-   the dung beetle flagger
+   / |___| \
+  |  |   |  |
+  |  |   |  |
+  |__|___|__|
+   / |   | \
+  /  |   |  \    ___
+ (   |   |   )  /   \
+ |   |   |   | |     |
+  \  |___|  /  |     |
+   \_/\_/\_/   \___/
 ```
 
 skarabina: a basic 1GC radio astronomy RFI flagger
