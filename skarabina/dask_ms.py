@@ -602,7 +602,8 @@ class DaskMS:
             if n_rem > 0:
                 s_rem = da.mean(
                     self.ds["SIGMA_SPECTRUM"].data[:, trim:, :],
-                    axis=1, keepdims=True,
+                    axis=1,
+                    keepdims=True,
                 )
                 avg = da.concatenate([avg, s_rem], axis=1)
             averaged["SIGMA_SPECTRUM"] = avg
@@ -643,7 +644,7 @@ class DaskMS:
             # Update the SPECTRAL_WINDOW CHAN_FREQ to match
             if self.chan_freq_hz is not None:
                 # Average the channel frequencies for each group
-                freq_reshaped = self.chan_freq_hz[:trim].reshape(n_new, factor)
+                freq_reshaped = self.chan_freq_hz[:trim].reshape(n_full, factor)
             self.chan_freq_hz = np.mean(freq_reshaped, axis=1)
 
     def optimize(self):
