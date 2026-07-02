@@ -1,0 +1,38 @@
+# Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
+#
+# Source-build Dockerfile (any architecture).
+# Builds python-casacore from source via scikit-build-core, forcing C++17
+# to avoid the C++20 std::allocator incompatibility with system casacore.
+#
+# Build:  docker build -f Dockerfile.source -t skarabina .
+# Run:    docker run --rm -it -v $(pwd):/data skarabina run \
+#           --ms /data/foo.ms --summary
+
+FROM python:3.11-slim
+
+# System dependencies for casacore and building python-casacore from source
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    casacore-dev \
+    gcc g++ \
+    libblas-dev liblapack-dev \
+    wcslib-dev libcfitsio-dev \
+    libboost-python-dev \
+    cmake ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build python-casacore from source with C++17.
+# python-casacore uses scikit-build-core (CMake) as its build backend.
+# System casacore headers (especially Allocator.h) reference
+# std::allocator::pointer / ::const_pointer / ::reference / ::const_reference
+# which were deprecated in C++17 and removed in C++20.
+# Forcing CMAKE_CXX_STANDARD=17 makes them available again.
+ENV CMAKE_ARGS="-DCMAKE_CXX_STANDARD=17"
+
+RUN pip install --no-cache-dir python-casacore
+
+# skarabina is pure Python and installs via its own wheels
+RUN pip install --no-cache-dir skarabina
+
+COPY docker-entrypoint.sh /usr/local/bin/
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["run", "--help"]
