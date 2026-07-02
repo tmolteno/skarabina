@@ -94,6 +94,18 @@ class DaskMS:
                     self.nspw = chan_freq.shape[0]
                     self.chan_freq_hz = chan_freq[0]
                     sw.close()
+                    # If the subtable has more channels than the actual
+                    # data (e.g. from a pre-fix frequency-averaged MS),
+                    # truncate to match.
+                    nchan_ds = self.ds.FLAG.shape[1]
+                    if len(self.chan_freq_hz) != nchan_ds:
+                        logger.warning(
+                            "CHAN_FREQ has %d entries but data has %d"
+                            " channels — truncating",
+                            len(self.chan_freq_hz),
+                            nchan_ds,
+                        )
+                        self.chan_freq_hz = self.chan_freq_hz[:nchan_ds]
                 except Exception:
                     logger.warning("Could not read CHAN_FREQ from %s", s)
 
@@ -764,6 +776,20 @@ class DaskMS:
                 t.copy(dest, deep=True)
                 t.close()
                 logger.debug("  copied subtable %s", sub_name)
+
+        # If channels were reduced (frequency_average or optimize),
+        # update the SPECTRAL_WINDOW CHAN_FREQ in the output MS.
+        if self.chan_freq_hz is not None:
+            nchan_in_ds = self.ds.FLAG.shape[1]
+            if len(self.chan_freq_hz) != nchan_in_ds:
+                for sub in self.sub_table_names:
+                    if "SPECTRAL_WINDOW" in sub:
+                        sub_name = os.path.basename(sub)
+                        dest = os.path.join(name, sub_name)
+                        sw = table(dest, ack=False, readonly=False)
+                        sw.putcol("CHAN_FREQ", self.chan_freq_hz.reshape(1, -1))
+                        sw.close()
+                        break
 
     def update_ms(self, name, clobber):
         """
