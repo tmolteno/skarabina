@@ -7,17 +7,60 @@
 
 ## Docker (any architecture)
 
-Pre-built multi-arch Docker images are available on GHCR:
+Pre-built multi-arch Docker images are published to the GitHub Container
+Registry (GHCR) on every tagged release.  They work on x86_64 and aarch64
+(DGX Spark, AWS Graviton, Raspberry Pi) from a single tag.
+
+### Pull the image
+
+```sh
+docker pull ghcr.io/tmolteno/skarabina:latest
+```
+
+Or pin a specific version:
+
+```sh
+docker pull ghcr.io/tmolteno/skarabina:v0.5.1
+```
+
+### Run skarabina (flag, summarize, optimize)
 
 ```sh
 docker run --rm -it -v $(pwd):/data \
-    ghcr.io/tmolteno/skarabina:latest run --help
+    ghcr.io/tmolteno/skarabina:latest run \
+    --ms /data/myobs.ms --summary
+```
+
+### Run skarabina-analyze (image analysis)
+
+```sh
+docker run --rm -it -v $(pwd):/data \
+    ghcr.io/tmolteno/skarabina:latest analyze \
+    --ms /data/myobs.ms --image-fov 2.5
+```
+
+### Typical flagging workflow
+
+```sh
+# 1. Summarise the measurement set
+docker run --rm -it -v $(pwd):/data \
+    ghcr.io/tmolteno/skarabina:latest run \
+    --ms /data/myobs.ms --summary
+
+# 2. Flag and write a new measurement set
+docker run --rm -it -v $(pwd):/data \
+    ghcr.io/tmolteno/skarabina:latest run \
+    --ms /data/myobs.ms \
+    --flag-nan --flag-clip 0,10 --flag-uv-above 250 \
+    --msout /data/myobs_flagged.ms --clobber
 ```
 
 The first argument must be `run` (for `skarabina`) or `analyze` (for
-`skarabina-analyze`).  All remaining arguments are forwarded.
+`skarabina-analyze`).  All remaining arguments are forwarded to that
+command.  Mount your data directory with `-v` so paths inside the
+container can reach your measurement sets.
 
-To build locally:
+### Build locally
 
 ```sh
 docker build -t skarabina .
