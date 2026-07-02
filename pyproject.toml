@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 skarabina = "skarabina.main:main"
+skarabina-analyze = "skarabina.analyze:main"
 
 [dependency-groups]
 dev = ["pytest>=8.4.0", "flake8>=7.0"]
