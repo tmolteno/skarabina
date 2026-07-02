@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `skarabina/dask_ms.py` — `write_new_ms()` now deep-copies all subtables (SPECTRAL_WINDOW, ANTENNA, etc.) to the output MS. Previously only the main table was written, so `CHAN_FREQ` and other subtable metadata were missing from `--msout`.
 - Suppressed casacore C++ stderr noise (`SORT_COLUMNS`, `SORT_ORDER`) during subtable copy unless `--debug` is set.
 
+## [0.5.0] - 2026-07-02
+
+### Added
+
+- `skarabina-analyze` CLI command: analyzes a measurement set and recommends an image size in pixels. Computes angular resolution from max baseline and highest frequency, then recommends dimensions given `--image-fov` (degrees) and `--oversampling-factor` (pixels per synthesised beam, default 5).
+
 ## [0.4.1] - 2026-07-02
 
 ### Added
