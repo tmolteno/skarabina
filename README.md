@@ -29,6 +29,8 @@ Intended to reduce I/O costs by performing the standard flagging during 1GC effi
                                 optional UV constraints to flag
   --time-average-factor INTEGER Combine every N consecutive rows by
                                 averaging (before --optimize)
+  --frequency-average-factor INTEGER Combine every N consecutive frequency
+                                channels by averaging
   --field-of-view FLOAT         Half-width from phase centre in degrees
                                 (default 1.0).  Used for fringe-rotation
                                 integration time limit.
