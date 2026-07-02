@@ -5,8 +5,9 @@ Skarabina is a 1GC radio astronomy RFI flagger for efficient, low-memory
 flagging of measurement sets.
 
 - [Usage & CLI reference](usage.md)
-- [Time & frequency averaging](averaging.md)
-- [Measurement set analyzer](analyze.md)
+- [Installation](INSTALL.md)
+- [Time & frequency averaging](AVERAGING.md)
+- [Measurement set analyzer](ANALYZE.md)
 - [Changelog](CHANGES.md)
 
 ## Quick start

@@ -37,19 +37,8 @@ See [doc/](doc/index.md) for full documentation:
 
     pip install skarabina
 
-On **aarch64** (e.g. NVIDIA DGX Spark, Raspberry Pi, AWS Graviton),
-`python-casacore` needs compilation.  The simplest approach is to
-use conda for the pre-built binary, then pip-install skarabina:
-
-    conda install -c conda-forge python-casacore
-    pip install skarabina
-
-If you must build from source, install all dependencies first:
-
-    sudo apt-get install casacore-dev python3-dev gcc g++ \
-        libblas-dev liblapack-dev wcslib-dev libcfitsio-dev \
-        libboost-python-dev
-    pip install skarabina
+See [INSTALL.md](doc/INSTALL.md) for detailed instructions, including
+aarch64 / NVIDIA DGX Spark setup.
 
 ## Quick start
 
