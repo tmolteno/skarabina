@@ -1,30 +1,23 @@
 # Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
-FROM python:3.11-slim AS base
+#
+# Build:  docker build -t skarabina .
+# Run:    docker run --rm -it -v $(pwd):/data skarabina \
+#           --ms /data/foo.ms --summary
+#
+# On aarch64 (DGX Spark, Graviton), use the conda-based Dockerfile instead:
+#   docker build -f Dockerfile.conda -t skarabina .
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates git \
+FROM python:3.11-slim
+
+# System dependencies for casacore and its Python bindings
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    casacore-dev \
+    gcc g++ \
+    libblas-dev liblapack-dev \
+    wcslib-dev libcfitsio-dev \
+    libboost-python-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# uv for dependency management and packaging
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+RUN pip install --no-cache-dir python-casacore skarabina
 
-# uv configuration:
-#   Install into the system interpreter so the `skarabina` console script is on PATH.
-ENV PYTHONFAULTHANDLER=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONHASHSEED=random \
-    UV_PROJECT_ENVIRONMENT=/usr/local \
-    UV_LINK_MODE=copy
-
-WORKDIR /code
-
-# Resolve and install dependencies first for better layer caching.
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project
-
-# Add the project source and install it.
-ADD skarabina/ skarabina/
-COPY README.md ./
-RUN uv sync --frozen
-
-ENTRYPOINT ["/bin/bash"]
+ENTRYPOINT ["skarabina"]
