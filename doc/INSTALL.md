@@ -8,7 +8,15 @@
 ## aarch64 (NVIDIA DGX Spark, Raspberry Pi, AWS Graviton)
 
 `python-casacore` has no pre-built aarch64 wheel.  The simplest
-approach is to use conda (which has one), then pip-install skarabina:
+approach is to use conda (which has one), then pip-install skarabina.
+
+First install conda if you don't have it:
+
+    # Download and install Miniconda (lightweight conda)
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
+    bash Miniconda3-latest-Linux-aarch64.sh  # follow prompts, accept defaults
+
+Then:
 
     conda install -c conda-forge python-casacore
     pip install skarabina
