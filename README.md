@@ -37,6 +37,8 @@ Computes the angular resolution from the longest baseline and highest
 frequency, then recommends pixel dimensions given the field-of-view and
 oversampling factor (pixels per synthesised beam).
 
+See [ANALYZE.md](ANALYZE.md) for details.
+
 ## Usage
 
 ### Command-line options
@@ -99,8 +101,19 @@ Reduce data volume by averaging consecutive integrations:
 
     skarabina --ms test.ms --time-average-factor 4 --optimize --msout averaged.ms
 
-This averages every 4 rows (mean for DATA/UVW, OR for FLAG, sum for INTERVAL),
-discarding any trailing rows that don't form a complete block.
+Averages every N rows (mean for DATA/UVW using only unflagged visibilities,
+OR for FLAG, sum for INTERVAL). Trailing rows that don't form a complete
+block are discarded. See [AVERAGING.md](AVERAGING.md) for details.
+
+### Frequency averaging
+
+Reduce channel count by averaging consecutive frequency channels:
+
+    skarabina --ms test.ms --frequency-average-factor 4 --optimize --msout averaged.ms
+
+Averages every N channels (masked mean for DATA, OR for FLAG). Trailing
+channels are combined into a final narrower channel. See
+[AVERAGING.md](AVERAGING.md) for details.
 
 ### Full pipeline example
 
