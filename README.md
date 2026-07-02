@@ -10,7 +10,17 @@ Intended to reduce I/O costs by performing the standard flagging during 1GC effi
 ## Install
 
     pip install skarabina
-    
+
+## skarabina-analyze
+
+Analyze a measurement set and recommend an image size:
+
+    skarabina-analyze --ms foo.ms --image-fov 2.5 --oversampling-factor 5
+
+Computes the angular resolution from the longest baseline and highest
+frequency, then recommends pixel dimensions given the field-of-view and
+oversampling factor (pixels per synthesised beam).
+
 ## Usage
 
 ### Command-line options
