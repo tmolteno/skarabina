@@ -1,6 +1,19 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Skarabina
 
+```
+       ___
+      /   \
+      |. .|
+      | _ |    skarabina
+     (|/ \|)   the dung beetle flagger
+    _/|   |\_
+  _/  |   |  \_
+ / (  |   |  ) \
+(  /\ |   | /\  )
+ \/  \|___|/  \/
+```
+
 skarabina: a basic 1GC radio astronomy RFI flagger
 
 Author: Tim Molteno (tim@elec.ac.nz)
