@@ -632,21 +632,6 @@ class DaskMS:
                 avg_freq = np.append(avg_freq, avg_rem)
             self.chan_freq_hz = avg_freq
 
-            chan_chunks = self.ds.chunks.get(chan_dim, None)
-            for col, arr in averaged.items():
-                if chan_chunks is not None:
-                    new_chunks = list(arr.chunks)
-                    new_chunks[1] = chan_chunks  # axis 1 is chan
-                    arr = arr.rechunk(tuple(new_chunks))
-                self.ds[col] = (self.ds[col].dims, arr)
-                self.changed[col] = True
-
-            # Update the SPECTRAL_WINDOW CHAN_FREQ to match
-            if self.chan_freq_hz is not None:
-                # Average the channel frequencies for each group
-                freq_reshaped = self.chan_freq_hz[:trim].reshape(n_full, factor)
-            self.chan_freq_hz = np.mean(freq_reshaped, axis=1)
-
     def optimize(self):
         """
         Run through the flags, and remove all completely flagged rows
