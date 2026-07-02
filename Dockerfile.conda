@@ -1,7 +1,7 @@
 # Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 #
 # Conda-based Dockerfile for aarch64 (DGX Spark, AWS Graviton, etc.)
-# where python-casacore can't compile from source against system casacore.
+# where python-casacore, numcodecs, and psutil can't compile from source.
 #
 # Build:  docker build -f Dockerfile.conda -t skarabina .
 # Run:    docker run --rm -it -v $(pwd):/data skarabina \
@@ -9,11 +9,15 @@
 
 FROM condaforge/miniforge3
 
+# Install packages that need compilation via conda (pre-built binaries).
+# pip can handle pure-Python packages from wheels.
 RUN conda install -y -c conda-forge \
     python-casacore numcodecs psutil \
     && conda clean -afy
 
-RUN pip install --no-cache-dir skarabina
+# --only-binary :all: prevents pip from ever building from source.
+# Conda packages satisfy the compiled deps; everything else has wheels.
+RUN pip install --no-cache-dir --only-binary :all: skarabina
 
 COPY docker-entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
