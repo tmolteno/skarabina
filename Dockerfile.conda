@@ -9,7 +9,8 @@
 
 FROM condaforge/miniforge3
 
-RUN conda install -y -c conda-forge python-casacore \
+RUN conda install -y -c conda-forge \
+    python-casacore numcodecs psutil \
     && conda clean -afy
 
 RUN pip install --no-cache-dir skarabina
