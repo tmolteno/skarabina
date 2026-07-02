@@ -41,7 +41,7 @@ On **aarch64** (e.g. NVIDIA DGX Spark, Raspberry Pi, AWS Graviton),
 `stimela` and `python-casacore` pull in packages that need compilation.
 Install build tools and casacore development headers first:
 
-    sudo apt-get install python3-dev gcc casacore-dev
+    sudo apt-get install python3-dev gcc casacore-dev libwcs-dev
     pip install skarabina
 
 If `casacore-dev` is not available for your distribution, build
