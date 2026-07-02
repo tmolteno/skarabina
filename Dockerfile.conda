@@ -4,15 +4,19 @@
 # where python-casacore, numcodecs, and psutil need compilation.
 #
 # Build:  docker build -f Dockerfile.conda -t skarabina .
-# Run:    docker run --rm -it -v $(pwd):/data skarabina \
-#           analyze --ms /data/foo.ms --image-fov 2.5
+# Run (flag):    docker run --rm -it -v $(pwd):/data skarabina run \
+#                  --ms /data/foo.ms --summary
+# Run (analyze): docker run --rm -it -v $(pwd):/data skarabina analyze \
+#                  --ms /data/foo.ms --image-fov 2.5
 
 FROM condaforge/miniforge3
 
 # Install packages that need compilation via conda-forge.
-# This provides pre-built aarch64 binaries so pip won't build them.
+# This provides pre-built aarch64 binaries.  compilers are included so
+# that if pip decides to rebuild anything (numcodecs, psutil) it can.
 RUN conda install -y -c conda-forge \
     python-casacore numcodecs psutil \
+    compilers \
     && conda clean -afy
 
 # Pip-install skarabina.  Conda packages satisfy the compiled deps;
@@ -21,4 +25,4 @@ RUN pip install --no-cache-dir skarabina
 
 COPY docker-entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["--help"]
+CMD ["run", "--help"]

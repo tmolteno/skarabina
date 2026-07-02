@@ -5,6 +5,35 @@
 
     pip install skarabina
 
+## Docker (any architecture)
+
+Pre-built Docker images are available on GHCR.  Choose the one that
+matches your architecture:
+
+```sh
+# x86_64
+sudo docker run --rm -it -v $(pwd):/data \
+    ghcr.io/tmolteno/skarabina:latest run --help
+
+# aarch64 (DGX Spark, AWS Graviton, Raspberry Pi)
+sudo docker run --rm -it -v $(pwd):/data \
+    ghcr.io/tmolteno/skarabina:latest-conda analyze --help
+```
+
+The first argument to the container must be `run` (for `skarabina`) or
+`analyze` (for `skarabina-analyze`).  All remaining arguments are
+forwarded to that command.
+
+To build the images locally:
+
+```sh
+# x86_64
+docker build -t skarabina .
+
+# aarch64 (or any arch with Docker Buildx + QEMU)
+docker build -f Dockerfile.conda -t skarabina .
+```
+
 ## aarch64 (NVIDIA DGX Spark, Raspberry Pi, AWS Graviton)
 
 `python-casacore` has no pre-built aarch64 wheel.  The simplest
@@ -20,6 +49,12 @@ Then:
 
     conda install -c conda-forge python-casacore
     pip install skarabina
+
+If pip tries to build `numcodecs` or `psutil` from source and fails
+with `command 'gcc' failed: No such file or directory`, install
+compilers first:
+
+    conda install -c conda-forge compilers
 
 ### Building from source (if conda is unavailable)
 
@@ -37,10 +72,20 @@ Then:
 pip install skarabina
 ```
 
-If the build fails with C++ allocator errors (`no type named 'pointer'`),
-your system casacore was compiled with a different C++ standard than
-`python-casacore` expects.  This is an upstream incompatibility — use
-conda instead.
+If the build fails with C++ allocator errors like:
+
+```
+error: no type named 'pointer' in 'casacore::casacore_allocator<...>::Super'
+error: 'struct casacore::Allocator_private::BulkAllocator<...>' has no member named 'destroy'
+```
+
+your system casacore was compiled with an older C++ standard than the
+one `python-casacore` needs (C++17 removed `pointer`, `reference`,
+`rebind` etc. from `std::allocator`; they were deprecated in C++17 and
+removed in C++20).  This is an upstream incompatibility between your
+distro's casacore packages and the version of `python-casacore` you
+are building.  Use conda instead, or install casacore from source with
+`-std=c++17`.
 
 ## Development install
 
