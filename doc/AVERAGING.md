@@ -58,7 +58,8 @@ measurement set size by a factor of *N* (≈ *N*).
 | Column          | Operation | Notes |
 |-----------------|-----------|-------|
 | DATA            | Masked mean | Flagged visibilities excluded |
-| WEIGHT_SPECTRUM | Masked mean | Same mask as DATA |
+| WEIGHT_SPECTRUM | Sum         | w = 1/σ², combined: Σ wᵢ |
+| SIGMA_SPECTRUM  | 1/√(Σ 1/σ²) | Inverse-variance weighting |
 | FLAG, FLAG_ROW  | OR          | Any flagged → flagged |
 | UVW             | Mean        | Per-row metadata |
 | TIME            | Mean        | Averaged timestamp |
@@ -77,7 +78,8 @@ channel count by a factor of *N*.
 | Column          | Operation | Notes |
 |-----------------|-----------|-------|
 | DATA            | Masked mean | Flagged visibilities excluded |
-| WEIGHT_SPECTRUM | Masked mean | Same mask as DATA |
+| WEIGHT_SPECTRUM | Sum         | w = 1/σ², combined: Σ wᵢ |
+| SIGMA_SPECTRUM  | 1/√(Σ 1/σ²) | Inverse-variance weighting |
 | FLAG            | OR          | Any flagged → flagged |
 | SIGMA_SPECTRUM  | Mean        | |
 | CHAN_FREQ       | Mean        | SPECTRAL_WINDOW updated |

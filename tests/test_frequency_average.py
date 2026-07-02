@@ -114,3 +114,50 @@ def test_chan_freq():
     avg_rem = np.mean(freqs[trim:])
     result = np.append(avg_full, avg_rem)
     assert np.allclose(result, [150.0, 350.0, 500.0])
+
+
+def test_weight_spectrum_sum():
+    """WEIGHT_SPECTRUM: sum of unflagged weights (w = 1/σ², Σ w)."""
+    # 2 groups of 2 channels, all unflagged
+    weight = np.ones((1, 4, 1), dtype=np.float32) * 2.0
+    flag = np.zeros((1, 4, 1), dtype=bool)
+    n_full = 4 // 2
+    trim = n_full * 2
+    reshaped = weight[:, :trim, :].reshape(1, n_full, 2, 1)
+    result = np.sum(reshaped, axis=2)  # sum, not mean
+    assert np.allclose(result, [4.0, 4.0])
+
+
+def test_sigma_spectrum_inv_var():
+    """SIGMA_SPECTRUM: σ̄ = 1 / √(Σ 1/σ²)."""
+    # 2 groups of 2: σ = 2.0 each → 1/σ² = 0.25 each → Σ = 0.5 → σ̄ = 1/√0.5 = √2
+    sigma = np.ones((1, 4, 1), dtype=np.float32) * 2.0
+    flag = np.zeros((1, 4, 1), dtype=bool)
+    n_full = 4 // 2
+    trim = n_full * 2
+    s = sigma[:, :trim, :].reshape(1, n_full, 2, 1)
+    inv_var = 1.0 / (s * s)
+    sum_inv = np.sum(inv_var, axis=2)
+    sum_safe = np.where(sum_inv == 0, 1, sum_inv)
+    result = np.sqrt(1.0 / sum_safe)
+    assert np.allclose(result, np.sqrt(2.0))  # 1/√(2 × 0.25) = √2
+
+
+def test_sigma_with_flagged():
+    """SIGMA with one flagged: only use unflagged."""
+    sigma = np.array(
+        [[[2.0], [4.0], [3.0], [5.0]]], dtype=np.float32
+    )  # 1 row, 4 ch, 1 corr
+    flag = np.array([[[True], [False], [False], [False]]], dtype=bool)
+    # Group 0: σ=[2,4], 1/σ²=[0, 0.0625], Σ=0.0625, σ̄=1/√0.0625=4.0
+    # Group 1: σ=[3,5], 1/σ²=[0.1111, 0.04], Σ=0.1511, σ̄=1/√0.1511≈2.57
+    n_full = 4 // 2
+    trim = n_full * 2
+    s = sigma[:, :trim, :].reshape(1, n_full, 2, 1)
+    f = flag[:, :trim, :].reshape(1, n_full, 2, 1)
+    inv_var = np.where(f, 0, 1.0 / (s * s))
+    sum_inv = np.sum(inv_var, axis=2)
+    sum_safe = np.where(sum_inv == 0, 1, sum_inv)
+    result = np.sqrt(1.0 / sum_safe)
+    assert np.allclose(result[0, 0, 0], 4.0)  # only the 4.0 contributes
+    assert np.allclose(result[0, 1, 0], np.sqrt(1 / (1 / 9 + 1 / 25)))  # ~2.57

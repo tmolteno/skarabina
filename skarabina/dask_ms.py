@@ -494,10 +494,18 @@ class DaskMS:
         if "WEIGHT_SPECTRUM" in self.ds.data_vars:
             w = _reshape(self.ds["WEIGHT_SPECTRUM"].data, shape_3d)
             f = _reshape(self.ds["FLAG"].data, shape_3d)
+            # Weight = 1/σ². Combined weight = Σ wᵢ (sum of unflagged).
             w_masked = da.where(f, 0, w)
-            n_unflagged = da.sum(da.logical_not(f), axis=1)
-            n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
-            averaged["WEIGHT_SPECTRUM"] = da.sum(w_masked, axis=1) / n_safe
+            averaged["WEIGHT_SPECTRUM"] = da.sum(w_masked, axis=1)
+
+        if "SIGMA_SPECTRUM" in self.ds.data_vars:
+            s = _reshape(self.ds["SIGMA_SPECTRUM"].data, shape_3d)
+            f = _reshape(self.ds["FLAG"].data, shape_3d)
+            # σ̄ = 1 / √(Σ 1/σ²) — sum inverse variances, then invert.
+            inv_var = da.where(f, 0, 1.0 / (s * s))
+            sum_inv_var = da.sum(inv_var, axis=1)
+            sum_safe = da.where(sum_inv_var == 0, 1, sum_inv_var)
+            averaged["SIGMA_SPECTRUM"] = da.sqrt(1.0 / sum_safe)
 
         for col, s in [
             ("UVW", shape_uvw),
@@ -578,26 +586,57 @@ class DaskMS:
         # --- Compute averaged arrays ---
         averaged = {}
 
-        for col in ["DATA", "WEIGHT_SPECTRUM"]:
-            if col not in self.ds.data_vars:
-                continue
-            d = self.ds[col].data[:, :trim, :].reshape(shape_full)
+        # DATA: masked mean (exclude flagged)
+        if "DATA" in self.ds.data_vars:
+            d = self.ds["DATA"].data[:, :trim, :].reshape(shape_full)
             f = self.ds["FLAG"].data[:, :trim, :].reshape(shape_full)
-            z = 0j if d.dtype.kind == "c" else 0
-            d_masked = da.where(f, z, d)
+            d_masked = da.where(f, 0j, d)
             n_unf = da.sum(da.logical_not(f), axis=2)
             n_safe = da.where(n_unf == 0, 1, n_unf)
             avg = da.sum(d_masked, axis=2) / n_safe
             if n_rem > 0:
-                d_rem = self.ds[col].data[:, trim:, :]
+                d_rem = self.ds["DATA"].data[:, trim:, :]
                 f_rem = self.ds["FLAG"].data[:, trim:, :]
-                z = 0j if d_rem.dtype.kind == "c" else 0
-                d_rem_m = da.where(f_rem, z, d_rem)
+                d_rem_m = da.where(f_rem, 0j, d_rem)
                 n_unf_r = da.sum(da.logical_not(f_rem), axis=1)
                 n_safe_r = da.where(n_unf_r == 0, 1, n_unf_r)
                 avg_rem = (da.sum(d_rem_m, axis=1) / n_safe_r)[:, None, :]
                 avg = da.concatenate([avg, avg_rem], axis=1)
+            averaged["DATA"] = avg
+
+        # WEIGHT_SPECTRUM: sum of unflagged weights (w = 1/σ², Σ w)
+        for col in ["WEIGHT_SPECTRUM"]:
+            if col not in self.ds.data_vars:
+                continue
+            s = self.ds[col].data[:, :trim, :].reshape(shape_full)
+            f = self.ds["FLAG"].data[:, :trim, :].reshape(shape_full)
+            s_masked = da.where(f, 0, s)
+            avg = da.sum(s_masked, axis=2)
+            if n_rem > 0:
+                s_rem = self.ds[col].data[:, trim:, :]
+                f_rem = self.ds["FLAG"].data[:, trim:, :]
+                s_rem_m = da.where(f_rem, 0, s_rem)
+                avg_rem = da.sum(s_rem_m, axis=1, keepdims=True)
+                avg = da.concatenate([avg, avg_rem], axis=1)
             averaged[col] = avg
+
+        # SIGMA_SPECTRUM: σ̄ = 1 / √(Σ 1/σ²)
+        if "SIGMA_SPECTRUM" in self.ds.data_vars:
+            s = self.ds["SIGMA_SPECTRUM"].data[:, :trim, :].reshape(shape_full)
+            f = self.ds["FLAG"].data[:, :trim, :].reshape(shape_full)
+            inv_var = da.where(f, 0, 1.0 / (s * s))
+            sum_inv = da.sum(inv_var, axis=2)
+            sum_safe = da.where(sum_inv == 0, 1, sum_inv)
+            avg = da.sqrt(1.0 / sum_safe)
+            if n_rem > 0:
+                s_rem = self.ds["SIGMA_SPECTRUM"].data[:, trim:, :]
+                f_rem = self.ds["FLAG"].data[:, trim:, :]
+                inv_var_r = da.where(f_rem, 0, 1.0 / (s_rem * s_rem))
+                sum_inv_r = da.sum(inv_var_r, axis=1, keepdims=True)
+                sum_safe_r = da.where(sum_inv_r == 0, 1, sum_inv_r)
+                avg_rem = da.sqrt(1.0 / sum_safe_r)
+                avg = da.concatenate([avg, avg_rem], axis=1)
+            averaged["SIGMA_SPECTRUM"] = avg
 
         if "FLAG" in self.ds.data_vars:
             f = self.ds["FLAG"].data[:, :trim, :].reshape(shape_full)
@@ -607,18 +646,6 @@ class DaskMS:
                 avg_rem = da.any(f_rem, axis=1, keepdims=True)
                 avg = da.concatenate([avg, avg_rem], axis=1)
             averaged["FLAG"] = avg
-
-        if "SIGMA_SPECTRUM" in self.ds.data_vars:
-            s = self.ds["SIGMA_SPECTRUM"].data[:, :trim, :].reshape(shape_full)
-            avg = da.mean(s, axis=2)
-            if n_rem > 0:
-                s_rem = da.mean(
-                    self.ds["SIGMA_SPECTRUM"].data[:, trim:, :],
-                    axis=1,
-                    keepdims=True,
-                )
-                avg = da.concatenate([avg, s_rem], axis=1)
-            averaged["SIGMA_SPECTRUM"] = avg
 
         # --- Apply to dataset ---
         keep_idx = np.arange(0, trim, factor)
