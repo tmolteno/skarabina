@@ -7,96 +7,61 @@
 
 ## Docker (any architecture)
 
-Pre-built Docker images are available on GHCR.  Choose the one that
-matches your architecture:
+Pre-built multi-arch Docker images are available on GHCR:
 
 ```sh
-# x86_64
-sudo docker run --rm -it -v $(pwd):/data \
+docker run --rm -it -v $(pwd):/data \
     ghcr.io/tmolteno/skarabina:latest run --help
-
-# aarch64 (DGX Spark, AWS Graviton, Raspberry Pi)
-sudo docker run --rm -it -v $(pwd):/data \
-    ghcr.io/tmolteno/skarabina:latest-conda analyze --help
 ```
 
-The first argument to the container must be `run` (for `skarabina`) or
-`analyze` (for `skarabina-analyze`).  All remaining arguments are
-forwarded to that command.
+The first argument must be `run` (for `skarabina`) or `analyze` (for
+`skarabina-analyze`).  All remaining arguments are forwarded.
 
-To build the images locally:
+To build locally:
 
 ```sh
-# x86_64 (uses pre-built wheels)
 docker build -t skarabina .
-
-# aarch64 via conda (pre-built binaries)
-docker build -f Dockerfile.conda -t skarabina .
-
-# any architecture, build python-casacore from source (scikit-build-core)
-docker build -f Dockerfile.source -t skarabina .
 ```
+
+A single Dockerfile supports all architectures — on x86_64 it uses a
+pre-built `python-casacore` wheel; on aarch64 it builds from source
+via scikit-build-core with C++17.
 
 ## aarch64 (NVIDIA DGX Spark, Raspberry Pi, AWS Graviton)
 
-`python-casacore` has no pre-built aarch64 wheel.  The simplest
-approach is to use conda (which has one), then pip-install skarabina.
-
-First install conda if you don't have it:
-
-    # Download and install Miniconda (lightweight conda)
-    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
-    bash Miniconda3-latest-Linux-aarch64.sh  # follow prompts, accept defaults
-
-Then:
-
-    conda install -c conda-forge python-casacore
-    pip install skarabina
-
-If pip tries to build `numcodecs` or `psutil` from source and fails
-with `command 'gcc' failed: No such file or directory`, install
-compilers first:
-
-    conda install -c conda-forge compilers
-
-### Building from source (if conda is unavailable)
-
-Install system dependencies:
+`python-casacore` has no pre-built aarch64 wheel, but builds from
+source successfully.  Install system dependencies first:
 
 ```sh
 sudo apt-get install casacore-dev python3-dev gcc g++ \
     libblas-dev liblapack-dev wcslib-dev libcfitsio-dev \
-    libboost-python-dev
+    libboost-python-dev cmake ninja-build
 ```
 
 Then:
-
-```sh
-pip install skarabina
-```
-
-If the build fails with C++ allocator errors like:
-
-```
-error: no type named 'pointer' in 'casacore::casacore_allocator<...>::Super'
-error: 'struct casacore::Allocator_private::BulkAllocator<...>' has no member named 'destroy'
-```
-
-your system casacore was compiled with an older C++ standard than the
-one `python-casacore` needs (C++17 removed `pointer`, `reference`,
-`rebind` etc. from `std::allocator`; they were deprecated in C++17 and
-removed in C++20).  Work around it by forcing C++17:
 
 ```sh
 CMAKE_ARGS="-DCMAKE_CXX_STANDARD=17" pip install python-casacore
 pip install skarabina
 ```
 
-This tells scikit-build-core (the build backend `python-casacore` uses)
-to compile with C++17 where those allocator typedefs still exist.
+The `CMAKE_ARGS` tells scikit-build-core (the CMake build backend) to
+compile with C++17.  This is needed because system casacore headers
+reference `std::allocator::pointer` / `::const_pointer` / `::reference`
+typedefs that were deprecated in C++17 and removed in C++20.
 
-Alternatively, use conda or the `Dockerfile.source` which sets this flag
-automatically, or install casacore from source with `-std=c++17`.
+### If the C++ allocator build fails
+
+If you see errors like:
+
+```
+error: no type named 'pointer' in 'casacore::casacore_allocator<...>::Super'
+error: 'struct casacore::Allocator_private::BulkAllocator<...>' has no member named 'destroy'
+```
+
+the `CMAKE_ARGS` flag above resolves them.  If it persists, your
+casacore package may need updating (`apt-get update`), or you can
+build casacore from source with `-std=c++17`.
 
 ## Development install
 
