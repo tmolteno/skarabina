@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1] — 2026-07-03
+
+### Fixed
+
+- **CI: add QEMU for multi-arch builds.**  `docker/setup-qemu-action` is required to build `linux/arm64` on x86_64 runners.  Without it, the `:latest` tag contained only an amd64 manifest, causing `no matching manifest for linux/arm64/v8` on aarch64.
+- **CI: add `:latest` tag.**  The metadata action now emits `type=raw,value=latest` so `ghcr.io/tmolteno/skarabina:latest` always points to the most recent release.
+
 ## [0.6.0] — 2026-07-03
 
 ### Docker
