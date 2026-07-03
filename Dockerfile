@@ -14,7 +14,7 @@
 # Run (analyze): docker run --rm -it -v $(pwd):/data skarabina analyze \
 #                  --ms /data/foo.ms --image-fov 2.5
 
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # System dependencies for casacore and building python-casacore from source
 RUN apt-get update && apt-get install -y --no-install-recommends \
