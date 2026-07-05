@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2] — 2026-07-06
+
+### Changed
+
+- **CI: Docker builds only on tag pushes.**  Removed the per-push/PR test-build
+  job — images are built and pushed only when a `v*.*.*` tag is pushed.
+
 ## [0.6.1] — 2026-07-03
 
 ### Fixed

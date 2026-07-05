@@ -4,14 +4,11 @@ _include:
 
 cabs:
   skarabina:
+    name: skarabina
     info: "skarabina (dung beetle) -- A basic 1GC flagger"
-    backend:
-      native:
-        virtual_env: ~/github/skarabina/venv
-    #
-    # image:
-    #     _use: vars.skarabina.images
-    #     name: skarabina
+    image:
+      _use: vars.skarabina.images
+      name: skarabina
     command: skarabina
     inputs:
       ms:
