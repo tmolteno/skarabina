@@ -31,14 +31,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV CMAKE_ARGS="-DCMAKE_CXX_STANDARD=17"
 
 # On non-x86 architectures (e.g. aarch64) numcodecs has no pre-built Linux
-# wheel and must be compiled from source.  Its old build system unconditionally
-# passes -msse2/-mavx2 which are x86-only flags; disable them so the compiler
-# does not error out.
-RUN arch="$(uname -m)"; \
-    if [ "$arch" != "x86_64" ]; then \
-        DISABLE_NUMCODECS_SSE2=1 DISABLE_NUMCODECS_AVX2=1 \
-        pip install --no-cache-dir numcodecs; \
-    fi
+# wheel and must be compiled from source.  Its build system unconditionally
+# passes -msse2/-mavx2 which are x86-only flags; disable them globally so the
+# compiler does not error out regardless of which pip invocation triggers the
+# build (skarabina pulls numcodecs transitively via zarr -> dask-ms).
+# These env vars are harmless on x86_64 where pre-built wheels are used.
+ENV DISABLE_NUMCODECS_SSE2=1
+ENV DISABLE_NUMCODECS_AVX2=1
 
 RUN pip install --no-cache-dir python-casacore skarabina
 
