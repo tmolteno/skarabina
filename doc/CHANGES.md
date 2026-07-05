@@ -1,6 +1,17 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.3] — 2026-07-06
+
+### Fixed
+
+- **Docker: numcodecs compilation fails on arm64.**  `DISABLE_NUMCODECS_SSE2` and
+  `DISABLE_NUMCODECS_AVX2` are now set globally via `ENV` so they apply to
+  `numcodecs` compilation regardless of which `pip` invocation triggers it
+  (`skarabina` pulls `numcodecs` transitively via zarr → dask-ms).  Previously
+  the vars were scoped to a conditional pre-install `RUN` and were not active
+  when `pip install skarabina` later rebuilt `numcodecs`.
+
 ## [0.6.2] — 2026-07-06
 
 ### Changed
