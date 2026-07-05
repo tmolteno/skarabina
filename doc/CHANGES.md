@@ -1,16 +1,28 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.4] — 2026-07-06
+
+### Fixed
+
+- **Docker: numcodecs compilation fails on arm64 (proper fix).**  Under QEMU
+  emulation (docker buildx for arm64), `py-cpuinfo` detects the host x86_64
+  CPU features, causing numcodecs' `setup.py` to add `-msse2`/`-mavx2` which
+  the aarch64 compiler rejects.  The `DISABLE_NUMCODECS_*` env vars do not
+  help — they flip the flags to `-mno-sse2`/`-mno-avx2` which are also
+  x86-only.  The actual fix: set `CFLAGS="-O2"` during the numcodecs install.
+  numcodecs' `setup.py` skips its SIMD flag logic entirely when `CFLAGS` is
+  present in the environment.  numcodecs is pre-installed separately so that
+  `pip install skarabina` sees it already satisfied and does not rebuild it
+  without `CFLAGS` set.
+
 ## [0.6.3] — 2026-07-06
 
 ### Fixed
 
-- **Docker: numcodecs compilation fails on arm64.**  `DISABLE_NUMCODECS_SSE2` and
-  `DISABLE_NUMCODECS_AVX2` are now set globally via `ENV` so they apply to
-  `numcodecs` compilation regardless of which `pip` invocation triggers it
-  (`skarabina` pulls `numcodecs` transitively via zarr → dask-ms).  Previously
-  the vars were scoped to a conditional pre-install `RUN` and were not active
-  when `pip install skarabina` later rebuilt `numcodecs`.
+- **Docker: attempted numcodecs arm64 fix.**  Set `DISABLE_NUMCODECS_SSE2` and
+  `DISABLE_NUMCODECS_AVX2` globally via `ENV`.  This did not resolve the
+  problem (see 0.6.4 for the proper fix).
 
 ## [0.6.2] — 2026-07-06
 
