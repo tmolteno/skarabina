@@ -9,10 +9,10 @@
 #
 # Pre-built images: docker pull ghcr.io/tmolteno/skarabina:latest
 # Build:  docker build -t skarabina .
-# Run (flag):    docker run --rm -it -v $(pwd):/data skarabina run \
+# Run (flag):    docker run --rm -it -v $(pwd):/data skarabina skarabina \
 #                  --ms /data/foo.ms --summary
-# Run (analyze): docker run --rm -it -v $(pwd):/data skarabina analyze \
-#                  --ms /data/foo.ms --image-fov 2.5
+# Run (analyze): docker run --rm -it -v $(pwd):/data skarabina \
+#                  skarabina-analyze --ms /data/foo.ms --image-fov 2.5
 
 FROM python:3.13-slim
 
@@ -31,7 +31,3 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV CMAKE_ARGS="-DCMAKE_CXX_STANDARD=17"
 
 RUN pip install --no-cache-dir python-casacore skarabina
-
-COPY docker-entrypoint.sh /usr/local/bin/
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["run", "--help"]

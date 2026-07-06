@@ -1,6 +1,16 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.11] — 2026-07-06
+
+### Changed
+
+- **Docker: removed custom entrypoint.**  The `docker-entrypoint.sh` dispatcher
+  (`run`/`analyze`) is gone.  The container now runs any command directly.
+  Use `skarabina ...` or `skarabina-analyze ...` as the container command.
+  This lets Stimela use the containerized backend identically to the native
+  backend.
+
 ## [0.6.10] — 2026-07-06
 
 ### Fixed
