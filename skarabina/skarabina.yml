@@ -100,3 +100,6 @@ cabs:
         dtype: float
         info: Pixels per resolution element (synthesised beam)
         default: 5.0
+      output-json:
+        dtype: File
+        info: Write analysis results as JSON to this file
