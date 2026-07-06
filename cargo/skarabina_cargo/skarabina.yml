@@ -54,6 +54,8 @@ cabs:
         clip:
           dtype: Tuple[float, float]
           info: Flag clip.
+          policies:
+            repeat: false
         spectral-window:
           dtype: File
           info: YAML file with spectral window flagging rules.

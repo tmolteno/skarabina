@@ -1,6 +1,13 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.15] — 2026-07-07
+
+### Fixed
+
+- **`flag.clip` schema: added `repeat: false` policy.**  Without it, stimela
+  rejects the YAML list `[0, 100]` for `Tuple[float, float]` dtype.
+
 ## [0.6.14] — 2026-07-07
 
 ### Added
