@@ -1,0 +1,23 @@
+# Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
+[project]
+name = "skarabina-cargo"
+version = "0.6.11"
+description = "Stimela cab definitions for skarabina"
+authors = [
+    { name = "Tim Molteno", email = "tim@elec.ac.nz" }
+]
+license = { text = "GPLv3" }
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "stimela>=2.1.2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.4.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["skarabina_cargo"]

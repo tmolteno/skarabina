@@ -5,6 +5,12 @@
 
 ### Changed
 
+- **Split into two packages.**  The repo now contains `skarabina` (CLI tool)
+  and `skarabina-cargo` (Stimela cab definitions).  `skarabina` no longer
+  depends on `stimela` — all CLI parameters are explicit `@click.option`
+  decorators in `main.py`.  The cab schema (`skarabina.yml`) and base vars
+  (`genesis/skarabina-base.yml`) live in `skarabina_cargo/`.  Stimela recipes
+  should now `_include: (skarabina_cargo): skarabina.yml`.
 - **Docker: removed custom entrypoint.**  The `docker-entrypoint.sh` dispatcher
   (`run`/`analyze`) is gone.  The container now runs any command directly.
   Use `skarabina ...` or `skarabina-analyze ...` as the container command.

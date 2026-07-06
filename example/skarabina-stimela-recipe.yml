@@ -1,6 +1,6 @@
 # Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 _include:
-  - (skarabina):
+  - (skarabina_cargo):
       - skarabina.yml
 
 cabs:
