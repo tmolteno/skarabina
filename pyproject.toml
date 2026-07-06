@@ -1,7 +1,7 @@
 # Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 [project]
 name = "skarabina"
-version = "0.6.6"
+version = "0.6.7"
 description = "Skarabina (dungbeetle): An all purpose 1GC flagger"
 authors = [
     { name = "Tim Molteno", email = "tim@elec.ac.nz" }
