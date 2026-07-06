@@ -1,6 +1,16 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.6] — 2026-07-06
+
+### Changed
+
+- **CI: build on native arm64 runners.**  Switched from QEMU-emulated arm64
+  builds on x86_64 to native `ubuntu-24.04-arm` runners.  Each platform
+  now builds on its own architecture in a matrix (`ubuntu-latest` for amd64,
+  `ubuntu-24.04-arm` for arm64), then a merge job combines them into a
+  multi-arch manifest with `docker buildx imagetools create`.
+
 ## [0.6.5] — 2026-07-06
 
 ### Fixed
