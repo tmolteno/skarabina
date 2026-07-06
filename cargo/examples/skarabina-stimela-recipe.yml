@@ -28,6 +28,24 @@ flag-and-average:
         summary: true
 
 # ---------------------------------------------------------------------------
+# recipe: flag-only
+# ---------------------------------------------------------------------------
+flag-only:
+  info: "Flag a measurement set without averaging"
+  inputs:
+    ms: MS
+
+  steps:
+    flag:
+      cab: skarabina
+      params:
+        ms: =recipe.ms
+        flag-nan: true
+        flag-clip: [0, 100]
+        flag-uv-above: 1000
+        summary: true
+
+# ---------------------------------------------------------------------------
 # recipe: analyze
 # ---------------------------------------------------------------------------
 analyze:
