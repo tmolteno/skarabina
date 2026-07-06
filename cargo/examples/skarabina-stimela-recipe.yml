@@ -16,10 +16,9 @@ flag-and-average:
       cab: skarabina
       params:
         ms: =recipe.ms
-        flag:
-          nan: true
-          clip: [0, 100]
-          uv-above: 1000
+        flag-nan: true
+        flag-clip: [0, 100]
+        flag-uv-above: 1000
         time-average-factor: 3
         frequency-average-factor: 20
         optimize: true
