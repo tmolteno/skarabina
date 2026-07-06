@@ -1,6 +1,16 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.7] — 2026-07-06
+
+### Removed
+
+- **Docker: dropped numcodecs arm64 workaround.**  The `CFLAGS`/`DISABLE_NUMCODECS_*`/
+  `--no-build-isolation` workaround was confusing and never worked correctly
+  under QEMU.  With native arm64 runners (0.6.6) it is no longer needed:
+  `py-cpuinfo` correctly reports no SSE2/AVX2 on aarch64 hardware and
+  numcodecs compiles cleanly.
+
 ## [0.6.6] — 2026-07-06
 
 ### Changed
