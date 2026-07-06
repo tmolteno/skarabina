@@ -43,12 +43,11 @@ cabs:
       flag-nan:
         dtype: bool
         info: Flag NaN visibilities
-      flag-clip-lo:
-        dtype: float
-        info: Lower amplitude clip threshold
-      flag-clip-hi:
-        dtype: float
-        info: Upper amplitude clip threshold
+      flag-clip:
+        dtype: Tuple[float, float]
+        info: Flag visibilities outside [lo, hi] amplitude range
+        policies:
+          repeat: "list"
       flag-uv-above:
         dtype: float
         info: Flag baselines longer than this limit (metres)
