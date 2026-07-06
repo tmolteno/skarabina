@@ -1,0 +1,31 @@
+# Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
+name: Publish skarabina-cargo
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build
+        run: |
+          cd skarabina_cargo
+          uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: skarabina_cargo/dist
