@@ -1,0 +1,4 @@
+include README.md
+include skarabina_cargo/stimela.conf
+
+recursive-include skarabina_cargo *.yml *.yaml

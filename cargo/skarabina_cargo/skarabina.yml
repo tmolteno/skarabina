@@ -1,13 +1,13 @@
 # Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 _include:
-  - genesis/skarabina-base.yml
+  - genesis/skarabina-cargo-base.yml
 
 cabs:
   skarabina:
     name: skarabina
     info: "skarabina (dung beetle) -- A basic 1GC flagger"
     image:
-      _use: vars.skarabina.images
+      _use: vars.skarabina-cargo.images
       name: skarabina
     command: skarabina
     inputs:
@@ -84,7 +84,7 @@ cabs:
     name: skarabina-analyze
     info: "skarabina-analyze -- recommend an image size for synthesis imaging"
     image:
-      _use: vars.skarabina.images
+      _use: vars.skarabina-cargo.images
       name: skarabina
     command: skarabina-analyze
     inputs:
