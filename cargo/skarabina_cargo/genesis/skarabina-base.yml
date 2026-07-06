@@ -3,4 +3,4 @@ vars:
   skarabina:
     images:
       registry: ghcr.io/tmolteno
-      version: 0.6.12
+      version: 0.6.13

@@ -22,10 +22,10 @@ jobs:
 
       - name: Build
         run: |
-          cd skarabina_cargo
+          cd cargo
           uv build
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: skarabina_cargo/dist
+          packages-dir: cargo/dist
