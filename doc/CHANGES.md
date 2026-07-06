@@ -1,6 +1,26 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.14] — 2026-07-07
+
+### Added
+
+- **`stimela.conf`** with container image config for stimela.
+- **`MANIFEST.in`** for the cargo package.
+
+### Changed
+
+- **Renamed genesis vars** from `vars.skarabina` to `vars.skarabina-cargo`
+  to avoid namespace collision with the CLI package.
+- **Renamed genesis file** to `skarabina-cargo-base.yml`.
+- **Moved stimela examples** from `example/` to `cargo/examples/`.
+- **Updated examples** with correct `--flag-clip` syntax and stimela recipes.
+
+### Fixed
+
+- **`--flag-clip` in examples** — uses space-separated values per Click's
+  `nargs=2`, not comma-separated.
+
 ## [0.6.13] — 2026-07-07
 
 ### Changed
