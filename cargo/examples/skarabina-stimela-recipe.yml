@@ -17,7 +17,8 @@ flag-and-average:
       params:
         ms: =recipe.ms
         flag-nan: true
-        flag-clip: [0, 100]
+        flag-clip-lo: 0
+        flag-clip-hi: 100
         flag-uv-above: 1000
         time-average-factor: 3
         frequency-average-factor: 20

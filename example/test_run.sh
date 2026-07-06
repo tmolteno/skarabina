@@ -15,7 +15,8 @@ MS="${1:-$HOME/astro/merghers/mergA_tim.ms}"
 uv run skarabina \
     --ms "$MS" \
     --flag-nan \
-    --flag-clip 0 100 \
+    --flag-clip-lo 0 \
+    --flag-clip-hi 100 \
     --flag-uv-above 1000 \
     --flag-spectral-window spectral-flags.example.yml \
     --time-average-factor 3 \

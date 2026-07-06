@@ -18,11 +18,9 @@ cabs:
       summary:
         dtype: bool
         info: Print the flagging summary
-        default: false
       optimize:
         dtype: bool
         info: Opotimize the size of the measurement set while keeping all rows of equal length.
-        default: false
       time-average-factor:
         dtype: int
         info: Combine every N consecutive rows by averaging UVW and visibility data. Must run before optimize.
@@ -34,7 +32,6 @@ cabs:
       clobber:
         dtype: bool
         info: Replace the output measurement set
-        default: false
       barber:
         dtype: bool
         info: Perform barber flagging (removes fringes in a jiffy)
@@ -46,11 +43,12 @@ cabs:
       flag-nan:
         dtype: bool
         info: Flag NaN visibilities
-      flag-clip:
-        dtype: Tuple[float, float]
-        info: Flag visibilities outside [lo, hi] amplitude range
-        policies:
-          repeat: false
+      flag-clip-lo:
+        dtype: float
+        info: Lower amplitude clip threshold
+      flag-clip-hi:
+        dtype: float
+        info: Upper amplitude clip threshold
       flag-uv-above:
         dtype: float
         info: Flag baselines longer than this limit (metres)
@@ -63,7 +61,6 @@ cabs:
       debug:
         info: Switch on debugging output
         dtype: bool
-        default: false
       field-of-view:
         dtype: float
         info: Field-of-view half-width from phase centre (degrees). Used for fringe-rotation integration time calculation. Default 1.0°.
