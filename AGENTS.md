@@ -10,7 +10,8 @@ The repo contains two Python packages:
 | `skarabina-cargo` | `./cargo/` | Stimela cab definitions |
 
 `skarabina-cargo` depends on `stimela` and packages the cab schema
-(`skarabina.yml`) and base vars (`genesis/skarabina-base.yml`).
+(`skarabina.yml`), base vars (`genesis/skarabina-cargo-base.yml`),
+and container config (`stimela.conf`).
 `skarabina` has no dependency on `stimela` — all CLI parameters are
 defined as explicit `@click.option` decorators in `main.py`.
 
@@ -22,7 +23,7 @@ When bumping the version for a release, update these files to match:
 |---|---|
 | `pyproject.toml` | `project.version` |
 | `cargo/pyproject.toml` | `project.version` |
-| `cargo/genesis/skarabina-base.yml` | `vars.skarabina.images.version` |
+| `cargo/genesis/skarabina-cargo-base.yml` | `vars.skarabina-cargo.images.version` |
 
 All three must reference the same version number (e.g. `0.6.2` in both
 `pyproject.toml` files and `0.6.2` in the YAML).  Do **not** include a
