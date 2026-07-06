@@ -43,7 +43,6 @@ cabs:
         info: Polarization selection for barber.
       apply:
         dtype: bool
-        default: false
       flag-nan:
         dtype: bool
         info: Flag NaN visibilities
