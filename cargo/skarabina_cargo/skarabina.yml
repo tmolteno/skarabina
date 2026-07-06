@@ -44,23 +44,20 @@ cabs:
       apply:
         dtype: bool
         default: false
-      flag:
+      flag-nan:
+        dtype: bool
+        info: Flag NaN visibilities
+      flag-clip:
+        dtype: Tuple[float, float]
+        info: Flag visibilities outside [lo, hi] amplitude range
         policies:
-          prefix_joiner: "-"
-        uv-above:
-          dtype: float
-          info: Flag UVW above this limit (in meters).
-        nan:
-          dtype: bool
-          info: Flag NaN
-        clip:
-          dtype: Tuple[float, float]
-          info: Flag clip.
-          policies:
-            repeat: false
-        spectral-window:
-          dtype: File
-          info: YAML file with spectral window flagging rules.
+          repeat: false
+      flag-uv-above:
+        dtype: float
+        info: Flag baselines longer than this limit (metres)
+      flag-spectral-window:
+        dtype: File
+        info: YAML file with spectral window flagging rules
       # field:
       #     dtype: List[int]
       #     info: Use this FIELD_ID from the measurement set

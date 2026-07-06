@@ -1,6 +1,15 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.16] — 2026-07-07
+
+### Changed
+
+- **Flattened `flag.*` schema params.**  `flag.nan`, `flag.clip`, etc. are now
+  flat `flag-nan`, `flag-clip` — matching Click option names exactly.  Stimela
+  uses dots for nested param separators, which conflicts with Click's hyphens.
+  Flattening avoids the mismatch.
+
 ## [0.6.15] — 2026-07-07
 
 ### Fixed
