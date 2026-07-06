@@ -45,6 +45,8 @@ cabs:
         dtype: bool
         default: false
       flag:
+        policies:
+          prefix_joiner: "-"
         uv-above:
           dtype: float
           info: Flag UVW above this limit (in meters).
