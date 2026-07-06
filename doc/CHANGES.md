@@ -1,6 +1,16 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.10] — 2026-07-06
+
+### Fixed
+
+- **Stimela image version: drop `v` prefix.**  The `vars.skarabina.images.version`
+  in `skarabina-base.yml` must match the Docker image tag published by CI.
+  CI's `docker/metadata-action` with `type=semver` strips the `v` from the
+  git tag, so the image is `ghcr.io/tmolteno/skarabina:0.6.10`, not
+  `:v0.6.10`.  Updated `AGENTS.md` to document this convention.
+
 ## [0.6.9] — 2026-07-06
 
 ### Added
