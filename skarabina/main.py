@@ -56,10 +56,11 @@ logger = logging.getLogger(__name__)
 )
 @click.option("--flag-nan", is_flag=True, default=False, help="Flag NaN visibilities")
 @click.option(
-    "--flag-clip-lo", type=float, default=None, help="Lower amplitude clip threshold"
-)
-@click.option(
-    "--flag-clip-hi", type=float, default=None, help="Upper amplitude clip threshold"
+    "--flag-clip",
+    type=float,
+    nargs=2,
+    default=None,
+    help="Flag visibilities outside [lo, hi] range",
 )
 @click.option(
     "--flag-spectral-window",
@@ -115,9 +116,9 @@ def main(**kw):
     if opts.flag_nan is not None:
         flag_data_operations["NAN"] = True
 
-    if opts.flag_clip_lo is not None and opts.flag_clip_hi is not None:
-        flag_data_operations["CLIP"] = (opts.flag_clip_lo, opts.flag_clip_hi)
-        print(f"flag_clip [{opts.flag_clip_lo}, {opts.flag_clip_hi}]")
+    if opts.flag_clip is not None:
+        flag_data_operations["CLIP"] = opts.flag_clip
+        print(f"flag_clip {opts.flag_clip}")
 
     ms.flag_data(flag_data_operations)
 
