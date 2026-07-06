@@ -1,6 +1,15 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.9] — 2026-07-06
+
+### Added
+
+- **`--output-json` for `skarabina-analyze`.**  Writes analysis results
+  (max baseline, max frequency, resolution, recommended image size,
+  input parameters) to a JSON file.  Also available in the Stimela cab
+  as `output-json` input.
+
 ## [0.6.8] — 2026-07-06
 
 ### Added

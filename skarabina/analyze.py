@@ -1,6 +1,8 @@
 # Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 """Analyze a measurement set and recommend an image size."""
 
+import json
+
 import click
 import dask.array as da
 from casacore.tables import table
@@ -22,7 +24,13 @@ from daskms import xds_from_ms
     show_default=True,
     help="Pixels per resolution element (synthesised beam)",
 )
-def main(ms, image_fov, oversampling_factor):
+@click.option(
+    "--output-json",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help="Write analysis results as JSON to this file",
+)
+def main(ms, image_fov, oversampling_factor, output_json):
     """Analyze a measurement set and recommend an image size.
 
     Computes the angular resolution from the longest baseline and
@@ -72,3 +80,18 @@ def main(ms, image_fov, oversampling_factor):
     print(f"  Resolution:     {theta_res_arcsec:.2f} arcsec")
     print(f"  Field of view:  {image_fov:.2f}°")
     print(f"Recommended image size: {n_pix} × {n_pix} pixels")
+
+    if output_json:
+        result = {
+            "ms": ms,
+            "max_baseline_m": max_uv,
+            "max_frequency_hz": nu_max,
+            "max_frequency_mhz": nu_max / 1e6,
+            "resolution_arcsec": theta_res_arcsec,
+            "field_of_view_deg": image_fov,
+            "oversampling_factor": oversampling_factor,
+            "recommended_image_size_pixels": n_pix,
+        }
+        with open(output_json, "w") as f:
+            json.dump(result, f, indent=2)
+        print(f"Wrote {output_json}")
