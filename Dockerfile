@@ -30,18 +30,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # On x86_64 (pre-built wheel) this is ignored.
 ENV CMAKE_ARGS="-DCMAKE_CXX_STANDARD=17"
 
-# On non-x86 architectures (e.g. aarch64) numcodecs has no pre-built Linux
-# wheel and must be compiled from source.  Under QEMU emulation (docker
-# buildx), py-cpuinfo detects the host's x86_64 CPU features, causing
-# setup.py to add -msse2/-mavx2 which the aarch64 compiler rejects.
-# The DISABLE_NUMCODECS_* env vars do not help — they flip the flags to
-# -mno-sse2/-mno-avx2 which are also x86-only.
+# On arm64, numcodecs has no pre-built wheel and must build from source.
+# Under QEMU (docker buildx), py-cpuinfo detects the host x86_64 CPU flags
+# (sse2/avx2), causing setup.py to include x86-specific compiler flags,
+# macros, and source files — all rejected by aarch64 gcc.
 #
-# Fix: set CFLAGS.  numcodecs' setup.py skips its SIMD flag logic entirely
-# when CFLAGS is present in the environment ("respect compiler options set
-# by user").  Pre-install numcodecs first so subsequent pip install skarabina
-# sees it already satisfied and does not rebuild it.
-RUN CFLAGS="-O2" pip install --no-cache-dir numcodecs && \
+# Fix requires three things together:
+#   1. CFLAGS   — prevents setup.py from adding -msse2/-mavx2/-mno-* flags
+#   2. DISABLE_NUMCODECS_SSE2/AVX2 — prevents -DSHUFFLE_* macros and
+#      x86-specific source files (bitshuffle-avx2.c etc.)
+#   3. --no-build-isolation — pip's isolated build env does not pass through
+#      arbitrary env vars like DISABLE_NUMCODECS_*, so we pre-install build
+#      deps and disable isolation.
+#
+# On x86_64, numcodecs has a pre-built wheel so this path is never hit.
+RUN pip install --no-cache-dir cython "numpy>=2" py-cpuinfo "setuptools>=64" && \
+    CFLAGS="-O2" DISABLE_NUMCODECS_SSE2=1 DISABLE_NUMCODECS_AVX2=1 \
+    pip install --no-cache-dir --no-build-isolation numcodecs && \
     pip install --no-cache-dir python-casacore skarabina
 
 COPY docker-entrypoint.sh /usr/local/bin/
