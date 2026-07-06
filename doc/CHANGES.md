@@ -1,6 +1,21 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.12] — 2026-07-07
+
+### Added
+
+- **CI: PyPI publish workflow for `skarabina-cargo`.**  Tagged releases
+  now publish the cab definitions package to PyPI via trusted publishing.
+- **`skarabina-cargo` README** with stimela recipe examples for `skarabina`
+  and `skarabina-analyze` cabs, spectral window flagging, and output
+  consumption between steps.
+
+### Changed
+
+- **Example `stimela_run.sh`** for running a skarabina flagging summary
+  through stimela with a local measurement set.
+
 ## [0.6.11] — 2026-07-06
 
 ### Changed
