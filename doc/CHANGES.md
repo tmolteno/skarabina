@@ -1,6 +1,24 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.17] — 2026-07-07
+
+### Fixed
+
+- **`flag-clip` tuple serialization: `repeat: "list"`.**  `repeat: false` parsed
+  as Python `False` and was used as a join separator (`0.0False100.0`).
+  `repeat: "list"` correctly passes tuple elements as separate positional args.
+- **Removed `default: false` from bool params.**  Stimela serialized default
+  `False` values as `--param False`, causing extra args to spill into `nargs=2`.
+
+### Added
+
+- **`flag-only` stimela recipe.**  Flag and summarize without averaging.
+
+### Changed
+
+- **Gitignore `cargo/uv.lock`.**  Root `uv.lock` is the single lock file.
+
 ## [0.6.16] — 2026-07-07
 
 ### Changed
