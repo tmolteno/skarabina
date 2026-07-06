@@ -1,7 +1,21 @@
+#!/bin/sh
+# Example: flag, average, optimize, and summarize a measurement set.
+#
+# Requirements:
+#   - skarabina installed (pip install skarabina or uv sync)
+#   - A measurement set at the path below (edit to match your data)
+#
+# The spectral-flags file is in this directory; run from example/ or use
+# an absolute path.
+
+set -eu
+
+MS="${1:-$HOME/astro/merghers/mergA_tim.ms}"
+
 uv run skarabina \
-    --ms /home/tim/astro/merghers/mergA_tim.ms \
+    --ms "$MS" \
     --flag-nan \
-    --flag-clip [0,100] \
+    --flag-clip 0 100 \
     --flag-uv-above 1000 \
     --flag-spectral-window spectral-flags.example.yml \
     --time-average-factor 3 \
@@ -9,4 +23,5 @@ uv run skarabina \
     --optimize \
     --msout test_spw.ms \
     --clobber \
+    --barber \
     --summary
