@@ -25,7 +25,7 @@ use, or build from the [Dockerfile](https://github.com/tmolteno/skarabina/blob/m
 
 ```yaml
 _include:
-  - (skarabina_cargo):
+  - (cargo):
       - skarabina.yml
 
 my-recipe:

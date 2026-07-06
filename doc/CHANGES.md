@@ -1,6 +1,14 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.13] — 2026-07-07
+
+### Changed
+
+- **Rename `skarabina_cargo` → `cargo` directory.**  The cargo package lives
+  in `cargo/` (Python package name remains `skarabina_cargo`).  Stimela
+  recipes use `_include: (cargo): skarabina.yml`.
+
 ## [0.6.12] — 2026-07-07
 
 ### Added
