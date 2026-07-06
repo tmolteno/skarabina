@@ -1,20 +1,27 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.5] — 2026-07-06
+
+### Fixed
+
+- **Docker: numcodecs arm64 build fix (third attempt).**  Under QEMU, `py-cpuinfo`
+  detects host x86_64 features, causing setup.py to include `-DSHUFFLE_*`
+  macros and x86 source files even when `CFLAGS` is set.  The fix requires
+  three things together: (1) `CFLAGS="-O2"` prevents `-msse2`/`-mavx2` flags,
+  (2) `DISABLE_NUMCODECS_SSE2=1 DISABLE_NUMCODECS_AVX2=1` prevents
+  `-DSHUFFLE_*` macros and x86 source files, (3) `--no-build-isolation`
+  ensures those env vars reach setup.py through pip's isolated build.  Build
+  deps (cython, numpy, py-cpuinfo, setuptools) are pre-installed so isolation
+  can be safely disabled.
+
 ## [0.6.4] — 2026-07-06
 
 ### Fixed
 
-- **Docker: numcodecs compilation fails on arm64 (proper fix).**  Under QEMU
-  emulation (docker buildx for arm64), `py-cpuinfo` detects the host x86_64
-  CPU features, causing numcodecs' `setup.py` to add `-msse2`/`-mavx2` which
-  the aarch64 compiler rejects.  The `DISABLE_NUMCODECS_*` env vars do not
-  help — they flip the flags to `-mno-sse2`/`-mno-avx2` which are also
-  x86-only.  The actual fix: set `CFLAGS="-O2"` during the numcodecs install.
-  numcodecs' `setup.py` skips its SIMD flag logic entirely when `CFLAGS` is
-  present in the environment.  numcodecs is pre-installed separately so that
-  `pip install skarabina` sees it already satisfied and does not rebuild it
-  without `CFLAGS` set.
+- **Docker: attempted numcodecs arm64 fix (CFLAGS only).**  Set `CFLAGS="-O2"`
+  during numcodecs install.  This prevented `-msse2`/`-mavx2` flags but did
+  not prevent `-DSHUFFLE_*` macros and x86 source files (see 0.6.5).
 
 ## [0.6.3] — 2026-07-06
 
