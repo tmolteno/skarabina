@@ -79,3 +79,24 @@ cabs:
       max-uv:
         dtype: float
         info: The maximum uv coordinate in the MS.
+
+  skarabina-analyze:
+    name: skarabina-analyze
+    info: "skarabina-analyze -- recommend an image size for synthesis imaging"
+    image:
+      _use: vars.skarabina.images
+      name: skarabina
+    command: skarabina-analyze
+    inputs:
+      ms:
+        dtype: MS
+        info: The input measurement set
+        required: true
+      image-fov:
+        dtype: float
+        info: Image field-of-view (degrees)
+        required: true
+      oversampling-factor:
+        dtype: float
+        info: Pixels per resolution element (synthesised beam)
+        default: 5.0

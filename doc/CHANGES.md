@@ -1,6 +1,14 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.8] — 2026-07-06
+
+### Added
+
+- **Stimela cab for `skarabina-analyze`.**  Added a `skarabina-analyze` cab
+  definition to `skarabina/skarabina.yml` so the analyze command can be used
+  in Stimela workflows.  Reuses the same Docker image as the main cab.
+
 ## [0.6.7] — 2026-07-06
 
 ### Removed
