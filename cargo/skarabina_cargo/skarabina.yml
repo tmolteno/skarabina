@@ -61,9 +61,9 @@ cabs:
         info: Switch on debugging output
         dtype: bool
       field-of-view:
-        dtype: float
-        info: Field-of-view half-width from phase centre (degrees). Used for fringe-rotation integration time calculation. Default 1.0°.
-        default: 1.0
+        dtype: str
+        info: "Field-of-view half-width from phase centre (value with unit: deg, arcmin, arcsec, rad)"
+        default: "1.0 deg"
     outputs:
       msout:
         dtype: MS

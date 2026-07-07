@@ -5,6 +5,7 @@ from importlib.metadata import version as get_version
 from types import SimpleNamespace
 
 import click
+from angle_parser import parse_angle
 
 from skarabina import barber, dask_ms
 
@@ -71,10 +72,10 @@ logger = logging.getLogger(__name__)
 @click.option("--debug", is_flag=True, default=False, help="Switch on debugging output")
 @click.option(
     "--field-of-view",
-    type=float,
-    default=1.0,
+    type=str,
+    default="1.0 deg",
     show_default=True,
-    help="Field-of-view half-width from phase centre (degrees)",
+    help="Field-of-view half-width from phase centre (value with unit: deg, arcmin, arcsec, rad)",
 )
 @click.version_option(
     version=get_version("skarabina"),
@@ -103,8 +104,8 @@ def main(**kw):
         root.debug(f"options: {vars(opts)}")
 
     ms = dask_ms.DaskMS(opts.ms)
-    fov_deg = opts.field_of_view if opts.field_of_view is not None else 1.0
-    ms._fov_rad = fov_deg * 3.14159265 / 180.0
+    fov_str = opts.field_of_view if opts.field_of_view is not None else "1.0 deg"
+    ms._fov_rad = parse_angle(fov_str)
 
     # --- Flagging operations (order-independent) ---
 
