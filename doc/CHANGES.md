@@ -1,6 +1,13 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.6.18] — 2026-07-07
+
+### Changed
+
+- **`--field-of-view` uses `angle-parser`.**  Accepts unit-suffixed strings:
+  `1.0 deg`, `30 arcmin`, `5 arcsec`, `0.5 rad`.  Dependency added.
+
 ## [0.6.17] — 2026-07-07
 
 ### Fixed
