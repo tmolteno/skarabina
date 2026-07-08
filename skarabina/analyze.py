@@ -5,6 +5,7 @@ import json
 
 import click
 import dask.array as da
+from angle_parser import parse_angle
 from casacore.tables import table
 from daskms import xds_from_ms
 
@@ -13,9 +14,9 @@ from daskms import xds_from_ms
 @click.option("--ms", required=True, help="Input measurement set")
 @click.option(
     "--image-fov",
-    type=float,
+    type=str,
     required=True,
-    help="Image field-of-view (degrees)",
+    help="Image field-of-view (value with unit: deg, arcmin, arcsec, rad)",
 )
 @click.option(
     "--oversampling-factor",
@@ -61,7 +62,7 @@ def main(ms, image_fov, oversampling_factor, output_json):
         return
 
     c_ms = 299792458.0
-    fov_rad = image_fov * 3.14159265 / 180.0
+    fov_rad = parse_angle(image_fov)
 
     # Angular resolution (radians)
     theta_res = c_ms / (nu_max * max_uv)
@@ -78,7 +79,7 @@ def main(ms, image_fov, oversampling_factor, output_json):
     print(f"  Max baseline:   {max_uv:.0f} m")
     print(f"  Max frequency:  {nu_max / 1e6:.3f} MHz")
     print(f"  Resolution:     {theta_res_arcsec:.2f} arcsec")
-    print(f"  Field of view:  {image_fov:.2f}°")
+    print(f"  Field of view:  {image_fov}")
     print(f"Recommended image size: {n_pix} × {n_pix} pixels")
 
     if output_json:
@@ -88,7 +89,7 @@ def main(ms, image_fov, oversampling_factor, output_json):
             "max_frequency_hz": nu_max,
             "max_frequency_mhz": nu_max / 1e6,
             "resolution_arcsec": theta_res_arcsec,
-            "field_of_view_deg": image_fov,
+            "field_of_view": image_fov,
             "oversampling_factor": oversampling_factor,
             "recommended_image_size_pixels": n_pix,
         }
