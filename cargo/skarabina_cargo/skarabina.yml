@@ -89,8 +89,8 @@ cabs:
         info: The input measurement set
         required: true
       image-fov:
-        dtype: float
-        info: Image field-of-view (degrees)
+        dtype: str
+        info: "Image field-of-view (value with unit: deg, arcmin, arcsec, rad)"
         required: true
       oversampling-factor:
         dtype: float

@@ -58,6 +58,6 @@ analyze:
       cab: skarabina-analyze
       params:
         ms: =recipe.ms
-        image-fov: 2.5
+        image-fov: "2.5 deg"
         oversampling-factor: 5.0
         output-json: analysis.json
