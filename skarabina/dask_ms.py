@@ -769,11 +769,86 @@ class DaskMS:
             f" Rows: {int(n_unflagged)}, Channels: {int(n_chan_total) - int(n_chan_flagged)}"
         )
 
-    def write_new_ms(self, name, clobber):
+    def _resolve_field_id(self, field):
+        """Resolve a field name or numeric id to a FIELD_ID integer.
+
+        A purely numeric spec is treated as a FIELD_ID; anything else is
+        matched against the NAME column of the FIELD subtable.
         """
-        Write a new MS, and make sure it doesn't already exist
+        field_names = {}
+        for s in self.sub_table_names:
+            if s.endswith("/FIELD"):
+                try:
+                    ft = table(s, ack=False)
+                    names = ft.getcol("NAME")
+                    ft.close()
+                    for i, name in enumerate(names):
+                        field_names[i] = name.strip()
+                except Exception:
+                    pass
+
+        try:
+            return int(field)
+        except (ValueError, TypeError):
+            pass
+
+        spec = str(field).strip()
+        for i, name in field_names.items():
+            if name == spec:
+                return i
+        available = ", ".join(
+            f"{i}: {n!r}" for i, n in sorted(field_names.items())
+        )
+        raise RuntimeError(
+            f"Field {field!r} not found. Available fields: {available}"
+        )
+
+    def _select_field(self, ds, field):
+        """Return ``ds`` reduced to the rows of a single field.
+
+        ``field`` may be a numeric FIELD_ID or a field NAME.  Only the
+        row dimension is filtered; every column (DATA, FLAG, UVW, ...)
+        is carried over unchanged.
         """
-        all_tables = list(self.ds.keys())
+        field_id = self._resolve_field_id(field)
+
+        # Multi-field MS: FIELD_ID is a per-row data variable.
+        if "FIELD_ID" in ds.data_vars:
+            mask = ds.FIELD_ID.data == field_id
+            indices = da.nonzero(mask)[0].compute()
+            if indices.size == 0:
+                raise RuntimeError(
+                    f"--split: no rows with FIELD_ID={field_id} ({field!r})"
+                )
+            row_dim = ds.DATA.dims[0]
+            print(
+                f"--split: selected field {field!r} (FIELD_ID={field_id}),"
+                f" {indices.size} rows"
+            )
+            return ds.isel({row_dim: indices})
+
+        # Single-field MS: FIELD_ID is stored as a dataset attribute.
+        attr_id = int(ds.attrs.get("FIELD_ID", 0))
+        if attr_id != field_id:
+            raise RuntimeError(
+                f"--split: MS only contains FIELD_ID={attr_id},"
+                f" cannot select {field_id} ({field!r})"
+            )
+        print(f"--split: single-field MS (FIELD_ID={field_id}), no rows removed")
+        return ds
+
+    def write_new_ms(self, name, clobber, split=None):
+        """
+        Write a new MS, and make sure it doesn't already exist.
+
+        If ``split`` is given (a field name or FIELD_ID), only that
+        field's rows are written to the output MS.
+        """
+        ds_to_write = self.ds
+        if split is not None:
+            ds_to_write = self._select_field(ds_to_write, split)
+
+        all_tables = list(ds_to_write.keys())
         print(f"Writing {all_tables} to {name}")
 
         if os.path.exists(name):
@@ -784,7 +859,7 @@ class DaskMS:
             logger.warning(f"Overwriting {name}")
             shutil.rmtree(name)
 
-        writes = xds_to_table(self.ds, name, "ALL")
+        writes = xds_to_table(ds_to_write, name, "ALL")
 
         with ProgressBar():
             dask.compute(writes)

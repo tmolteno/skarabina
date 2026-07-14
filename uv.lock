@@ -12,6 +12,15 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "angle-parser"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/fa/d28ec199a04f83da08ca2d6b8568004f6947598766d9cda161d0cca0d1f2/angle_parser-0.1.0.tar.gz", hash = "sha256:fa1d3ee2096393c96f079f79f3efa1291ea94a94018571a869878d0b4cc5c82d", size = 2425, upload-time = "2026-07-07T01:44:03.874Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/75/55/8b5b2ac53695de84aca190bc39c28b35fc2875475b1aa741b1fa7f78a8a7/angle_parser-0.1.0-py3-none-any.whl", hash = "sha256:0065724c9f153efc2051f923fa11eb713bd518fadb63d0fd72da768f0b765a17", size = 2608, upload-time = "2026-07-07T01:44:02.659Z" },
+]
+
+[[package]]
 name = "appdirs"
 version = "1.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -719,9 +728,10 @@ wheels = [
 
 [[package]]
 name = "skarabina"
-version = "0.6.11"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
+    { name = "angle-parser" },
     { name = "dask-ms", extra = ["xarray", "zarr"] },
     { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "zarr", version = "2.18.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -735,6 +745,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "angle-parser", specifier = ">=0.1.0" },
     { name = "dask-ms", extras = ["xarray", "zarr"] },
     { name = "zarr", specifier = ">=2.0" },
 ]

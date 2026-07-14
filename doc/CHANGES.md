@@ -1,6 +1,15 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.7.0] — 2026-07-14
+
+### Added
+
+- **`--split` option.**  When writing a new MS (`--msout`), keep only the rows
+  of a single field, given by field name or numeric `FIELD_ID`.  Flagging,
+  averaging, and optimization still run on the full input MS; only the output
+  is reduced to the selected field.  See [Splitting an MS by field](SPLITTING.md).
+
 ## [0.6.18] — 2026-07-07
 
 ### Changed

@@ -77,6 +77,13 @@ logger = logging.getLogger(__name__)
     show_default=True,
     help="Field-of-view half-width from phase centre (value with unit: deg, arcmin, arcsec, rad)",
 )
+@click.option(
+    "--split",
+    type=str,
+    default=None,
+    help="When writing (--msout), keep only this field's rows"
+    " (field name or numeric FIELD_ID)",
+)
 @click.version_option(
     version=get_version("skarabina"),
     prog_name="skarabina",
@@ -149,6 +156,6 @@ def main(**kw):
     # --- Write output ---
 
     if opts.msout:
-        ms.write_new_ms(opts.msout, opts.clobber)
+        ms.write_new_ms(opts.msout, opts.clobber, split=opts.split)
     elif opts.apply:
         ms.update_ms(opts.ms, opts.clobber)
