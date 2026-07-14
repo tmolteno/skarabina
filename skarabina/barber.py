@@ -81,12 +81,17 @@ def barber(ms, pol):
 
     print(f"Max Vis Report ({absvis.shape})")
     print(f"    Mean |v| = {mean_vis}")
+    # One scheduler pass for the two trailing per-index lookups.
+    flag_at_max, weight_at_max = dask.compute(
+        flag[max_index], weight_spectrum[max_index]
+    )
+
     print(f"    Max |v| = {max_vis}")
     print(f"        at vis_index = {dump_index}")
     print(f"        at channel_index = {channel_index}")
     print(f"        at pol_index = {pol_index}")
-    print(f"    flags[{max_index}] = {flag[max_index].compute()}")
-    print(f"    weights[{max_index}] = {weight_spectrum[max_index].compute()}")
+    print(f"    flags[{max_index}] = {flag_at_max}")
+    print(f"    weights[{max_index}] = {weight_at_max}")
     print(f"    Time = {timestamp}")
 
     print(f"    ANT1 = {ant1}")

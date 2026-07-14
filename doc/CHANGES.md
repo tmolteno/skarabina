@@ -20,6 +20,14 @@
   (it is summed); SIGMA_SPECTRUM and EXPOSURE were undocumented.  Both
   docstrings now accurately describe which columns exclude flagged
   data and the combining operation for each.
+- **Fewer dask scheduler passes in flagging and averaging.**
+  `flag_spectral_window`, `optimize`, `time_average`, and `barber` now
+  batch their dask computations into fewer passes, reducing overhead on
+  large measurement sets.  Most notably, `flag_spectral_window` now
+  builds the combined flag update for a whole YAML in a single graph
+  (previously one scheduler round-trip per entry) and computes per-entry
+  visibility counts by factoring 1D channel/row gates instead of summing
+  a materialized `(nrow, nchan, ncorr)` array.  Results are unchanged.
 
 ### Fixed
 

@@ -170,68 +170,74 @@ class DaskMS:
             raise RuntimeError("Spectral window YAML must be a list of entries")
 
         nchan = len(self.chan_freq_hz)
-        uv_dist = da.sqrt(self.u_arr * self.u_arr + self.v_arr * self.v_arr)
+        ncorr = self.ds.FLAG.shape[2]
+        # Materialize uv_distance once (numpy) so every UV-constrained
+        # entry does a cheap numpy comparison on the cached array rather
+        # than re-evaluating the sqrt(u^2+v^2) dask graph per entry.
+        uv_dist = da.sqrt(self.u_arr * self.u_arr + self.v_arr * self.v_arr).compute()
         # Read FLAG fresh from the live dataset so we OR onto the current
         # flags (including NaN/clip flags from flag_data), not the stale
         # __init__ snapshot.
         old_flags = self.ds.FLAG.data
         new_flags = old_flags
 
+        # Collect per-entry stats and build the combined flag update lazily,
+        # so the whole YAML triggers a SINGLE dask pass (rather than one
+        # scheduler round-trip per entry).  Per-entry visibility counts
+        # factor to (channels x rows x corr) from 1D gates, avoiding a
+        # materialized (nrow, nchan, ncorr) sum just to count.
+        entry_stats = []  # (idx, n_chan, n_ranges, n_vis, uv_info)
         for idx, entry in enumerate(entries):
             spw_ranges = entry.get("spw", [])
             uv_below = entry.get("uv_below")
             uv_above = entry.get("uv_above")
 
-            # Build channel mask: True where frequency falls in any range
-            chan_mask = da.zeros(nchan, dtype=bool)
+            # Build channel mask: True where frequency falls in any range.
+            # chan_freq_hz is a numpy array, so this is cheap and eager.
+            chan_mask = np.zeros(nchan, dtype=bool)
             for fmin_mhz, fmax_mhz in spw_ranges:
                 fmin_hz = float(fmin_mhz) * 1e6
                 fmax_hz = float(fmax_mhz) * 1e6
-                chan_mask = da.logical_or(
+                chan_mask = np.logical_or(
                     chan_mask,
                     (self.chan_freq_hz >= fmin_hz) & (self.chan_freq_hz <= fmax_hz),
                 )
+            n_chan_flagged = int(np.sum(chan_mask))
 
-            n_chan_flagged = da.sum(chan_mask)
-
-            # Broadcast channel mask to (nrow, nchan, ncorr)
-            # FLAG shape: (nrow, nchan, ncorr) — mask on axis=1
-            spw_flag = da.broadcast_to(
-                chan_mask[np.newaxis, :, np.newaxis],
-                self.ds.FLAG.shape,
-            )
-
-            # Apply UV constraint if specified
-            if uv_below is not None:
-                uv_mask = uv_dist < float(uv_below)
-                spw_flag = da.logical_and(spw_flag, uv_mask[:, np.newaxis, np.newaxis])
-            if uv_above is not None:
-                uv_mask = uv_dist > float(uv_above)
-                spw_flag = da.logical_and(spw_flag, uv_mask[:, np.newaxis, np.newaxis])
-
-            n_flagged = da.sum(spw_flag)
-            n_chan_flagged_v, n_flagged_v = dask.compute(n_chan_flagged, n_flagged)
-
+            # Per-row gate: which rows this entry applies to (numpy
+            # comparisons on the cached uv_dist).
+            row_gate = np.ones(self.ds.FLAG.shape[0], dtype=bool)
             uv_info = ""
             if uv_below is not None:
+                row_gate = row_gate & (uv_dist < float(uv_below))
                 uv_info += f", UV < {uv_below} m"
             if uv_above is not None:
+                row_gate = row_gate & (uv_dist > float(uv_above))
                 uv_info += f", UV > {uv_above} m"
+            n_row_flagged = int(np.sum(row_gate))
 
+            entry_stats.append(
+                (idx, n_chan_flagged, len(spw_ranges),
+                 n_chan_flagged * n_row_flagged * ncorr, uv_info)
+            )
+
+            # Build the (nrow, nchan, ncorr) flag contribution from the
+            # two 1D gates and OR it into the running combined flag.
+            spw_flag = da.logical_and(
+                chan_mask[np.newaxis, :, np.newaxis],  # broadcast over row, corr
+                row_gate[:, np.newaxis, np.newaxis],   # broadcast over chan, corr
+            )
+            new_flags = da.logical_or(new_flags, spw_flag)
+
+        for idx, n_chan, n_ranges, n_vis, uv_info in entry_stats:
             print(
                 "flag_spectral_window[%d]: %d channels in %d range(s),"
                 " flagged %d visibilities%s"
-                % (
-                    idx,
-                    int(n_chan_flagged_v),
-                    len(spw_ranges),
-                    int(n_flagged_v),
-                    uv_info,
-                )
+                % (idx, n_chan, n_ranges, n_vis, uv_info)
             )
 
-            new_flags = da.logical_or(new_flags, spw_flag)
-
+        # Keep FLAG as a lazy dask array — downstream methods and writers
+        # expect self.ds["FLAG"].data to stay lazy (they call .compute()).
         self.ds["FLAG"].data = new_flags
         self.changed["FLAG"] = True
 
@@ -508,27 +514,32 @@ class DaskMS:
         # coarsen tolerates row-chunk sizes that are not divisible by `factor`
         # without fragmenting chunks, so it builds a far smaller task graph —
         # important for very large MSes.
+        #
+        # Hoist the FLAG / FLAG_ROW row-slices once: they are consumed by
+        # several columns below, and a single slice keeps the task graph
+        # small (each independent slice is a separate graph node over the
+        # same underlying array).
+        flag_trim = self.ds["FLAG"].data[:trim]
+        flag_row_trim = self.ds["FLAG_ROW"].data[:trim]
+
         averaged = {}
         if "DATA" in self.ds.data_vars:
             d = self.ds["DATA"].data[:trim]
-            f = self.ds["FLAG"].data[:trim]
-            d_masked = da.where(f, 0j, d)
-            n_unflagged = _block_reduce(np.sum, (~f).astype(np.float64), factor, 0)
+            d_masked = da.where(flag_trim, 0j, d)
+            n_unflagged = _block_reduce(np.sum, (~flag_trim).astype(np.float64), factor, 0)
             n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
             averaged["DATA"] = _block_reduce(np.sum, d_masked, factor, 0) / n_safe
 
         if "WEIGHT_SPECTRUM" in self.ds.data_vars:
             w = self.ds["WEIGHT_SPECTRUM"].data[:trim]
-            f = self.ds["FLAG"].data[:trim]
             # Weight = 1/σ². Combined weight = Σ wᵢ (sum of unflagged).
-            w_masked = da.where(f, 0, w)
+            w_masked = da.where(flag_trim, 0, w)
             averaged["WEIGHT_SPECTRUM"] = _block_reduce(np.sum, w_masked, factor, 0)
 
         if "SIGMA_SPECTRUM" in self.ds.data_vars:
             s = self.ds["SIGMA_SPECTRUM"].data[:trim]
-            f = self.ds["FLAG"].data[:trim]
             # σ̄ = 1 / √(Σ 1/σ²) — sum inverse variances, then invert.
-            inv_var = da.where(f, 0, 1.0 / (s * s))
+            inv_var = da.where(flag_trim, 0, 1.0 / (s * s))
             sum_inv_var = _block_reduce(np.sum, inv_var, factor, 0)
             sum_safe = da.where(sum_inv_var == 0, 1, sum_inv_var)
             averaged["SIGMA_SPECTRUM"] = da.sqrt(1.0 / sum_safe)
@@ -541,8 +552,8 @@ class DaskMS:
         # means; INTERVAL/EXPOSURE are masked sums (combined exposure of
         # N integrations is the sum of the unflagged ones).
         row_bad = da.logical_or(
-            self.ds["FLAG_ROW"].data[:trim],
-            da.all(self.ds["FLAG"].data[:trim], axis=(1, 2)),
+            flag_row_trim,
+            da.all(flag_trim, axis=(1, 2)),
         )
         row_good = da.logical_not(row_bad).astype(np.float64)
         n_good = _block_reduce(np.sum, row_good, factor, 0)
@@ -571,9 +582,8 @@ class DaskMS:
                 )
                 averaged[col] = _block_reduce(np.sum, v * mask, factor, 0)
 
-        for col in ("FLAG", "FLAG_ROW"):
-            if col in self.ds.data_vars:
-                averaged[col] = _block_reduce(np.any, self.ds[col].data[:trim], factor, 0)
+        averaged["FLAG"] = _block_reduce(np.any, flag_trim, factor, 0)
+        averaged["FLAG_ROW"] = _block_reduce(np.any, flag_row_trim, factor, 0)
 
         # ANTENNA1/2 are constant within a group of consecutive rows;
         # keep the first of each group via strided indexing.
@@ -801,16 +811,20 @@ class DaskMS:
         row_dim = self.ds.DATA.dims[0]
         chan_dim = self.ds.DATA.dims[1]
 
-        # Build indexers for rows and channels
-        keep_row_mask = unflagged_rows.compute()
-        keep_row_idx = np.nonzero(keep_row_mask)[0]
-
-        isel_indexers = {row_dim: keep_row_idx}
-
+        # Build indexers for rows and channels.  Compute both masks in a
+        # SINGLE dask pass (the channel mask is only needed when at least
+        # one channel is fully flagged).
         if int(n_chan_flagged) > 0:
-            keep_chan_mask = keep_channels.compute()
+            keep_row_mask, keep_chan_mask = dask.compute(
+                unflagged_rows, keep_channels
+            )
+            keep_row_idx = np.nonzero(keep_row_mask)[0]
             keep_chan_idx = np.nonzero(keep_chan_mask)[0]
-            isel_indexers[chan_dim] = keep_chan_idx
+            isel_indexers = {row_dim: keep_row_idx, chan_dim: keep_chan_idx}
+        else:
+            keep_row_mask = unflagged_rows.compute()
+            keep_row_idx = np.nonzero(keep_row_mask)[0]
+            isel_indexers = {row_dim: keep_row_idx}
 
         self.ds = self.ds.isel(isel_indexers)
 
