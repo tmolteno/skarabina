@@ -20,7 +20,7 @@ cabs:
         info: Print the flagging summary
       optimize:
         dtype: bool
-        info: Opotimize the size of the measurement set while keeping all rows of equal length.
+        info: Optimize the size of the measurement set while keeping all rows of equal length.
       time-average-factor:
         dtype: int
         info: Combine every N consecutive rows by averaging UVW and visibility data. Must run before optimize.

@@ -19,7 +19,11 @@
   --frequency-average-factor INTEGER Average every N channels (see averaging.md)
   --field-of-view FLOAT         Half-width from phase centre (degrees,
                                 default 1.0)
-  --optimize / --no-optimize    Remove fully-flagged rows and channels
+  --optimize / --no-optimize    Remove fully-flagged rows and channels.
+                                Must run after --time-average-factor and
+                                --frequency-average-factor (averaging
+                                precedes optimization), and requires
+                                --msout or --apply to write the result
   --apply / --no-apply          Modify input MS in place
   --clobber / --no-clobber      Overwrite existing output
   --msout MS                    Output measurement set path

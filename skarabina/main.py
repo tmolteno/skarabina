@@ -143,6 +143,14 @@ def main(**kw):
         ms.time_average(opts.time_average_factor)
 
     if opts.optimize:
+        if opts.msout is None and not opts.apply:
+            raise RuntimeError(
+                "--optimize has no effect without --msout or --apply:"
+                " it only removes fully-flagged rows and channels in"
+                " memory, so the result is discarded unless written."
+                " Add --msout PATH to write a new MS or --apply to"
+                " update the input MS in place."
+            )
         ms.optimize()
 
     # --- Read-only reports (after all processing) ---
