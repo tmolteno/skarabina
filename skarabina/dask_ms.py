@@ -468,10 +468,15 @@ class DaskMS:
         """
         Average every <factor> consecutive rows into a single row.
 
-        DATA and WEIGHT_SPECTRUM average only unflagged visibilities
-        (flagged entries are excluded from the mean).  UVW, TIME, and
-        INTERVAL are simple averages (per-row metadata).  FLAG and
-        FLAG_ROW are OR'd (any flagged → flagged).
+        DATA, WEIGHT_SPECTRUM, and SIGMA_SPECTRUM average only unflagged
+        visibilities (flagged entries are excluded from the mean / sum;
+        WEIGHT_SPECTRUM is summed, SIGMA_SPECTRUM uses inverse-variance
+        combining).  Per-row metadata (UVW, TIME, INTERVAL, EXPOSURE)
+        excludes fully-flagged rows (FLAG_ROW True, or every visibility
+        in FLAG True): UVW and TIME are masked means, INTERVAL and
+        EXPOSURE are masked sums.  FLAG and FLAG_ROW are OR'd
+        (any flagged -> flagged).  ANTENNA1/2 keep the first row of each
+        group.
         """
         if factor < 2:
             return
@@ -518,15 +523,43 @@ class DaskMS:
             sum_safe = da.where(sum_inv_var == 0, 1, sum_inv_var)
             averaged["SIGMA_SPECTRUM"] = da.sqrt(1.0 / sum_safe)
 
+        # Per-row metadata (UVW, TIME, INTERVAL, EXPOSURE) excludes
+        # fully-flagged rows, using the same "row is bad" definition as
+        # optimize(): FLAG_ROW True, or every visibility in FLAG True.
+        # A partially-flagged row still carries a valid timestamp and
+        # baseline, so it continues to contribute.  UVW/TIME are masked
+        # means; INTERVAL/EXPOSURE are masked sums (combined exposure of
+        # N integrations is the sum of the unflagged ones).
+        row_bad = da.logical_or(
+            self.ds["FLAG_ROW"].data[:trim],
+            da.all(self.ds["FLAG"].data[:trim], axis=(1, 2)),
+        )
+        row_good = da.logical_not(row_bad).astype(np.float64)
+        n_good = _block_reduce(np.sum, row_good, factor, 0)
+        n_good_safe = da.where(n_good == 0, 1, n_good)
+
         for col in ("UVW", "TIME"):
             if col in self.ds.data_vars:
-                averaged[col] = _block_reduce(np.mean, self.ds[col].data[:trim], factor, 0)
+                v = self.ds[col].data[:trim]
+                # Broadcast the (nrow,) good-mask against v's trailing dims.
+                mask = da.reshape(
+                    row_good, (row_good.shape[0],) + (1,) * (v.ndim - 1)
+                )
+                v_masked = v * mask
+                summed = _block_reduce(np.sum, v_masked, factor, 0)
+                # n_good is (n_new,); broadcast to summed's trailing dims.
+                ng = da.reshape(
+                    n_good_safe, (n_good_safe.shape[0],) + (1,) * (summed.ndim - 1)
+                )
+                averaged[col] = summed / ng
 
-        # INTERVAL and EXPOSURE are summed: combining N integrations
-        # multiplies the integration time by N.
         for col in ("INTERVAL", "EXPOSURE"):
             if col in self.ds.data_vars:
-                averaged[col] = _block_reduce(np.sum, self.ds[col].data[:trim], factor, 0)
+                v = self.ds[col].data[:trim]
+                mask = da.reshape(
+                    row_good, (row_good.shape[0],) + (1,) * (v.ndim - 1)
+                )
+                averaged[col] = _block_reduce(np.sum, v * mask, factor, 0)
 
         for col in ("FLAG", "FLAG_ROW"):
             if col in self.ds.data_vars:
@@ -560,8 +593,10 @@ class DaskMS:
         """
         Average every <factor> consecutive frequency channels into one.
 
-        DATA and WEIGHT_SPECTRUM average only unflagged visibilities.
-        FLAG is OR'd (any flagged → flagged).
+        DATA, WEIGHT_SPECTRUM, and SIGMA_SPECTRUM average only unflagged
+        visibilities (flagged entries are excluded; WEIGHT_SPECTRUM is
+        summed, SIGMA_SPECTRUM uses inverse-variance combining).
+        FLAG is OR'd (any flagged -> flagged).
         Trailing channels (fewer than <factor>) are combined into a
         single narrower channel rather than discarded.
         """
