@@ -11,8 +11,19 @@ logger = logging.getLogger(__name__)
 
 def barber(ms, pol):
 
-    unflagged = da.logical_not(ms.flag)
-    absvis = da.asarray(da.abs(ms.data * unflagged))
+    # Read all columns from the live dataset so the report reflects
+    # any flagging/averaging/optimize that has run.  The ms.flag /
+    # ms.data / ... attributes are __init__ snapshots that go stale
+    # once the dataset is mutated.
+    flag = ms.ds.FLAG.data
+    data = ms.ds.DATA.data
+    time = ms.ds.TIME.data
+    antenna1 = ms.ds.ANTENNA1.data
+    antenna2 = ms.ds.ANTENNA2.data
+    weight_spectrum = ms.ds.WEIGHT_SPECTRUM.data
+
+    unflagged = da.logical_not(flag)
+    absvis = da.asarray(da.abs(data * unflagged))
 
     if pol is None:
         max_index = da.unravel_index(da.argmax(absvis, axis=None), shape=absvis.shape)
@@ -31,11 +42,11 @@ def barber(ms, pol):
 
     dump_index = max_index[0]
     channel_index = max_index[1]
-    dt = ms.time[dump_index]
-    max_flag = ms.flag[max_index]
+    dt = time[dump_index]
+    max_flag = flag[max_index]
 
-    ant1 = ms.antenna1[dump_index]
-    ant2 = ms.antenna2[dump_index]
+    ant1 = antenna1[dump_index]
+    ant2 = antenna2[dump_index]
 
     with ProgressBar():
         (
@@ -74,8 +85,8 @@ def barber(ms, pol):
     print(f"        at vis_index = {dump_index}")
     print(f"        at channel_index = {channel_index}")
     print(f"        at pol_index = {pol_index}")
-    print(f"    flags[{max_index}] = {ms.flag[max_index].compute()}")
-    print(f"    weights[{max_index}] = {ms.weight_spectrum[max_index].compute()}")
+    print(f"    flags[{max_index}] = {flag[max_index].compute()}")
+    print(f"    weights[{max_index}] = {weight_spectrum[max_index].compute()}")
     print(f"    Time = {timestamp}")
 
     print(f"    ANT1 = {ant1}")

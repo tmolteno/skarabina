@@ -21,6 +21,25 @@
   docstrings now accurately describe which columns exclude flagged
   data and the combining operation for each.
 
+### Fixed
+
+- **`--flag-spectral-window` no longer discards `--flag-nan`/`--flag-clip`
+  flags.**  `flag_spectral_window` read the stale `FLAG` snapshot cached
+  in `__init__` and OR'd onto it, so when it wrote the result back it
+  silently dropped the NaN/clip flags that `flag_data` had just written.
+  It now reads the current `FLAG` from the live dataset.
+- **`--summary` UV statistics now reflect post-averaging data.**  The
+  max-uv, UV percentiles, and fringe-rotation integration-time limit
+  were computed from the `__init__` UVW snapshot, so after
+  `--time-average-factor`/`--frequency-average-factor`/`--optimize` they
+  described the original, pre-processing rows.  They now derive UV from
+  the live dataset.
+- **`--barber` report now reflects post-processing data.**  It read the
+  cached `FLAG`/`DATA`/`TIME`/`WEIGHT_SPECTRUM`/`ANTENNA1/2` snapshots,
+  so after flagging/averaging/optimize it reported on the original
+  unflagged, un-averaged dataset (shapes even mismatched `self.ds`).
+  It now reads all columns from the live dataset.
+
 ## [0.7.1] — 2026-07-14
 
 ### Changed
