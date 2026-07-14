@@ -23,6 +23,9 @@
   --apply / --no-apply          Modify input MS in place
   --clobber / --no-clobber      Overwrite existing output
   --msout MS                    Output measurement set path
+  --split TEXT                  When writing (--msout), keep only this
+                                field's rows (field name or numeric
+                                FIELD_ID; see splitting.md)
   --debug / --no-debug          Verbose debug output
   --version                     Print version and exit
 ```
@@ -65,6 +68,16 @@ See [Time & frequency averaging](averaging.md) for details.
     skarabina --ms test.ms --frequency-average-factor 4 --optimize --msout averaged.ms
 
 See [Time & frequency averaging](averaging.md) for details.
+
+### Splitting by field
+
+Write an MS containing only one field (by name or numeric FIELD_ID).
+Flagging and averaging run on the full MS first; only the selected
+field's rows are written:
+
+    skarabina --ms raw.ms --flag-nan --msout target.ms --split "Cyg A" --clobber
+
+See [Splitting an MS by field](splitting.md) for details.
 
 ### Full pipeline
 

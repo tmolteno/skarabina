@@ -7,6 +7,7 @@ flagging of measurement sets.
 - [Usage & CLI reference](usage.md)
 - [Installation](INSTALL.md)
 - [Time & frequency averaging](AVERAGING.md)
+- [Splitting an MS by field](SPLITTING.md)
 - [Measurement set analyzer](ANALYZE.md)
 - [Changelog](CHANGES.md)
 
