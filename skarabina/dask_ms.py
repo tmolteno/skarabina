@@ -10,10 +10,23 @@ import dask.array as da
 import numpy as np
 import yaml
 from casacore.tables import table
+from dask.array import coarsen as da_coarsen
 from dask.diagnostics import ProgressBar
 from daskms import xds_from_ms, xds_to_table
 
 logger = logging.getLogger(__name__)
+
+
+def _block_reduce(func, arr, factor, axis):
+    """Apply ``func`` over consecutive blocks of ``factor`` along ``axis``.
+
+    Uses :func:`dask.array.coarsen`, which handles chunk boundaries that
+    are not evenly divisible by ``factor`` without fragmenting chunks
+    (unlike a manual reshape, which splits irregularly and forces an
+    expensive rechunk).  Trailing elements past the last full block are
+    dropped (the caller handles them explicitly where needed).
+    """
+    return da_coarsen(func, arr, {axis: factor}, trim_excess=True)
 
 
 @contextmanager
@@ -473,69 +486,57 @@ class DaskMS:
         )
 
         row_dim = self.ds.DATA.dims[0]
-        shape_3d = (n_new, factor, self.ds.FLAG.shape[1], self.ds.FLAG.shape[2])
-        shape_uvw = (n_new, factor, 3)
-        shape_1d = (n_new, factor)
-
-        def _reshape(arr, shape):
-            return arr[:trim].reshape(shape)
 
         # Step 1: compute averaged arrays from the ORIGINAL data.
-        # We do this before isel because reshaping needs n_new*factor rows.
+        # Block reductions use dask.array.coarsen (via _block_reduce), which
+        # averages every `factor` consecutive rows.  Unlike a manual reshape,
+        # coarsen tolerates row-chunk sizes that are not divisible by `factor`
+        # without fragmenting chunks, so it builds a far smaller task graph —
+        # important for very large MSes.
         averaged = {}
         if "DATA" in self.ds.data_vars:
-            d = _reshape(self.ds["DATA"].data, shape_3d)
-            f = _reshape(self.ds["FLAG"].data, shape_3d)
+            d = self.ds["DATA"].data[:trim]
+            f = self.ds["FLAG"].data[:trim]
             d_masked = da.where(f, 0j, d)
-            n_unflagged = da.sum(da.logical_not(f), axis=1)
+            n_unflagged = _block_reduce(np.sum, (~f).astype(np.float64), factor, 0)
             n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
-            averaged["DATA"] = da.sum(d_masked, axis=1) / n_safe
+            averaged["DATA"] = _block_reduce(np.sum, d_masked, factor, 0) / n_safe
 
         if "WEIGHT_SPECTRUM" in self.ds.data_vars:
-            w = _reshape(self.ds["WEIGHT_SPECTRUM"].data, shape_3d)
-            f = _reshape(self.ds["FLAG"].data, shape_3d)
+            w = self.ds["WEIGHT_SPECTRUM"].data[:trim]
+            f = self.ds["FLAG"].data[:trim]
             # Weight = 1/σ². Combined weight = Σ wᵢ (sum of unflagged).
             w_masked = da.where(f, 0, w)
-            averaged["WEIGHT_SPECTRUM"] = da.sum(w_masked, axis=1)
+            averaged["WEIGHT_SPECTRUM"] = _block_reduce(np.sum, w_masked, factor, 0)
 
         if "SIGMA_SPECTRUM" in self.ds.data_vars:
-            s = _reshape(self.ds["SIGMA_SPECTRUM"].data, shape_3d)
-            f = _reshape(self.ds["FLAG"].data, shape_3d)
+            s = self.ds["SIGMA_SPECTRUM"].data[:trim]
+            f = self.ds["FLAG"].data[:trim]
             # σ̄ = 1 / √(Σ 1/σ²) — sum inverse variances, then invert.
             inv_var = da.where(f, 0, 1.0 / (s * s))
-            sum_inv_var = da.sum(inv_var, axis=1)
+            sum_inv_var = _block_reduce(np.sum, inv_var, factor, 0)
             sum_safe = da.where(sum_inv_var == 0, 1, sum_inv_var)
             averaged["SIGMA_SPECTRUM"] = da.sqrt(1.0 / sum_safe)
 
-        for col, s in [
-            ("UVW", shape_uvw),
-            ("TIME", shape_1d),
-        ]:
+        for col in ("UVW", "TIME"):
             if col in self.ds.data_vars:
-                averaged[col] = da.mean(_reshape(self.ds[col].data, s), axis=1)
+                averaged[col] = _block_reduce(np.mean, self.ds[col].data[:trim], factor, 0)
 
         # INTERVAL and EXPOSURE are summed: combining N integrations
         # multiplies the integration time by N.
-        for col, s in [
-            ("INTERVAL", shape_1d),
-            ("EXPOSURE", shape_1d),
-        ]:
+        for col in ("INTERVAL", "EXPOSURE"):
             if col in self.ds.data_vars:
-                averaged[col] = da.sum(_reshape(self.ds[col].data, s), axis=1)
+                averaged[col] = _block_reduce(np.sum, self.ds[col].data[:trim], factor, 0)
 
-        for col, s in [
-            ("FLAG", shape_3d),
-            ("FLAG_ROW", shape_1d),
-        ]:
+        for col in ("FLAG", "FLAG_ROW"):
             if col in self.ds.data_vars:
-                averaged[col] = da.any(_reshape(self.ds[col].data, s), axis=1)
+                averaged[col] = _block_reduce(np.any, self.ds[col].data[:trim], factor, 0)
 
-        for col, s in [
-            ("ANTENNA1", shape_1d),
-            ("ANTENNA2", shape_1d),
-        ]:
+        # ANTENNA1/2 are constant within a group of consecutive rows;
+        # keep the first of each group via strided indexing.
+        for col in ("ANTENNA1", "ANTENNA2"):
             if col in self.ds.data_vars:
-                averaged[col] = _reshape(self.ds[col].data, s)[:, 0]
+                averaged[col] = self.ds[col].data[0:trim:factor]
 
         # Step 2: subsample the dataset to keep every <factor>-th row.
         # isel gives consistent dimensions and chunking (no conflicts).
@@ -567,13 +568,20 @@ class DaskMS:
         if factor < 2:
             return
 
-        nrow = self.ds.FLAG.shape[0]
         nchan = self.ds.FLAG.shape[1]
-        ncorr = self.ds.FLAG.shape[2]
         n_full = nchan // factor
         n_rem = nchan % factor
         n_new = n_full + (1 if n_rem > 0 else 0)
         trim = n_full * factor
+
+        if n_full == 0:
+            # Factor larger than the channel count: nothing to average
+            # (e.g. a single-channel MS).  Leave the data untouched.
+            print(
+                "Frequency-averaging: factor %d >= %d channels, nothing to do"
+                % (factor, nchan)
+            )
+            return
 
         msg = "Frequency-averaging: factor %d → %d channels" % (factor, n_new)
         if n_rem > 0:
@@ -581,19 +589,23 @@ class DaskMS:
         print(msg)
 
         chan_dim = self.ds.DATA.dims[1]
-        shape_full = (nrow, n_full, factor, ncorr)
 
         # --- Compute averaged arrays ---
+        # Block reductions use _block_reduce (dask.array.coarsen) over the
+        # channel axis.  Unlike a manual reshape it tolerates channel-chunk
+        # sizes that are not divisible by `factor` without fragmenting the
+        # chunk grid, giving a much smaller task graph for large MSes.
+        # Trailing channels (n_rem) are averaged separately and appended.
         averaged = {}
 
         # DATA: masked mean (exclude flagged)
         if "DATA" in self.ds.data_vars:
-            d = self.ds["DATA"].data[:, :trim, :].reshape(shape_full)
-            f = self.ds["FLAG"].data[:, :trim, :].reshape(shape_full)
+            d = self.ds["DATA"].data[:, :trim, :]
+            f = self.ds["FLAG"].data[:, :trim, :]
             d_masked = da.where(f, 0j, d)
-            n_unf = da.sum(da.logical_not(f), axis=2)
+            n_unf = _block_reduce(np.sum, (~f).astype(np.float64), factor, 1)
             n_safe = da.where(n_unf == 0, 1, n_unf)
-            avg = da.sum(d_masked, axis=2) / n_safe
+            avg = _block_reduce(np.sum, d_masked, factor, 1) / n_safe
             if n_rem > 0:
                 d_rem = self.ds["DATA"].data[:, trim:, :]
                 f_rem = self.ds["FLAG"].data[:, trim:, :]
@@ -605,27 +617,25 @@ class DaskMS:
             averaged["DATA"] = avg
 
         # WEIGHT_SPECTRUM: sum of unflagged weights (w = 1/σ², Σ w)
-        for col in ["WEIGHT_SPECTRUM"]:
-            if col not in self.ds.data_vars:
-                continue
-            s = self.ds[col].data[:, :trim, :].reshape(shape_full)
-            f = self.ds["FLAG"].data[:, :trim, :].reshape(shape_full)
+        if "WEIGHT_SPECTRUM" in self.ds.data_vars:
+            s = self.ds["WEIGHT_SPECTRUM"].data[:, :trim, :]
+            f = self.ds["FLAG"].data[:, :trim, :]
             s_masked = da.where(f, 0, s)
-            avg = da.sum(s_masked, axis=2)
+            avg = _block_reduce(np.sum, s_masked, factor, 1)
             if n_rem > 0:
-                s_rem = self.ds[col].data[:, trim:, :]
+                s_rem = self.ds["WEIGHT_SPECTRUM"].data[:, trim:, :]
                 f_rem = self.ds["FLAG"].data[:, trim:, :]
                 s_rem_m = da.where(f_rem, 0, s_rem)
                 avg_rem = da.sum(s_rem_m, axis=1, keepdims=True)
                 avg = da.concatenate([avg, avg_rem], axis=1)
-            averaged[col] = avg
+            averaged["WEIGHT_SPECTRUM"] = avg
 
         # SIGMA_SPECTRUM: σ̄ = 1 / √(Σ 1/σ²)
         if "SIGMA_SPECTRUM" in self.ds.data_vars:
-            s = self.ds["SIGMA_SPECTRUM"].data[:, :trim, :].reshape(shape_full)
-            f = self.ds["FLAG"].data[:, :trim, :].reshape(shape_full)
+            s = self.ds["SIGMA_SPECTRUM"].data[:, :trim, :]
+            f = self.ds["FLAG"].data[:, :trim, :]
             inv_var = da.where(f, 0, 1.0 / (s * s))
-            sum_inv = da.sum(inv_var, axis=2)
+            sum_inv = _block_reduce(np.sum, inv_var, factor, 1)
             sum_safe = da.where(sum_inv == 0, 1, sum_inv)
             avg = da.sqrt(1.0 / sum_safe)
             if n_rem > 0:
@@ -639,8 +649,8 @@ class DaskMS:
             averaged["SIGMA_SPECTRUM"] = avg
 
         if "FLAG" in self.ds.data_vars:
-            f = self.ds["FLAG"].data[:, :trim, :].reshape(shape_full)
-            avg = da.any(f, axis=2)
+            f = self.ds["FLAG"].data[:, :trim, :]
+            avg = _block_reduce(np.any, f, factor, 1)
             if n_rem > 0:
                 f_rem = self.ds["FLAG"].data[:, trim:, :]
                 avg_rem = da.any(f_rem, axis=1, keepdims=True)
