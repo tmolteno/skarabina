@@ -1,6 +1,26 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **`--time-average-factor` now excludes fully-flagged rows from
+  per-row metadata.**  Previously UVW, TIME, INTERVAL, and EXPOSURE
+  were averaged/summed over *all* rows, including flagged ones — the
+  only quantities that excluded flagged data were DATA, WEIGHT_SPECTRUM,
+  and SIGMA_SPECTRUM.  A row is now treated as bad (and excluded from
+  UVW/TIME masked means and INTERVAL/EXPOSURE masked sums) when
+  `FLAG_ROW` is True **or** every visibility in `FLAG` is True — the
+  same definition `optimize()` already uses.  A partially-flagged row
+  still carries a valid timestamp and baseline, so it continues to
+  contribute.  This is a scientific change to averaged output.
+- **`time_average` / `frequency_average` docstrings corrected.**  The
+  `time_average` docstring previously claimed INTERVAL was "averaged"
+  (it is summed); SIGMA_SPECTRUM and EXPOSURE were undocumented.  Both
+  docstrings now accurately describe which columns exclude flagged
+  data and the combining operation for each.
+
 ## [0.7.1] — 2026-07-14
 
 ### Changed
