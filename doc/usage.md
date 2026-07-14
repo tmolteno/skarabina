@@ -65,13 +65,13 @@ See `spectral-flags.example.yml` for the format — a list of entries with
 
     skarabina --ms test.ms --time-average-factor 4 --optimize --msout averaged.ms
 
-See [Time & frequency averaging](averaging.md) for details.
+See [Time & frequency averaging](AVERAGING.md) for details.
 
 ### Frequency averaging
 
     skarabina --ms test.ms --frequency-average-factor 4 --optimize --msout averaged.ms
 
-See [Time & frequency averaging](averaging.md) for details.
+See [Time & frequency averaging](AVERAGING.md) for details.
 
 ### Splitting by field
 
@@ -81,7 +81,7 @@ field's rows are written:
 
     skarabina --ms raw.ms --flag-nan --msout target.ms --split "Cyg A" --clobber
 
-See [Splitting an MS by field](splitting.md) for details.
+See [Splitting an MS by field](SPLITTING.md) for details.
 
 ### Full pipeline
 
