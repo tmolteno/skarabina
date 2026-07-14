@@ -46,9 +46,11 @@ The `summary()` function reports:
 The field-of-view half-width ℓ defaults to 1° (≈ 0.0175 rad) and can be set
 via `--field-of-view`.
 
-The `--time-average-factor N` option combines every N consecutive rows by
-averaging DATA, UVW, and scalar columns, and OR-ing FLAG columns.  This
-reduces data volume before `--optimize`.
+The `--time-average-factor N` option combines every N consecutive rows,
+averaging DATA/UVW/TIME, summing WEIGHT_SPECTRUM/INTERVAL/EXPOSURE,
+inverse-variance combining SIGMA_SPECTRUM, and OR-ing FLAG columns —
+excluding flagged data from each.  This reduces data volume before
+`--optimize`.
 
 ## Time averaging (`--time-average-factor`)
 
@@ -58,17 +60,19 @@ measurement set size by a factor of *N* (≈ *N*).
 | Column          | Operation | Notes |
 |-----------------|-----------|-------|
 | DATA            | Masked mean | Flagged visibilities excluded |
-| WEIGHT_SPECTRUM | Sum         | w = 1/σ², combined: Σ wᵢ |
-| SIGMA_SPECTRUM  | 1/√(Σ 1/σ²) | Inverse-variance weighting |
+| WEIGHT_SPECTRUM | Sum         | w = 1/σ², combined: Σ wᵢ (flagged excluded) |
+| SIGMA_SPECTRUM  | 1/√(Σ 1/σ²) | Inverse-variance weighting (flagged excluded) |
 | FLAG, FLAG_ROW  | OR          | Any flagged → flagged |
-| UVW             | Mean        | Per-row metadata |
-| TIME            | Mean        | Averaged timestamp |
-| INTERVAL        | Sum         | Integration time × N |
-| EXPOSURE        | Sum         | |
+| UVW             | Masked mean | Fully-flagged rows excluded |
+| TIME            | Masked mean | Fully-flagged rows excluded |
+| INTERVAL        | Masked sum  | Fully-flagged rows excluded |
+| EXPOSURE        | Masked sum  | Fully-flagged rows excluded |
 | ANTENNA1/2      | First       | Same baseline in block |
 
-Trailing rows (fewer than *N*) are discarded.  Run `--summary` afterward
-to see the updated integration time.
+A row is "fully flagged" when `FLAG_ROW` is True or every visibility in
+`FLAG` is True; partially-flagged rows still contribute to the per-row
+metadata.  Trailing rows (fewer than *N*) are discarded.  Run `--summary`
+afterward to see the updated integration time.
 
 ## Frequency averaging (`--frequency-average-factor`)
 
@@ -81,7 +85,6 @@ channel count by a factor of *N*.
 | WEIGHT_SPECTRUM | Sum         | w = 1/σ², combined: Σ wᵢ |
 | SIGMA_SPECTRUM  | 1/√(Σ 1/σ²) | Inverse-variance weighting |
 | FLAG            | OR          | Any flagged → flagged |
-| SIGMA_SPECTRUM  | Mean        | |
 | CHAN_FREQ       | Mean        | SPECTRAL_WINDOW updated |
 
 Trailing channels (fewer than *N*) are combined into a final narrower
