@@ -1,6 +1,23 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Changelog
 
+## [0.7.1] — 2026-07-14
+
+### Changed
+
+- **Averaging uses `dask.array.coarsen`.**  `--time-average-factor` and
+  `--frequency-average-factor` now block-reduce with `coarsen` instead of a
+  manual reshape.  When row/channel chunk sizes are not divisible by the
+  factor (the common case), reshape fragmented chunks and forced an expensive
+  rechunk; `coarsen` keeps chunks regular and builds a ~28% smaller task graph,
+  which matters for very large measurement sets.  Results are numerically
+  identical.
+
+### Fixed
+
+- **Frequency averaging with `factor > nchan` (e.g. a single-channel MS)
+  no longer crashes** — it is now a no-op with a clear message.
+
 ## [0.7.0] — 2026-07-14
 
 ### Added
