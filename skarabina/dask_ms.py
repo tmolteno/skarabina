@@ -171,7 +171,10 @@ class DaskMS:
 
         nchan = len(self.chan_freq_hz)
         uv_dist = da.sqrt(self.u_arr * self.u_arr + self.v_arr * self.v_arr)
-        old_flags = self.flag
+        # Read FLAG fresh from the live dataset so we OR onto the current
+        # flags (including NaN/clip flags from flag_data), not the stale
+        # __init__ snapshot.
+        old_flags = self.ds.FLAG.data
         new_flags = old_flags
 
         for idx, entry in enumerate(entries):
@@ -314,7 +317,14 @@ class DaskMS:
         min_total_per_row = da.min(total_per_row)
         max_total_per_row = da.max(total_per_row)
 
-        abs_uv = da.sqrt(self.u_arr * self.u_arr + self.v_arr * self.v_arr)
+        # Derive UV coordinates from the live dataset so the UV
+        # percentiles, max-uv, and integration-time limit reflect any
+        # averaging/optimize that has run (self.u_arr/v_arr are the
+        # original __init__ snapshot and go stale once rows change).
+        uvw = self.ds["UVW"].data
+        u_arr = uvw[:, 0]
+        v_arr = uvw[:, 1]
+        abs_uv = da.sqrt(u_arr * u_arr + v_arr * v_arr)
         percentile_inputs = [25, 33, 50, 75, 95, 100]
         percentile_values = da.percentile(abs_uv.flatten(), percentile_inputs)
 
