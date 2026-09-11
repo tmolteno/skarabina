@@ -3,6 +3,23 @@
 
 ## [Unreleased]
 
+## [0.8.2]
+
+### Fixed
+
+- **All per-channel SPECTRAL_WINDOW columns are rewritten, not just
+  `CHAN_FREQ`/`RESOLUTION`.**  `CHAN_WIDTH` and `EFFECTIVE_BW` also have
+  `NUM_CHAN` entries and were left describing the *input* channel count after
+  frequency averaging, so the written MS had a subtable that contradicted
+  itself (e.g. `RESOLUTION` of length 314 next to `CHAN_WIDTH` of length 2511).
+  dask-ms rejected it with *"conflicting sizes for dimension 'chan'"*, which is
+  how `quartical-summary` failed on the first real-data run of the white-belt
+  pipeline.  The channel-axis bookkeeping now tracks every width column present
+  in the subtable, averages them with the data (widths sum within a group),
+  drops removed channels from them under `optimize`, and writes them back.
+  A write-time check now refuses to leave a subtable with a stale per-channel
+  column, naming it in the error.
+
 ## [0.8.1]
 
 ### Fixed
