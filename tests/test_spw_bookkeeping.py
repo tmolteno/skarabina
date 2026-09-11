@@ -43,22 +43,34 @@ def _make_ms(nchan, flags=None, chan_freq_hz=None, chan_width_hz=None):
     ms.sub_table_names = []
     ms.nspw = 1
     ms.chan_freq_hz = chan_freq_hz
-    ms.chan_width_hz = chan_width_hz
+    ms.chan_axis_hz = {}
+    if chan_width_hz is not None:
+        # Every per-channel width column is tracked; a real MS has all three.
+        for col in ("CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"):
+            ms.chan_axis_hz[col] = np.array(chan_width_hz, dtype=float)
     ms.spw_chan_count = None if chan_freq_hz is None else len(chan_freq_hz)
     ms._refresh_cached_columns()
     return ms
 
 
 def test_spw_column_updates_values_and_shapes():
+    """Every per-channel column must be rewritten, not just CHAN_FREQ.
+
+    CHAN_WIDTH and EFFECTIVE_BW have NUM_CHAN entries too; leaving one behind
+    makes dask-ms (and CASA) reject the MS with "conflicting sizes for
+    dimension 'chan'".
+    """
     freq = np.array([1.0e8, 2.0e8])
     width = np.array([1.0e6, 1.0e6])
-    updates = spw_column_updates(2, freq, width)
+    axis = {col: width for col in ("CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION")}
+    updates = spw_column_updates(2, freq, axis)
 
     assert list(updates["NUM_CHAN"]) == [2]
     assert updates["CHAN_FREQ"].shape == (1, 2)
     assert np.allclose(updates["CHAN_FREQ"][0], freq)
-    assert updates["RESOLUTION"].shape == (1, 2)
-    assert np.allclose(updates["RESOLUTION"][0], width)
+    for col in ("CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"):
+        assert updates[col].shape == (1, 2), col
+        assert np.allclose(updates[col][0], width), col
     assert np.allclose(updates["TOTAL_BANDWIDTH"], [2.0e6])
 
 
@@ -68,15 +80,16 @@ def test_spw_column_updates_without_widths():
 
 
 @pytest.mark.parametrize(
-    "nchan,freq,width",
+    "nchan,freq,axis",
     [
         (3, np.array([1.0e8, 2.0e8]), None),  # too few frequencies
-        (1, np.array([1.0e8]), np.array([1.0e6, 1.0e6])),  # too many widths
+        (1, np.array([1.0e8]), {"CHAN_WIDTH": np.array([1.0e6, 1.0e6])}),
+        (1, np.array([1.0e8]), {"EFFECTIVE_BW": np.array([1.0e6, 1.0e6])}),
     ],
 )
-def test_spw_column_updates_rejects_mismatch(nchan, freq, width):
+def test_spw_column_updates_rejects_mismatch(nchan, freq, axis):
     with pytest.raises(RuntimeError, match="bookkeeping error"):
-        spw_column_updates(nchan, freq, width)
+        spw_column_updates(nchan, freq, axis)
 
 
 def test_frequency_average_updates_freqs_and_widths():
@@ -88,9 +101,12 @@ def test_frequency_average_updates_freqs_and_widths():
 
     assert ms.ds.DATA.shape[1] == 2
     assert np.allclose(ms.chan_freq_hz, [1.05e8, 1.25e8])
-    assert np.allclose(ms.chan_width_hz, [2.0e7, 2.0e7])
+    for col, values in ms.chan_axis_hz.items():
+        assert np.allclose(values, [2.0e7, 2.0e7]), col
     # bookkeeping now matches the data
-    updates = spw_column_updates(ms.ds.DATA.shape[1], ms.chan_freq_hz, ms.chan_width_hz)
+    updates = spw_column_updates(
+        ms.ds.DATA.shape[1], ms.chan_freq_hz, ms.chan_axis_hz
+    )
     assert list(updates["NUM_CHAN"]) == [2]
 
 
@@ -104,7 +120,8 @@ def test_frequency_average_trailing_channel():
     # 5 channels, factor 2 -> 2 full groups + 1 narrower trailing channel
     assert len(ms.chan_freq_hz) == 3
     assert np.isclose(ms.chan_freq_hz[-1], 1.4e8)
-    assert np.isclose(ms.chan_width_hz[-1], 1.0e7)
+    for col, values in ms.chan_axis_hz.items():
+        assert np.isclose(values[-1], 1.0e7), col
 
 
 def test_optimize_drops_removed_channels_from_bookkeeping():
@@ -120,7 +137,8 @@ def test_optimize_drops_removed_channels_from_bookkeeping():
 
     assert ms.ds.DATA.shape[1] == 2
     assert np.allclose(ms.chan_freq_hz, [1.0e8, 3.0e8])
-    assert np.allclose(ms.chan_width_hz, [1.0e7, 1.0e7])
+    for col, values in ms.chan_axis_hz.items():
+        assert np.allclose(values, [1.0e7, 1.0e7]), col
     # The sub-table rewrite is driven by spw_chan_count vs the data shape.
     assert ms.spw_chan_count == 3
     assert ms.spw_chan_count != ms.ds.DATA.shape[1]

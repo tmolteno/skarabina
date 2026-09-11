@@ -11,6 +11,7 @@ import dask.array as da
 import numpy as np
 import pytest
 from casacore.tables import table
+from daskms import xds_from_table
 
 from skarabina.dask_ms import DaskMS
 from ms_fixture import CHANNEL_WIDTH_HZ, channel_frequencies, make_synthetic_ms
@@ -22,6 +23,38 @@ def _spw_columns(ms_path, columns):
         return {col: sw.getcol(col) for col in columns}
     finally:
         sw.close()
+
+
+PER_CHANNEL_COLUMNS = ("CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION")
+
+
+def test_averaged_subtable_is_self_consistent(tmp_path):
+    """Every per-channel SPECTRAL_WINDOW column must match NUM_CHAN.
+
+    Regression test: CHAN_WIDTH and EFFECTIVE_BW were left describing the
+    input channel count, so dask-ms refused the averaged MS with
+    "conflicting sizes for dimension 'chan'" -- which is how
+    quartical-summary failed on the first real-data run.
+    """
+    in_ms = make_synthetic_ms(tmp_path / "in.ms", nchan=8, nrow=4)
+
+    ms = DaskMS(in_ms)
+    ms.frequency_average(4)
+    out_ms = str(tmp_path / "out.ms")
+    ms.write_new_ms(out_ms, clobber=True)
+
+    cols = _spw_columns(out_ms, ("NUM_CHAN",) + PER_CHANNEL_COLUMNS)
+    nchan = int(cols["NUM_CHAN"][0])
+    assert nchan == 2
+    for col in PER_CHANNEL_COLUMNS:
+        assert cols[col].shape == (1, nchan), f"{col} has {cols[col].shape}"
+
+    # The same read that quartical-summary performs must succeed.
+    datasets = xds_from_table(f"{out_ms}/SPECTRAL_WINDOW")
+    assert len(datasets) == 1
+    assert datasets[0].CHAN_WIDTH.shape[-1] == nchan
+    assert datasets[0].EFFECTIVE_BW.shape[-1] == nchan
+    assert datasets[0].RESOLUTION.shape[-1] == nchan
 
 
 def test_frequency_average_rewrites_spectral_window(tmp_path):

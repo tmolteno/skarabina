@@ -91,17 +91,20 @@ def parse_scan_spec(spec):
     return sorted(scans)
 
 
-def spw_column_updates(nchan, chan_freq_hz, chan_width_hz=None):
+def spw_column_updates(nchan, chan_freq_hz, axis_hz=None):
     """Column values for a single-SPW SPECTRAL_WINDOW subtable.
 
     Returns a ``{column_name: value}`` mapping suitable for ``putcol()`` on a
-    one-row SPECTRAL_WINDOW table: ``NUM_CHAN``, ``CHAN_FREQ``, and -- when the
-    per-channel widths are known -- ``RESOLUTION`` and ``TOTAL_BANDWIDTH``.
+    one-row SPECTRAL_WINDOW table: ``NUM_CHAN``, ``CHAN_FREQ``, every
+    per-channel column supplied in ``axis_hz`` (``CHAN_WIDTH``,
+    ``EFFECTIVE_BW`` and/or ``RESOLUTION``) and ``TOTAL_BANDWIDTH``.
 
     The subtable is copied verbatim from the input MS when a new MS is written,
     so it still describes the *input* channel setup after frequency averaging
     or after fully-flagged channels have been removed.  Writing these columns
-    back is what keeps the subtable consistent with the main table.
+    back is what keeps the subtable consistent with the main table -- every
+    per-channel column must have exactly ``NUM_CHAN`` entries, or readers such
+    as dask-ms reject the MS with "conflicting sizes for dimension 'chan'".
     """
     freq = np.asarray(chan_freq_hz, dtype=float).reshape(-1)
     nchan = int(nchan)
@@ -116,27 +119,51 @@ def spw_column_updates(nchan, chan_freq_hz, chan_width_hz=None):
         "CHAN_FREQ": freq.reshape(1, -1),
     }
 
-    if chan_width_hz is not None:
-        width = np.asarray(chan_width_hz, dtype=float).reshape(-1)
-        if width.size != nchan:
+    for name, values in (axis_hz or {}).items():
+        if values is None:
+            continue
+        arr = np.asarray(values, dtype=float).reshape(-1)
+        if arr.size != nchan:
             raise RuntimeError(
-                f"SPECTRAL_WINDOW bookkeeping error: {width.size} channel"
-                f" widths for {nchan} data channels"
+                f"SPECTRAL_WINDOW bookkeeping error: {arr.size} entries for"
+                f" {name} but {nchan} data channels"
             )
-        updates["RESOLUTION"] = width.reshape(1, -1)
-        updates["TOTAL_BANDWIDTH"] = np.array([float(np.sum(width))])
+        updates[name] = arr.reshape(1, -1)
+
+    # TOTAL_BANDWIDTH is the sum of the channel widths.  CHAN_WIDTH is the
+    # physical width, so prefer it over the (usually identical) RESOLUTION.
+    for name in ("CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"):
+        if name in updates:
+            updates["TOTAL_BANDWIDTH"] = np.array(
+                [float(np.sum(updates[name]))]
+            )
+            break
 
     return updates
 
 
 class DaskMS:
-    # Channel-width bookkeeping, filled in by __init__ from the SPECTRAL_WINDOW
+    # Channel bookkeeping, filled in by __init__ from the SPECTRAL_WINDOW
     # subtable.  Class-level defaults keep instances built via __new__ (and the
     # synthetic doubles used in the tests) working.
     chan_freq_hz = None
-    chan_width_hz = None
+    #: Per-channel SPECTRAL_WINDOW columns, keyed by column name.  Each one is
+    #: averaged/subsampled alongside the data, so the written subtable stays
+    #: consistent with the main table.
+    chan_axis_hz = None
     spw_chan_count = None
     nspw = 0
+
+    @property
+    def chan_width_hz(self):
+        """The SPECTRAL_WINDOW RESOLUTION column (per-channel width, Hz)."""
+        return (self.chan_axis_hz or {}).get("RESOLUTION")
+
+    @chan_width_hz.setter
+    def chan_width_hz(self, value):
+        if self.chan_axis_hz is None:
+            self.chan_axis_hz = {}
+        self.chan_axis_hz["RESOLUTION"] = value
 
     def __init__(self, ms_name):
         self.name = ms_name
@@ -207,9 +234,12 @@ class DaskMS:
         #         pass
         self.changed = {}
 
-        # Load channel frequencies from SPECTRAL_WINDOW subtable (Hz)
+        # Load the channel axis from the SPECTRAL_WINDOW subtable: the centre
+        # frequencies, plus every per-channel width column (CHAN_WIDTH,
+        # EFFECTIVE_BW, RESOLUTION).  All of them have NUM_CHAN entries and all
+        # of them must be rewritten when the channel count changes.
         self.chan_freq_hz = None
-        self.chan_width_hz = None
+        self.chan_axis_hz = {}
         # Number of channels the *subtable* currently describes.  Kept so that
         # write_new_ms() can tell whether the subtable needs rewriting after
         # frequency averaging / channel removal.
@@ -223,8 +253,9 @@ class DaskMS:
                     self.nspw = chan_freq.shape[0]
                     self.chan_freq_hz = chan_freq[0]
                     self.spw_chan_count = chan_freq.shape[1]
-                    if "RESOLUTION" in sw.colnames():
-                        self.chan_width_hz = sw.getcol("RESOLUTION")[0]
+                    for col in ("CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"):
+                        if col in sw.colnames():
+                            self.chan_axis_hz[col] = sw.getcol(col)[0]
                     sw.close()
                     # If the subtable has more channels than the actual
                     # data (e.g. from a pre-fix frequency-averaged MS),
@@ -238,8 +269,8 @@ class DaskMS:
                             nchan_ds,
                         )
                         self.chan_freq_hz = self.chan_freq_hz[:nchan_ds]
-                        if self.chan_width_hz is not None:
-                            self.chan_width_hz = self.chan_width_hz[:nchan_ds]
+                        for col, values in self.chan_axis_hz.items():
+                            self.chan_axis_hz[col] = values[:nchan_ds]
                 except Exception:
                     logger.warning("Could not read CHAN_FREQ from %s", s)
 
@@ -942,14 +973,18 @@ class DaskMS:
                 avg_freq = np.append(avg_freq, avg_rem)
             self.chan_freq_hz = avg_freq
 
-        # ...and the channel widths (SPECTRAL_WINDOW RESOLUTION), which add up
-        # within a group the same way the frequency span does.
-        if self.chan_width_hz is not None:
-            width_reshaped = self.chan_width_hz[:trim].reshape(n_full, factor)
+        # ...and the per-channel width columns (CHAN_WIDTH, EFFECTIVE_BW,
+        # RESOLUTION), which add up within a group the same way the frequency
+        # span does.  Missing one leaves the subtable describing the input
+        # channel count, which readers reject.
+        for col, values in list((self.chan_axis_hz or {}).items()):
+            if values is None:
+                continue
+            width_reshaped = values[:trim].reshape(n_full, factor)
             avg_width = np.sum(width_reshaped, axis=1)
             if n_rem > 0:
-                avg_width = np.append(avg_width, np.sum(self.chan_width_hz[trim:]))
-            self.chan_width_hz = avg_width
+                avg_width = np.append(avg_width, np.sum(values[trim:]))
+            self.chan_axis_hz[col] = avg_width
 
     def optimize(self):
         """
@@ -1049,8 +1084,9 @@ class DaskMS:
         if int(n_chan_flagged) > 0:
             if self.chan_freq_hz is not None:
                 self.chan_freq_hz = self.chan_freq_hz[keep_chan_idx]
-            if self.chan_width_hz is not None:
-                self.chan_width_hz = self.chan_width_hz[keep_chan_idx]
+            for col, values in list((self.chan_axis_hz or {}).items()):
+                if values is not None:
+                    self.chan_axis_hz[col] = values[keep_chan_idx]
         self._refresh_cached_columns()
 
         # Mark all changed variables
@@ -1191,7 +1227,7 @@ class DaskMS:
     def _rewrite_spw_channels(self, name, nchan):
         """Rewrite the per-channel SPECTRAL_WINDOW columns of a written MS.
 
-        Channel frequencies (and, when known, channel widths) are taken from
+        Channel frequencies and every per-channel width column are taken from
         the live bookkeeping, so the subtable matches the main table after
         frequency averaging or channel removal.
         """
@@ -1202,7 +1238,7 @@ class DaskMS:
                 " measurement sets are supported"
             )
 
-        updates = spw_column_updates(nchan, self.chan_freq_hz, self.chan_width_hz)
+        updates = spw_column_updates(nchan, self.chan_freq_hz, self.chan_axis_hz)
 
         with _maybe_quiet_stderr():
             for sub in self.sub_table_names:
@@ -1219,6 +1255,27 @@ class DaskMS:
                             logger.warning(
                                 "SPECTRAL_WINDOW has no %s column; skipping", col
                             )
+                    # Safety net: every per-channel column must now have the
+                    # new channel count.  A stale one (the CHAN_WIDTH bug that
+                    # made dask-ms report "conflicting sizes for dimension
+                    # 'chan'") is an error, not something to leave on disk.
+                    stale = []
+                    for col in sw.colnames():
+                        if col in updates:
+                            continue
+                        try:
+                            arr = np.asarray(sw.getcol(col))
+                        except Exception:
+                            continue
+                        if arr.ndim >= 2 and arr.shape[-1] == self.spw_chan_count:
+                            stale.append(col)
+                    if stale:
+                        raise RuntimeError(
+                            "SPECTRAL_WINDOW still describes"
+                            f" {self.spw_chan_count} channels in {stale} after"
+                            f" rewriting to {nchan} channels; refusing to leave"
+                            f" an inconsistent subtable in {dest}"
+                        )
                 finally:
                     sw.close()
                 print(
