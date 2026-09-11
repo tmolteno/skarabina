@@ -57,6 +57,43 @@ def test_averaged_subtable_is_self_consistent(tmp_path):
     assert datasets[0].RESOLUTION.shape[-1] == nchan
 
 
+def test_written_ms_keeps_every_subtable_link(tmp_path):
+    """The written MS must link every sub-table the input had.
+
+    Regression test: dask-ms writes the main table without the SOURCE keyword,
+    so the copied SOURCE sub-table was orphaned -- getsubtables() did not list
+    it and CASA's Calibrater failed with "NullTable::lock - Table object is
+    empty".
+    """
+    import os
+
+    in_ms = make_synthetic_ms(tmp_path / "in.ms", nchan=4, nrow=4)
+
+    ms = DaskMS(in_ms)
+    out_ms = str(tmp_path / "out.ms")
+    ms.write_new_ms(out_ms, clobber=True)
+
+    def subtables(path):
+        t = table(path, ack=False)
+        try:
+            return {os.path.basename(s) for s in t.getsubtables()}
+        finally:
+            t.close()
+
+    assert subtables(in_ms) <= subtables(out_ms), "a sub-table link was lost"
+
+    out = table(out_ms, ack=False)
+    try:
+        keywords = set(out.getkeywords())
+        assert "SOURCE" in keywords
+        # ...and the link points inside the new MS, not back at the input.
+        link = out.getkeyword("SOURCE")
+        assert os.path.abspath(out_ms) in link
+        assert os.path.abspath(in_ms) not in link
+    finally:
+        out.close()
+
+
 def test_frequency_average_rewrites_spectral_window(tmp_path):
     """Averaging must leave the sub-table describing the averaged channels."""
     in_ms = make_synthetic_ms(tmp_path / "in.ms", nchan=4, nrow=4)
