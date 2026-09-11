@@ -44,7 +44,100 @@ def _maybe_quiet_stderr():
                 sys.stderr = old_stderr
 
 
+def parse_scan_spec(spec):
+    """Parse a CASA-style scan selection into a sorted list of scan numbers.
+
+    ``spec`` is a comma-separated list of scan numbers and inclusive ranges,
+    e.g. ``"1,12,14"``, ``"0~5"`` or ``"0~5,20,30~32"``.  Whitespace is
+    ignored.  ``None`` or an empty string selects every scan and returns
+    ``None`` (the caller then leaves the dataset untouched).
+
+    Raises :class:`RuntimeError` for anything that is not a number or a
+    ``lo~hi`` range, and for a specification that names no scans at all.
+    """
+    if spec is None:
+        return None
+    text = str(spec).strip()
+    if not text:
+        return None
+
+    scans = set()
+    for part in text.replace(" ", "").split(","):
+        if not part:
+            continue
+        if "~" in part:
+            lo_s, _, hi_s = part.partition("~")
+            try:
+                lo, hi = int(lo_s), int(hi_s)
+            except ValueError:
+                raise RuntimeError(
+                    f"Bad scan range {part!r} in scan selection {text!r}"
+                    " (expected e.g. '0~5')"
+                ) from None
+            if hi < lo:
+                lo, hi = hi, lo
+            scans.update(range(lo, hi + 1))
+        else:
+            try:
+                scans.add(int(part))
+            except ValueError:
+                raise RuntimeError(
+                    f"Bad scan number {part!r} in scan selection {text!r}"
+                    " (expected e.g. '1,12,14' or '0~5')"
+                ) from None
+
+    if not scans:
+        return None
+    return sorted(scans)
+
+
+def spw_column_updates(nchan, chan_freq_hz, chan_width_hz=None):
+    """Column values for a single-SPW SPECTRAL_WINDOW subtable.
+
+    Returns a ``{column_name: value}`` mapping suitable for ``putcol()`` on a
+    one-row SPECTRAL_WINDOW table: ``NUM_CHAN``, ``CHAN_FREQ``, and -- when the
+    per-channel widths are known -- ``RESOLUTION`` and ``TOTAL_BANDWIDTH``.
+
+    The subtable is copied verbatim from the input MS when a new MS is written,
+    so it still describes the *input* channel setup after frequency averaging
+    or after fully-flagged channels have been removed.  Writing these columns
+    back is what keeps the subtable consistent with the main table.
+    """
+    freq = np.asarray(chan_freq_hz, dtype=float).reshape(-1)
+    nchan = int(nchan)
+    if freq.size != nchan:
+        raise RuntimeError(
+            f"SPECTRAL_WINDOW bookkeeping error: {freq.size} channel"
+            f" frequencies for {nchan} data channels"
+        )
+
+    updates = {
+        "NUM_CHAN": np.array([nchan], dtype=np.int32),
+        "CHAN_FREQ": freq.reshape(1, -1),
+    }
+
+    if chan_width_hz is not None:
+        width = np.asarray(chan_width_hz, dtype=float).reshape(-1)
+        if width.size != nchan:
+            raise RuntimeError(
+                f"SPECTRAL_WINDOW bookkeeping error: {width.size} channel"
+                f" widths for {nchan} data channels"
+            )
+        updates["RESOLUTION"] = width.reshape(1, -1)
+        updates["TOTAL_BANDWIDTH"] = np.array([float(np.sum(width))])
+
+    return updates
+
+
 class DaskMS:
+    # Channel-width bookkeeping, filled in by __init__ from the SPECTRAL_WINDOW
+    # subtable.  Class-level defaults keep instances built via __new__ (and the
+    # synthetic doubles used in the tests) working.
+    chan_freq_hz = None
+    chan_width_hz = None
+    spw_chan_count = None
+    nspw = 0
+
     def __init__(self, ms_name):
         self.name = ms_name
         print(f"Getting Data from MS file: {self.name}")
@@ -62,6 +155,17 @@ class DaskMS:
 
         self.datasets = xds_from_ms(self.name)
         logger.debug(self.datasets)
+
+        # dask-ms returns one dataset per DATA_DESC_ID.  Everything below
+        # operates on a single dataset, so silently processing only the first
+        # one would quietly discard data (and write a truncated output MS).
+        if len(self.datasets) > 1:
+            raise RuntimeError(
+                f"Measurement set {self.name} contains {len(self.datasets)}"
+                " datasets (one per DATA_DESC_ID); skarabina processes a single"
+                " dataset. Split the MS by spectral window first (e.g. CASA"
+                " mstransform/split), then run skarabina on each part."
+            )
 
         self.ds = self.datasets[0]
         self.flag = da.asarray(self.ds.FLAG)
@@ -98,6 +202,11 @@ class DaskMS:
 
         # Load channel frequencies from SPECTRAL_WINDOW subtable (Hz)
         self.chan_freq_hz = None
+        self.chan_width_hz = None
+        # Number of channels the *subtable* currently describes.  Kept so that
+        # write_new_ms() can tell whether the subtable needs rewriting after
+        # frequency averaging / channel removal.
+        self.spw_chan_count = None
         self.nspw = 0
         for s in self.sub_table_names:
             if "SPECTRAL_WINDOW" in s:
@@ -106,6 +215,9 @@ class DaskMS:
                     chan_freq = sw.getcol("CHAN_FREQ")
                     self.nspw = chan_freq.shape[0]
                     self.chan_freq_hz = chan_freq[0]
+                    self.spw_chan_count = chan_freq.shape[1]
+                    if "RESOLUTION" in sw.colnames():
+                        self.chan_width_hz = sw.getcol("RESOLUTION")[0]
                     sw.close()
                     # If the subtable has more channels than the actual
                     # data (e.g. from a pre-fix frequency-averaged MS),
@@ -119,8 +231,75 @@ class DaskMS:
                             nchan_ds,
                         )
                         self.chan_freq_hz = self.chan_freq_hz[:nchan_ds]
+                        if self.chan_width_hz is not None:
+                            self.chan_width_hz = self.chan_width_hz[:nchan_ds]
                 except Exception:
                     logger.warning("Could not read CHAN_FREQ from %s", s)
+
+    def _refresh_cached_columns(self):
+        """Re-snapshot the column attributes set up in ``__init__``.
+
+        ``__init__`` caches ``data``/``flag``/``uvw``/``u_arr``/``v_arr``/...
+        as dask arrays.  Any operation that changes the *shape* of the dataset
+        (row or channel selection) must refresh them, or later code that still
+        reads the cached attributes would work on the pre-selection arrays.
+        """
+        ds = self.ds
+        self.flag = da.asarray(ds.FLAG)
+        self.flag_row = da.asarray(ds.FLAG_ROW)
+        self.antenna1 = da.asarray(ds.ANTENNA1)
+        self.antenna2 = da.asarray(ds.ANTENNA2)
+        self.data = da.asarray(ds.DATA)
+        self.uvw = da.asarray(ds.UVW)
+        self.u_arr = self.uvw[:, 0].T
+        self.v_arr = self.uvw[:, 1].T
+        self.w_arr = self.uvw[:, 2].T
+        self.time = da.asarray(ds.TIME)
+        try:
+            self.weight_spectrum = da.asarray(ds.WEIGHT_SPECTRUM)
+        except AttributeError:
+            self.weight_spectrum = da.ones_like(self.data)
+
+    def select_scans(self, spec):
+        """Keep only the rows belonging to the selected scans.
+
+        ``spec`` is a CASA-style selection: a comma-separated list of scan
+        numbers and inclusive ranges (e.g. ``"1,12,14"`` or ``"0~5"``); an
+        empty specification keeps every scan (see :func:`parse_scan_spec`).
+
+        Filtering happens at read time, so every later operation -- flagging,
+        averaging, ``optimize`` and the write-out -- sees only the selected
+        scans.
+        """
+        scans = parse_scan_spec(spec)
+        if scans is None:
+            return
+
+        if "SCAN_NUMBER" not in self.ds.data_vars:
+            raise RuntimeError(
+                "MS has no SCAN_NUMBER column — cannot select scans"
+            )
+
+        scan_numbers = da.asarray(self.ds.SCAN_NUMBER.data)
+        mask = da.isin(scan_numbers, np.asarray(scans))
+        indices = da.nonzero(mask)[0].compute()
+        if indices.size == 0:
+            raise RuntimeError(
+                f"Scan selection {str(spec)!r}: no rows in scans {scans}"
+            )
+
+        row_dim = self.ds.DATA.dims[0]
+        n_before = int(self.ds.DATA.shape[0])
+        self.ds = self.ds.isel({row_dim: indices})
+        for var_name in self.ds.data_vars:
+            if row_dim in self.ds[var_name].dims:
+                self.changed[var_name] = True
+
+        self._refresh_cached_columns()
+        print(
+            f"--scan {str(spec).strip()!r}: kept {indices.size} of {n_before}"
+            f" rows, scans {scans}"
+        )
 
     def flag_uv_above(self, uv_limit):
         """
@@ -128,11 +307,14 @@ class DaskMS:
         """
         print("flag_uv_above: %.1f m" % uv_limit)
 
-        abs_uv = self.u_arr * self.u_arr + self.v_arr * self.v_arr
+        # Read from the live dataset: self.u_arr/v_arr/flag_row are __init__
+        # snapshots that go stale once rows have been selected.
+        uvw = self.ds["UVW"].data
+        abs_uv = uvw[:, 0] * uvw[:, 0] + uvw[:, 1] * uvw[:, 1]
         uv_flag_mask = da.greater(abs_uv, uv_limit * uv_limit)
-        new_flag_row = da.logical_or(uv_flag_mask, self.flag_row)
+        new_flag_row = da.logical_or(uv_flag_mask, self.ds["FLAG_ROW"].data)
 
-        n_old = da.sum(self.flag_row)
+        n_old = da.sum(self.ds["FLAG_ROW"].data)
         n_new = da.sum(new_flag_row)
         n_uv = da.sum(uv_flag_mask)
         max_uv = da.sqrt(da.max(abs_uv))
@@ -174,7 +356,10 @@ class DaskMS:
         # Materialize uv_distance once (numpy) so every UV-constrained
         # entry does a cheap numpy comparison on the cached array rather
         # than re-evaluating the sqrt(u^2+v^2) dask graph per entry.
-        uv_dist = da.sqrt(self.u_arr * self.u_arr + self.v_arr * self.v_arr).compute()
+        # UVW comes from the live dataset (self.u_arr/self.v_arr are the
+        # __init__ snapshots and go stale after row selection).
+        uvw = self.ds["UVW"].data
+        uv_dist = da.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).compute()
         # Read FLAG fresh from the live dataset so we OR onto the current
         # flags (including NaN/clip flags from flag_data), not the stale
         # __init__ snapshot.
@@ -247,12 +432,14 @@ class DaskMS:
         """
         if operations is None:
             operations = {}
-        abs_vis = da.abs(self.data)
+        # Read from the live dataset: self.data/self.flag are __init__
+        # snapshots that go stale once rows have been selected.
+        abs_vis = da.abs(self.ds.DATA.data)
         update = False
         n_nan = 0
         n_clip = 0
 
-        old_flags = self.flag
+        old_flags = self.ds.FLAG.data
         if "NAN" in operations:
             nan_flag_mask = da.isnan(abs_vis)
             n_nan = da.sum(nan_flag_mask)
@@ -498,6 +685,12 @@ class DaskMS:
             return
 
         nrow = self.ds.FLAG.shape[0]
+        if factor > nrow:
+            print(
+                f"Time-averaging: factor {factor} is larger than the"
+                f" {nrow} rows in the MS — skipping"
+            )
+            return
         n_new = nrow // factor
         trim = n_new * factor
 
@@ -624,6 +817,12 @@ class DaskMS:
             return
 
         nchan = self.ds.FLAG.shape[1]
+        if factor > nchan:
+            print(
+                f"Frequency-averaging: factor {factor} is larger than the"
+                f" {nchan} channels in the MS — skipping"
+            )
+            return
         n_full = nchan // factor
         n_rem = nchan % factor
         n_new = n_full + (1 if n_rem > 0 else 0)
@@ -736,6 +935,15 @@ class DaskMS:
                 avg_freq = np.append(avg_freq, avg_rem)
             self.chan_freq_hz = avg_freq
 
+        # ...and the channel widths (SPECTRAL_WINDOW RESOLUTION), which add up
+        # within a group the same way the frequency span does.
+        if self.chan_width_hz is not None:
+            width_reshaped = self.chan_width_hz[:trim].reshape(n_full, factor)
+            avg_width = np.sum(width_reshaped, axis=1)
+            if n_rem > 0:
+                avg_width = np.append(avg_width, np.sum(self.chan_width_hz[trim:]))
+            self.chan_width_hz = avg_width
+
     def optimize(self):
         """
         Run through the flags, and remove all completely flagged rows
@@ -827,6 +1035,16 @@ class DaskMS:
             isel_indexers = {row_dim: keep_row_idx}
 
         self.ds = self.ds.isel(isel_indexers)
+
+        # Removing channels must also drop them from the SPECTRAL_WINDOW
+        # bookkeeping, otherwise the subtable written by write_new_ms() would
+        # describe channels the data no longer has.
+        if int(n_chan_flagged) > 0:
+            if self.chan_freq_hz is not None:
+                self.chan_freq_hz = self.chan_freq_hz[keep_chan_idx]
+            if self.chan_width_hz is not None:
+                self.chan_width_hz = self.chan_width_hz[keep_chan_idx]
+        self._refresh_cached_columns()
 
         # Mark all changed variables
         for var_name in self.ds.data_vars:
@@ -948,19 +1166,59 @@ class DaskMS:
                 t.close()
                 logger.debug("  copied subtable %s", sub_name)
 
-        # If channels were reduced (frequency_average or optimize),
-        # update the SPECTRAL_WINDOW CHAN_FREQ in the output MS.
+        # If channels were reduced (frequency_average or optimize), update
+        # the SPECTRAL_WINDOW columns in the output MS.  The subtable was
+        # copied verbatim from the input, so it still describes the input
+        # channel setup until this rewrite happens.
         if self.chan_freq_hz is not None:
             nchan_in_ds = self.ds.FLAG.shape[1]
             if len(self.chan_freq_hz) != nchan_in_ds:
-                for sub in self.sub_table_names:
-                    if "SPECTRAL_WINDOW" in sub:
-                        sub_name = os.path.basename(sub)
-                        dest = os.path.join(name, sub_name)
-                        sw = table(dest, ack=False, readonly=False)
-                        sw.putcol("CHAN_FREQ", self.chan_freq_hz.reshape(1, -1))
-                        sw.close()
-                        break
+                raise RuntimeError(
+                    "SPECTRAL_WINDOW bookkeeping error:"
+                    f" {len(self.chan_freq_hz)} channel frequencies for"
+                    f" {nchan_in_ds} data channels in {name}"
+                )
+            if self.spw_chan_count != nchan_in_ds:
+                self._rewrite_spw_channels(name, nchan_in_ds)
+
+    def _rewrite_spw_channels(self, name, nchan):
+        """Rewrite the per-channel SPECTRAL_WINDOW columns of a written MS.
+
+        Channel frequencies (and, when known, channel widths) are taken from
+        the live bookkeeping, so the subtable matches the main table after
+        frequency averaging or channel removal.
+        """
+        if self.nspw > 1:
+            raise RuntimeError(
+                f"Cannot rewrite SPECTRAL_WINDOW for {self.name}: it has"
+                f" {self.nspw} spectral windows, but only single-SPW"
+                " measurement sets are supported"
+            )
+
+        updates = spw_column_updates(nchan, self.chan_freq_hz, self.chan_width_hz)
+
+        with _maybe_quiet_stderr():
+            for sub in self.sub_table_names:
+                if "SPECTRAL_WINDOW" not in sub:
+                    continue
+                dest = os.path.join(name, os.path.basename(sub))
+                sw = table(dest, ack=False, readonly=False)
+                try:
+                    columns = set(sw.colnames())
+                    for col, value in updates.items():
+                        if col in columns:
+                            sw.putcol(col, value)
+                        else:
+                            logger.warning(
+                                "SPECTRAL_WINDOW has no %s column; skipping", col
+                            )
+                finally:
+                    sw.close()
+                print(
+                    f"SPECTRAL_WINDOW: rewrote {sorted(set(updates) & columns)}"
+                    f" for {nchan} channels in {name}"
+                )
+                break
 
     def update_ms(self, name, clobber):
         """

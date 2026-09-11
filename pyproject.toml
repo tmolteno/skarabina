@@ -1,7 +1,7 @@
 # Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 [project]
 name = "skarabina"
-version = "0.7.2"
+version = "0.8.0"
 description = "Skarabina (dungbeetle): An all purpose 1GC flagger"
 authors = [
     { name = "Tim Molteno", email = "tim@elec.ac.nz" }
@@ -20,7 +20,17 @@ skarabina = "skarabina.main:main"
 skarabina-analyze = "skarabina.analyze:main"
 
 [dependency-groups]
-dev = ["pytest>=8.4.0", "flake8>=7.0"]
+dev = [
+    "pytest>=8.4.0",
+    "flake8>=7.0",
+    # The schema/contract tests (tests/test_analyze_contract.py,
+    # cargo/tests/test_schema.py) load the stimela cab definitions, so the
+    # cargo package must be importable in the dev environment.
+    "skarabina-cargo",
+]
+
+[tool.uv.sources]
+skarabina-cargo = { path = "cargo", editable = true }
 
 [tool.hatch.metadata]
 allow-direct-references = true

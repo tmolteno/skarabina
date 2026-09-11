@@ -25,7 +25,7 @@ use, or build from the [Dockerfile](https://github.com/tmolteno/skarabina/blob/m
 
 ```yaml
 _include:
-  - (cargo):
+  - (skarabina_cargo):
       - skarabina.yml
 
 my-recipe:
@@ -50,6 +50,45 @@ my-recipe:
 Run it:
 
     stimela run recipe.yml ms=~/data/observation.ms
+
+#### Keeping a subset of scans
+
+`scan` takes a comma-separated list of scan numbers and `lo~hi` ranges.  The
+selection is applied when the MS is read, so flagging, averaging and
+optimization all see the selected scans only:
+
+```yaml
+steps:
+  flag-kept-scans:
+    cab: skarabina
+    params:
+      ms: =recipe.ms
+      scan: "1,12,14"
+      flag-nan: true
+      frequency-average-factor: 8
+      msout: kept.ms
+      clobber: true
+```
+
+Omitting `scan` (or passing an empty string) keeps every scan.  A selection
+that matches no rows is an error.
+
+#### Writing a single field
+
+`split` keeps one field's rows (a field name or a numeric `FIELD_ID`) in the
+written MS; flagging and averaging still run on the whole input:
+
+```yaml
+steps:
+  split-target:
+    cab: skarabina
+    params:
+      ms: =recipe.ms
+      flag-nan: true
+      msout: target.ms
+      split: "J0159.0-3413"
+      clobber: true
+```
 
 #### Spectral window flagging
 

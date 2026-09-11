@@ -47,6 +47,10 @@ aarch64 / NVIDIA DGX Spark setup.
 skarabina --ms raw.ms --flag-nan --flag-uv-above 4000 \
     --time-average-factor 3 --optimize --msout clean.ms --clobber
 
+# Keep a subset of scans, then average
+skarabina --ms raw.ms --scan 1,12,14 --flag-nan \
+    --frequency-average-factor 8 --msout kept.ms --clobber
+
 # Analyze
 skarabina-analyze --ms raw.ms --image-fov 2.5
 ```
@@ -62,7 +66,7 @@ Install [uv](https://docs.astral.sh/uv/), then:
 
 ```yaml
 _include:
-    - (skarabina):
+    - (skarabina_cargo):
         - skarabina.yml
 
 my-recipe:

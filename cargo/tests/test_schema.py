@@ -25,6 +25,24 @@ def test_schema_loads(schemas):
         assert key in inputs, f"missing input '{key}' in schema"
 
 
+def test_selection_inputs_are_exposed(schemas):
+    """Row selection must be reachable from a recipe: the white-belt pipeline
+    keeps a subset of scans, and per-target MSs are written with `split`."""
+    inputs = schemas.cabs["skarabina"].inputs
+    for key in ("scan", "split"):
+        assert key in inputs, f"missing input '{key}' in schema"
+    assert "scan" in str(inputs["scan"].get("info", "")).lower()
+
+
+def test_no_unimplemented_outputs_are_declared(schemas):
+    """The cab must only advertise outputs the CLI can actually produce.
+
+    `reference-antenna` and `max-uv` were declared for a long time but nothing
+    ever populated them, so a recipe binding to them silently got nothing."""
+    outputs = set(schemas.cabs["skarabina"].outputs or {})
+    assert outputs == {"msout"}, f"unexpected skarabina cab outputs: {outputs}"
+
+
 def test_no_input_output_name_collisions(schemas):
     """Stimela forbids a name appearing in both inputs and outputs."""
     for cab_name, cab in schemas.cabs.items():

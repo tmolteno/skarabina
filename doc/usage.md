@@ -5,6 +5,9 @@
 
 ```
   --ms MS                       Input measurement set (required)
+  --scan TEXT                   Keep only these scans: comma-separated
+                                numbers and lo~hi ranges (e.g. "1,12,14"
+                                or "0~5"). Default is all scans.
   --summary / --no-summary      Print flagging summary with histogram,
                                 field list, spectral window info, and
                                 fringe-rotation integration time limits
@@ -82,6 +85,17 @@ field's rows are written:
     skarabina --ms raw.ms --flag-nan --msout target.ms --split "Cyg A" --clobber
 
 See [Splitting an MS by field](SPLITTING.md) for details.
+
+### Selecting scans
+
+Keep only a subset of scans. The selection is applied when the MS is read,
+so flagging, averaging and optimization all see the selected scans only:
+
+    skarabina --ms raw.ms --scan 1,12,14 --flag-nan --msout kept.ms --clobber
+    skarabina --ms raw.ms --scan 0~5,20 --frequency-average-factor 8 --msout avg.ms
+
+A selection that matches no rows is an error, so a typo cannot silently
+produce an empty MS.
 
 ### Full pipeline
 
