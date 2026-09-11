@@ -3,6 +3,23 @@
 
 ## [Unreleased]
 
+## [0.8.3]
+
+### Fixed
+
+- **The written MS links every sub-table the input had.**  Sub-tables are
+  reached through keywords on the main table (`SOURCE`, `FIELD`, ... each
+  holding `Table: <path>`), and the table dask-ms writes carries most of them
+  but not `SOURCE`.  The copied SOURCE sub-table was therefore orphaned:
+  `getsubtables()` did not list it and CASA's Calibrater refused to open the
+  MS with *"NullTable::lock - Table object is empty"*, which is how
+  `clearcal` -- the first calibration step of the white-belt pipeline -- failed
+  on the first real-data run.  Any keyword present in the input and missing
+  from the output is now copied across, with sub-table links repointed at the
+  newly written MS.  The test fixture builds a SOURCE sub-table, and a
+  regression test checks that the written MS exposes every sub-table the input
+  had and that `SOURCE` points inside the new MS rather than back at the input.
+
 ## [0.8.2]
 
 ### Fixed

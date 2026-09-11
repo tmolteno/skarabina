@@ -1209,6 +1209,14 @@ class DaskMS:
                 t.close()
                 logger.debug("  copied subtable %s", sub_name)
 
+            # The main table that dask-ms created may not carry every keyword
+            # of the input -- notably SOURCE, which links the MS to its SOURCE
+            # subtable.  Without that link the copied subtable is invisible
+            # (getsubtables() omits it) and CASA's Calibrater dies with
+            # "NullTable::lock - Table object is empty".  Copy what is missing,
+            # repointing subtable links at the newly written MS.
+            self._copy_missing_keywords(name)
+
         # If channels were reduced (frequency_average or optimize), update
         # the SPECTRAL_WINDOW columns in the output MS.  The subtable was
         # copied verbatim from the input, so it still describes the input
@@ -1223,6 +1231,43 @@ class DaskMS:
                 )
             if self.spw_chan_count != nchan_in_ds:
                 self._rewrite_spw_channels(name, nchan_in_ds)
+
+    def _copy_missing_keywords(self, name):
+        """Copy main-table keywords the written MS is missing.
+
+        A measurement set's sub-tables are reached through keywords on the main
+        table (``SOURCE``, ``FIELD``, ... each holding ``Table: <path>``).  The
+        table dask-ms writes carries most of them but not, for instance,
+        ``SOURCE`` -- so a SOURCE sub-table copied alongside is orphaned and
+        CASA cannot open the MS for calibration.  Sub-table links are rewritten
+        to point inside the newly written MS; other keywords are copied
+        verbatim.
+        """
+        src = table(self.name, ack=False)
+        try:
+            src_keywords = set(src.getkeywords())
+            missing = src_keywords - set(table(name, ack=False).getkeywords())
+            if not missing:
+                return
+            dest = table(name, readonly=False)
+            try:
+                # Keywords need an explicit user lock, unlike putcol().
+                dest.lock()
+                for key in sorted(missing):
+                    value = src.getkeyword(key)
+                    if isinstance(value, str) and value.startswith("Table:"):
+                        sub = value.split(":", 1)[1].strip()
+                        value = "Table: " + os.path.join(
+                            os.path.abspath(name), os.path.basename(sub)
+                        )
+                    dest.putkeyword(key, value)
+                    logger.debug("  copied keyword %s", key)
+            finally:
+                dest.unlock()
+                dest.close()
+            print(f"Copied {len(missing)} missing keyword(s) to {name}: {sorted(missing)}")
+        finally:
+            src.close()
 
     def _rewrite_spw_channels(self, name, nchan):
         """Rewrite the per-channel SPECTRAL_WINDOW columns of a written MS.

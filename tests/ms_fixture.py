@@ -11,7 +11,13 @@ import os
 import shutil
 
 import numpy as np
-from casacore.tables import complete_ms_desc, default_ms, maketabdesc, table
+from casacore.tables import (
+    complete_ms_desc,
+    default_ms,
+    default_ms_subtable,
+    maketabdesc,
+    table,
+)
 
 CHANNEL_WIDTH_HZ = 1.0e7
 BASE_FREQUENCY_HZ = 1.0e9
@@ -56,6 +62,25 @@ def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None,
         [{"name": k, "desc": v} for k, v in main_desc.items() if not k.startswith("_")]
     )
     default_ms(path, tabdesc)
+
+    # default_ms does not create SOURCE, but a real MS has one (and its
+    # main-table keyword), so tests can catch a written MS that loses the link.
+    source = os.path.join(path, "SOURCE")
+    if not os.path.isdir(source):
+        default_ms_subtable("SOURCE", source)
+    _fill(path, "SOURCE", {
+        "SOURCE_ID": np.arange(len(field_names), dtype=np.int32),
+        "TIME": np.zeros(len(field_names)),
+        "INTERVAL": np.zeros(len(field_names)),
+        "SPECTRAL_WINDOW_ID": np.zeros(len(field_names), dtype=np.int32),
+        "NUM_LINES": np.zeros(len(field_names), dtype=np.int32),
+        "NAME": np.array(list(field_names)),
+        "CALIBRATION_GROUP": np.zeros(len(field_names), dtype=np.int32),
+        "CODE": np.array([""] * len(field_names)),
+    }, nrows=len(field_names))
+    main = table(path, readonly=False)
+    main.putkeyword("SOURCE", f"Table: {os.path.abspath(source)}")
+    main.close()
 
     freqs = channel_frequencies(nchan)
     _fill(path, "SPECTRAL_WINDOW", {
