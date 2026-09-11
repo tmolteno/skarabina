@@ -96,7 +96,9 @@ def build_flag_data_operations(flag_nan, flag_clip):
     type=str,
     default="1.0 deg",
     show_default=True,
-    help="Field-of-view half-width from phase centre (value with unit: deg, arcmin, arcsec, rad)",
+    help="Field-of-view full width (value with unit: deg, arcmin, arcsec, rad)."
+    " The same convention as skarabina-analyze --image-fov; the distance from"
+    " the phase centre to the edge is half of it.",
 )
 @click.option(
     "--split",
@@ -133,6 +135,8 @@ def main(**kw):
 
     ms = dask_ms.DaskMS(opts.ms)
     fov_str = opts.field_of_view if opts.field_of_view is not None else "1.0 deg"
+    # Full width, in radians; summary() halves it to get the distance from the
+    # phase centre to the edge of the field.
     ms._fov_rad = parse_angle(fov_str)
 
     # --- Row selection (must precede flagging and averaging) ---

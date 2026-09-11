@@ -14,7 +14,7 @@ imaging.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--ms` | (required) | Input measurement set |
-| `--image-fov` | (required) | Desired image field-of-view in degrees |
+| `--image-fov` | (required) | Desired image field-of-view, FULL width, in degrees (same convention as the `skarabina` cab's `--field-of-view`) |
 | `--oversampling-factor` | 5.0 | Pixels per synthesised beam |
 | `--output-json` | (none) | Write the analysis results to this file as JSON |
 | `--json-stdout` | off | Print the analysis results as a single JSON line on stdout |

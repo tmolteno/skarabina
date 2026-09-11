@@ -3,6 +3,21 @@
 
 ## [Unreleased]
 
+## [0.8.4]
+
+### Changed
+
+- **`--field-of-view` is now the FULL width of the field of view**, matching
+  `skarabina-analyze --image-fov`.  The flagging cab used to call its value a
+  half-width, so the same number handed to both cabs described fields a factor
+  of two apart -- and a pipeline had to pass two different values.  The
+  fringe-rotation integration-time limit reported by `summary` is unchanged in
+  meaning: it depends on the distance ℓ from the phase centre to the edge of the
+  field, which is half the full width, and that is what is now computed
+  internally (`max_integration_time`).  **Behaviour change:** for the same
+  numeric `--field-of-view`, the reported Δt_max values double, because the
+  field it describes is now twice as wide.
+
 ## [0.8.3]
 
 ### Fixed

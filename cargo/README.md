@@ -51,6 +51,10 @@ Run it:
 
     stimela run recipe.yml ms=~/data/observation.ms
 
+`field-of-view` and the analyze cab's `image-fov` both take the field of view as
+a **full width** (they used to disagree -- the flagging cab called its value a
+half-width), so a single value describes the whole pipeline.
+
 #### Keeping a subset of scans
 
 `scan` takes a comma-separated list of scan numbers and `lo~hi` ranges.  The

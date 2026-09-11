@@ -21,7 +21,7 @@ $$ \Delta t_\text{max} = \frac{c \cdot \sqrt{6L}}{\pi \cdot \omega_\oplus \cdot 
 |-------------|-----------------------------|
 | *c*         | 299 792 458 m s⁻¹          |
 | *ω*⊕        | 7.292 115 0 × 10⁻⁵ rad s⁻¹|
-| *ℓ*         | Distance from phase centre (rad). Derived from `--field-of-view` in degrees (default 1° → 0.0175 rad). |
+| *ℓ*         | Distance from the phase centre to the edge of the field (rad): half of `--field-of-view`, which is a FULL width (default 1° → ℓ = 0.5° ≈ 0.0087 rad). |
 | *B*<sub>max</sub> | Longest baseline (m)   |
 | *ν*<sub>max</sub> | Highest channel frequency (Hz) |
 | *L*         | Allowed amplitude loss (1% → 0.01, 3% → 0.03, 5% → 0.05) |
@@ -43,8 +43,9 @@ The `summary()` function reports:
   and highest channel frequency.
 - The current integration time from the MS's `INTERVAL` or `EXPOSURE` column.
 
-The field-of-view half-width ℓ defaults to 1° (≈ 0.0175 rad) and can be set
-via `--field-of-view`.
+`--field-of-view` is the **full width** of the field of view (default 1°), the same
+convention as `skarabina-analyze --image-fov`.  ℓ -- the distance from the phase
+centre to its edge -- is half of it (0.5° ≈ 0.0087 rad by default).
 
 The `--time-average-factor N` option combines every N consecutive rows,
 averaging DATA/UVW/TIME, summing WEIGHT_SPECTRUM/INTERVAL/EXPOSURE,
