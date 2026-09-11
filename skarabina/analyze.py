@@ -93,7 +93,9 @@ def main(ms, image_fov, oversampling_factor, output_json, json_stdout):
     Computes the angular resolution from the longest baseline and
     highest frequency, then recommends image dimensions in pixels.
     """
-    datasets = xds_from_ms(ms)
+    # Group by DATA_DESC_ID only: dask-ms's default (FIELD_ID, DATA_DESC_ID)
+    # grouping would hide every field but the first from the baseline search.
+    datasets = xds_from_ms(ms, group_cols=("DATA_DESC_ID",))
     ds = datasets[0]
 
     # Max UV distance (metres), ignoring rows flagged by a previous flagger

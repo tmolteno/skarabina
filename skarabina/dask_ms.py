@@ -153,18 +153,25 @@ class DaskMS:
         for s in self.sub_table_names:
             logger.debug(f"    {s}")
 
-        self.datasets = xds_from_ms(self.name)
+        # dask-ms groups by (FIELD_ID, DATA_DESC_ID) by default, which splits a
+        # multi-field MS into one dataset *per field*.  Flagging, averaging and
+        # writing have to see every field of a spectral window at once -- an MS
+        # of calibrators plus targets would otherwise be silently reduced to
+        # its first field.  Group by DATA_DESC_ID only, so all fields (with a
+        # per-row FIELD_ID) travel together.
+        self.datasets = xds_from_ms(self.name, group_cols=("DATA_DESC_ID",))
         logger.debug(self.datasets)
 
-        # dask-ms returns one dataset per DATA_DESC_ID.  Everything below
-        # operates on a single dataset, so silently processing only the first
-        # one would quietly discard data (and write a truncated output MS).
+        # Everything below operates on a single dataset, so silently processing
+        # only the first one would quietly discard data (and write a truncated
+        # output MS).
         if len(self.datasets) > 1:
             raise RuntimeError(
                 f"Measurement set {self.name} contains {len(self.datasets)}"
-                " datasets (one per DATA_DESC_ID); skarabina processes a single"
-                " dataset. Split the MS by spectral window first (e.g. CASA"
-                " mstransform/split), then run skarabina on each part."
+                " DATA_DESC_IDs (i.e. more than one spectral window); skarabina"
+                " processes a single spectral window. Split the MS by spectral"
+                " window first (e.g. CASA mstransform/split), then run"
+                " skarabina on each part."
             )
 
         self.ds = self.datasets[0]
