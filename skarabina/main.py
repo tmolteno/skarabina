@@ -76,6 +76,12 @@ def build_flag_data_operations(flag_nan, flag_clip):
     default=None,
     help="Flag UVW above this limit (in meters)",
 )
+@click.option(
+    "--flag-autos",
+    is_flag=True,
+    default=False,
+    help="Flag autocorrelation visibilities (ANTENNA1 == ANTENNA2)",
+)
 @click.option("--flag-nan", is_flag=True, default=False, help="Flag NaN visibilities")
 @click.option(
     "--flag-clip",
@@ -146,6 +152,10 @@ def main(**kw):
         ms.select_scans(opts.scan)
 
     # --- Flagging operations (order-independent) ---
+
+    if opts.flag_autos:
+        print("flag_autos")
+        ms.flag_autocorrelations()
 
     if opts.flag_uv_above is not None:
         print(f"uv_above {opts.flag_uv_above} m")

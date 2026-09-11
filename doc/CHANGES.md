@@ -3,6 +3,17 @@
 
 ## [Unreleased]
 
+## [0.8.5]
+
+### Added
+
+- **Autocorrelation flagging (`--flag-autos`).**  Flags every visibility of an
+  auto baseline (`ANTENNA1 == ANTENNA2`) and sets their `FLAG_ROW` bits, so
+  `--optimize` can then drop the rows.  Auto baselines measure the total power
+  of a single antenna, carry no fringe information, and are normally excluded
+  from imaging and calibration; the `flag-autos` input is exposed on the
+  `skarabina` cab so a pipeline no longer needs a CASA `flagdata` pass for it.
+
 ## [0.8.4]
 
 ### Changed

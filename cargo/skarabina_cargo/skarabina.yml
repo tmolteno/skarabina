@@ -53,6 +53,13 @@ cabs:
         info: Polarization selection for barber.
       apply:
         dtype: bool
+      flag-autos:
+        dtype: bool
+        info: >-
+          Flag autocorrelation visibilities (ANTENNA1 == ANTENNA2).  Auto
+          baselines measure the total power of one antenna, carry no fringe
+          information and are normally excluded from imaging and calibration;
+          their FLAG_ROW bits are set as well, so optimize can drop the rows.
       flag-nan:
         dtype: bool
         info: Flag NaN visibilities (off unless requested)

@@ -43,8 +43,8 @@ aarch64 / NVIDIA DGX Spark setup.
 ## Quick start
 
 ```sh
-# Flag and clean
-skarabina --ms raw.ms --flag-nan --flag-uv-above 4000 \
+# Flag and clean (including autocorrelations)
+skarabina --ms raw.ms --flag-autos --flag-nan --flag-uv-above 4000 \
     --time-average-factor 3 --optimize --msout clean.ms --clobber
 
 # Keep a subset of scans, then average

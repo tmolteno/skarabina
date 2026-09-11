@@ -369,6 +369,53 @@ class DaskMS:
             f" rows, scans {scans}"
         )
 
+    def flag_autocorrelations(self):
+        """Flag autocorrelation visibilities (``ANTENNA1 == ANTENNA2``).
+
+        Auto baselines measure the total power of a single antenna: they carry
+        no fringe information, so they are useless for imaging and are normally
+        excluded from calibration.  Every visibility of an auto baseline is
+        flagged, and ``FLAG_ROW`` is set for its row so that ``--optimize`` can
+        drop the rows entirely.
+        """
+        for col in ("ANTENNA1", "ANTENNA2"):
+            if col not in self.ds.data_vars:
+                raise RuntimeError(
+                    f"MS has no {col} column — cannot identify autocorrelations"
+                )
+
+        auto_row = da.asarray(self.ds.ANTENNA1.data) == da.asarray(
+            self.ds.ANTENNA2.data
+        )
+        flags = self.ds.FLAG.data
+        auto_flags = da.broadcast_to(auto_row[:, None, None], flags.shape)
+
+        new_flags = da.logical_or(flags, auto_flags)
+        new_flag_row = da.logical_or(self.ds.FLAG_ROW.data, auto_row)
+
+        n_auto_rows, n_auto_vis, n_vis, n_flag_rows = dask.compute(
+            da.sum(auto_row),
+            da.sum(auto_flags),
+            da.prod(da.array(flags.shape)),
+            da.sum(new_flag_row),
+        )
+
+        self.ds["FLAG"].data = new_flags
+        self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, new_flag_row)
+        self.changed["FLAG"] = True
+        self.changed["FLAG_ROW"] = True
+
+        print(
+            "flag_autocorrelations: %d auto-baseline rows, %d visibilities"
+            " flagged (%.2f%% of all); %d rows now flagged in total"
+            % (
+                int(n_auto_rows),
+                int(n_auto_vis),
+                100.0 * int(n_auto_vis) / int(n_vis) if int(n_vis) else 0.0,
+                int(n_flag_rows),
+            )
+        )
+
     def flag_uv_above(self, uv_limit):
         """
         Flag rows where sqrt(u^2 + v^2) exceeds uv_limit (in meters).

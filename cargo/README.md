@@ -38,6 +38,7 @@ my-recipe:
       cab: skarabina
       params:
         ms: =recipe.ms
+        flag-autos: true
         flag-nan: true
         flag-uv-above: 4000
         time-average-factor: 3

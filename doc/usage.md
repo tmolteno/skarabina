@@ -14,6 +14,10 @@
   --barber / --no-barber        Run barber flagging report
   --barber-pol INTEGER          Polarization for barber
   --flag-uv-above FLOAT         Flag baselines longer than this (metres)
+  --flag-autos / --no-flag-autos
+                                Flag autocorrelation visibilities
+                                (ANTENNA1 == ANTENNA2); also sets FLAG_ROW so
+                                --optimize can drop the rows
   --flag-nan / --no-flag-nan    Flag NaN visibilities
   --flag-clip TUPLE             Flag visibilities outside [min, max]
   --flag-spectral-window FILE   YAML file with frequency ranges and
@@ -47,6 +51,16 @@
 Generate a report (in the style of barber):
 
     skarabina --ms foo.ms --barber
+
+### Autocorrelation flagging
+
+Auto baselines measure the total power of a single antenna: no fringes, so they
+are useless for imaging and are normally excluded from calibration.
+
+    skarabina --ms test.ms --flag-autos --msout clean.ms --clobber
+
+`--optimize` then removes the auto rows entirely (their `FLAG_ROW` bits are
+set).
 
 ### Clip and NaN flagging
 
@@ -104,6 +118,7 @@ produce an empty MS.
 
     skarabina --ms raw.ms \
         --flag-uv-above 4000 \
+        --flag-autos \
         --flag-nan \
         --flag-spectral-window spectral-flags.yml \
         --time-average-factor 3 \
