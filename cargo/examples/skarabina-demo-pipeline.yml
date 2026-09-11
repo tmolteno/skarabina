@@ -138,24 +138,22 @@ demo-imaging-pipeline:
         input-json: =steps.analyze.output-json
 
     # -----------------------------------------------------------------
-    # 5. The minimal pattern: bind a wrangled scalar onto any downstream cab.
-    #    (`echo` is not a stimela built-in, so it is defined inline here.)
+    # 5. The minimal pattern: bind wrangled scalars onto a downstream cab and
+    #    let it use them.  This uses the python flavour so that it works under
+    #    container backends too: a bare (binary) cab must name an image, since
+    #    stimela >= 2.2 refuses to guess one.  Assigning each value to a local
+    #    IS how a real tool would consume it -- here we just print them.
     # -----------------------------------------------------------------
     report:
       info: "Print the recommendation"
       cab:
-        command: echo
+        flavour: python-code
+        command: |
+          print(f"Imaging this MS needs {image_size} pixels")
+          print(f"  at {resolution_arcsec:.2f} arcsec resolution")
         inputs:
-          args:
-            dtype: List[str]
-            required: true
-            policies:
-              positional: true
-              repeat: list
+          image-size: int
+          resolution-arcsec: float
       params:
-        args:
-          - "Imaging this MS needs"
-          - =steps.analyze.recommended_image_size_pixels
-          - "pixels at"
-          - =steps.analyze.resolution_arcsec
-          - "arcsec resolution"
+        image-size: =steps.analyze.recommended_image_size_pixels
+        resolution-arcsec: =steps.analyze.resolution_arcsec

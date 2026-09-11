@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-09-11
+
 ### Added
 
 - **`--json-stdout` for `skarabina-analyze`.**  Prints the analysis record as
@@ -20,13 +22,7 @@
   It demonstrates both consumption routes — wrangled scalars bound onto a cab's
   parameters, and the `output-json` file read by a `python-code` cab — and
   aliases the recommendation to typed recipe outputs.  Verified end-to-end with
-  `stimela run` (native backend) against a real measurement set.
-- **Doc fix: `echo` is not a stimela built-in.**  The "printing outputs"
-  examples in `cargo/README.md` used `cab: echo`, which fails on stimela 2.1.4
-  with "unknown cab 'echo'".  They now define the cab inline.  Relatedly,
-  stimela rejects a recipe alias whose name also appears under `inputs`/
-  `outputs` (the `aliases:` section is itself the declaration); the demo and
-  its tests reflect that.
+  `stimela run` against both the native and `singularity` (container) backends.
 - **Contract tests.**  `tests/test_analyze_contract.py` and additions to
   `cargo/tests/test_schema.py` verify that the CLI's JSON keys, the cab's
   scalar output names, and the wrangler regex cannot drift apart.
@@ -45,9 +41,30 @@
   it printed "Could not determine resolution from MS" and exited 0, so a
   pipeline carried on with no outputs.  It now raises a `ClickException` and
   exits non-zero.
+- **The Docker image is built from this repository, not from PyPI.**
+  `Dockerfile` ran `pip install skarabina`, which silently installed whatever
+  version PyPI last held — so an image tagged for a release could carry code
+  that did not match the tag.  That is not hypothetical: PyPI's 0.7.1 predates
+  `--json-stdout`, so an image built from the v0.7.2 tag by the old Dockerfile
+  would not have had the flag, and the demo pipeline would have failed with it.
+  The image is now built from the checkout (`uv build` + install the resulting
+  wheel), so an image always matches its tag.
+- **Demo steps are container-portable.**  Since stimela 2.2, a container backend
+  rejects a cab that does not name an `image` ("container image not specified
+  by cab").  The demo's `report` step was an inline *binary* cab with no image,
+  so it failed under a container backend; it now uses the `python` flavour,
+  which picks up stimela's default image.  Note that stimela has no working
+  `docker` backend (`backends/docker.py` is a stub whose `is_available()`
+  returns `False`, and `podman` is likewise unimplemented) — use the
+  `singularity`/`apptainer` backend for containerised runs.
 
 ### Fixed
 
+- **`cargo/README.md` "printing outputs" examples used `cab: echo`.**  `echo`
+  is not a stimela built-in (it fails on 2.1.4 with `unknown cab 'echo'`), so
+  the examples now define the cab inline.  Documented alongside it: stimela
+  rejects a recipe alias whose name also appears under `inputs`/`outputs` — the
+  `aliases:` section is itself the declaration.
 - **`--time-average-factor` now excludes fully-flagged rows from
   per-row metadata.**  Previously UVW, TIME, INTERVAL, and EXPOSURE
   were averaged/summed over *all* rows, including flagged ones — the

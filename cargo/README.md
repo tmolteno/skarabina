@@ -201,11 +201,42 @@ A complete, runnable example is in
 
     stimela run skarabina-demo-pipeline.yml demo-imaging-pipeline ms=observation.ms
 
+### Running in containers
+
+Both cabs run in the skarabina container image, which stimela pulls on first
+use, so nothing here changes under a container backend.  Two points are worth
+knowing:
+
+-   **A bare (binary) cab must name an image.**  Since stimela 2.2 a cab with
+    no `image` is rejected by container backends with *"container image not
+    specified by cab"*.  The demo's `report` step therefore uses the `python`
+    flavour, which picks up stimela's default image.  If you add an `echo`-style
+    binary step, give it an `image:`.
+-   **`stimela` has no working `docker` backend.**  Stimela 2.2.0rc1 declares
+    `docker` in its backend enum, but `backends/docker.py` is a stub
+    (`is_available()` returns `False`, `get_status()` returns `"not
+    implemented"`); `podman` is likewise unimplemented.  For containerised runs,
+    use the `singularity`/`apptainer` backend:
+
+        stimela run -b singularity recipe.yml ms=observation.ms
+
+    The demo pipeline was verified end-to-end this way, with the skarabina image
+    and stimela's default python image.
+
+To use the image directly, without stimela:
+
+    docker run --rm -v "$PWD":/work -w /work ghcr.io/tmolteno/skarabina:latest \
+        skarabina-analyze --ms /work/observation.ms --image-fov "2.5 deg" \
+        --json-stdout --output-json analysis.json
+
+Mount the directory containing your measurement set (and remember that, as with
+any container, the `--ms` path is the path *inside* the container).
+
 ### Printing outputs from a previous step
 
-Both cabs expose outputs that can be consumed by downstream steps.  Note that
-`echo` is *not* a stimela built-in, so define it inline when you just want to
-print a value:
+Both cabs expose outputs that can be consumed by downstream steps.  A `python`
+flavour step is the simplest container-friendly way to print one, because
+stimela substitutes each parameter into a local variable:
 
 ```yaml
 steps:
@@ -217,16 +248,14 @@ steps:
 
   print-max-uv:
     cab:
-      command: echo
+      flavour: python-code
+      command: |
+        print(f"Max UV: {max_uv}")
       inputs:
-        args:
-          dtype: List[str]
-          required: true
-          policies:
-            positional: true
-            repeat: list
+        max-uv: float
     params:
-      args:
-        - "Max UV:"
-        - =previous.max-uv
+      max-uv: =previous.max-uv
 ```
+
+(`echo` is *not* a stimela built-in, so there is nothing to point a binary cab
+at unless you name an image for it.)
