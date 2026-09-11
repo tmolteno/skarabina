@@ -86,8 +86,9 @@ steps:
     cab: skarabina-analyze
     params:
       ms: =recipe.ms
-      image-fov: 2.5
+      image-fov: 2.5 deg
       oversampling-factor: 5.0
+      json-stdout: true
       output-json: analysis.json
 ```
 
@@ -95,27 +96,116 @@ Run it:
 
     stimela run recipe.yml ms=~/data/observation.ms
 
-The `output-json` option writes machine-readable analysis results for
-scripting or downstream processing:
+The cab measures the longest baseline and the highest channel frequency, then
+recommends an image size. It publishes its results in two ways:
+
+| Output | Type | Contents |
+|---|---|---|
+| `output-json` | File | The full analysis record, as JSON |
+| `recommended_image_size_pixels` | int | Recommended square image size, in pixels |
+| `resolution_arcsec` | float | Synthesised beam (angular resolution), in arcsec |
+| `max_baseline_m` | float | Longest baseline (maximum uv distance), in metres |
+| `max_frequency_hz` | float | Highest channel frequency, in Hz |
+
+`output-json` is a *named file output*: stimela supplies the filename, passes
+it to the cab as `--output-json <path>`, and makes the resulting file available
+to later steps.  The scalar outputs are *wrangled* from the cab's console
+output, which is why `json-stdout: true` must be set for them to be produced.
+
+The JSON record contains all of the above plus the fields the cab does not
+expose as outputs:
 
 ```json
 {
-  "image_size": 8192,
-  "pixel_size_arcsec": 1.1,
-  "field_of_view_deg": 2.5,
-  "max_uv": 34427.18,
-  "synthesized_beam_arcsec": 5.5,
-  "observation_frequency_hz": 2052500000.0
+  "ms": "observation.ms",
+  "max_baseline_m": 34427.18,
+  "max_frequency_hz": 2052500000.0,
+  "max_frequency_mhz": 2052.5,
+  "resolution_arcsec": 5.5,
+  "field_of_view": "2.5 deg",
+  "oversampling_factor": 5.0,
+  "recommended_image_size_pixels": 8192
 }
 ```
 
-To run directly without stimela:
+The `resolution_arcsec` is the synthesised beam width — divide it by
+`oversampling-factor` to get a cell size that oversamples the beam.
+
+To run the command directly, without stimela:
 
     skarabina-analyze --ms observation.ms --image-fov 2.5 --output-json analysis.json
+    skarabina-analyze --ms observation.ms --image-fov 2.5 --json-stdout
+
+### Driving an imaging pipeline from the analysis
+
+This is the reason `skarabina-analyze` exists: the numbers it measures set
+parameters for a downstream imager (WSClean, CASA, DDFacet, ...).  Bind the
+wrangled scalar outputs directly onto the imaging step:
+
+```yaml
+steps:
+  flag:
+    cab: skarabina
+    params:
+      ms: =recipe.ms
+      flag-nan: true
+      msout: cleaned.ms
+      clobber: true
+
+  analyze:
+    cab: skarabina-analyze
+    params:
+      ms: =steps.flag.msout
+      image-fov: 2.5 deg
+      json-stdout: true
+      output-json: analysis.json
+
+  image:
+    cab: wsclean                  # or your imager of choice
+    params:
+      ms: =steps.flag.msout
+      prefix: image
+      size: =steps.analyze.recommended_image_size_pixels
+      scale: "=steps.analyze.resolution_arcsec / 3600.0"   # wsclean wants degrees
+```
+
+Expose the recommendation to the caller by aliasing it at recipe level, which
+also gets the type checked when the recipe is prevalidated:
+
+```yaml
+my-recipe:
+  inputs:
+    ms: MS
+  outputs:
+    image-size: int
+  aliases:
+    image-size: [analyze.recommended_image_size_pixels]
+```
+
+Three things are worth knowing about the scalar outputs:
+
+-   **They are evaluated late.**  Formulas such as
+    `=steps.analyze.resolution_arcsec` are resolved at run time, so a typo in
+    the output name surfaces when the step runs.  Aliasing the value to a
+    typed recipe output (above) moves that check up to prevalidation.
+-   **Their names are Python identifiers.**  Stimela's
+    `PARSE_JSON_OUTPUT_DICT` wrangler assigns JSON keys straight onto output
+    names, so a kebab-case name like `image-size` could never be populated.
+    The CLI-facing *inputs* keep the usual kebab-case names.
+-   **Units are not converted for you.**  `resolution_arcsec` is in arcsec;
+    most imagers want degrees, radians, or a multiple of the beam.  Convert in
+    the consuming step so the choice is visible in the recipe.
+
+A complete, runnable example is in
+[`examples/skarabina-demo-pipeline.yml`](examples/skarabina-demo-pipeline.yml):
+
+    stimela run skarabina-demo-pipeline.yml demo-imaging-pipeline ms=observation.ms
 
 ### Printing outputs from a previous step
 
-Both cabs expose outputs that can be consumed by downstream steps:
+Both cabs expose outputs that can be consumed by downstream steps.  Note that
+`echo` is *not* a stimela built-in, so define it inline when you just want to
+print a value:
 
 ```yaml
 steps:
@@ -126,16 +216,17 @@ steps:
       summary: true
 
   print-max-uv:
-    cab: echo
+    cab:
+      command: echo
+      inputs:
+        args:
+          dtype: List[str]
+          required: true
+          policies:
+            positional: true
+            repeat: list
     params:
       args:
         - "Max UV:"
         - =previous.max-uv
-
-  print-ref-ant:
-    cab: echo
-    params:
-      args:
-        - "Reference antenna:"
-        - =previous.reference-antenna
 ```

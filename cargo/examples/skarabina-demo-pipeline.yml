@@ -1,0 +1,161 @@
+# Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
+#
+# Demo: passing skarabina-analyze results into a larger imaging pipeline.
+#
+# `skarabina-analyze` measures the MS and recommends imaging parameters.  With
+# `json-stdout: true` the cab emits a one-line JSON record that stimela wrangles
+# into typed outputs, so later steps can bind to them directly:
+#
+#     =steps.analyze.recommended_image_size_pixels   -> image size, in pixels
+#     =steps.analyze.resolution_arcsec               -> synthesised beam, arcsec
+#
+# The `imager` step below reads the full analysis record through the step's
+# stdout and shows how it maps onto a real imager's arguments.  Run it with:
+#
+#     stimela run skarabina-demo-pipeline.yml demo-imaging-pipeline \
+#         ms=~/data/observation.ms
+#
+_include:
+  - (skarabina_cargo):
+      - skarabina.yml
+
+demo-imaging-pipeline:
+  info: "Flag an MS, analyze it, and drive imaging parameters from the analysis"
+  inputs:
+    ms:
+      dtype: MS
+      required: true
+      info: Measurement set to flag and image
+    image-fov:
+      dtype: str
+      default: "2.5 deg"
+      info: Desired image field-of-view
+    oversampling-factor:
+      dtype: float
+      default: 5.0
+      info: Pixels per synthesised beam
+  # Freeze the recommendation into recipe-level outputs so that a caller can
+  # consume it as `my-image-size=<this recipe>.image-size`, and so that the
+  # binding is type-checked when the recipe is prevalidated.
+  #
+  # NB: the alias section *is* the declaration -- stimela rejects a name that
+  # appears under both `outputs` and `aliases`.
+  aliases:
+    image-size: [analyze.recommended_image_size_pixels]
+    cell-size-arcsec: [analyze.resolution_arcsec]
+
+  steps:
+    # -----------------------------------------------------------------
+    # 1. Flag and average.  `skip_if_outputs: fresh` makes re-runs cheap, but
+    #    note it keys off file timestamps only -- not parameter values -- so it
+    #    is deliberately NOT set on `analyze` (which depends on image-fov).
+    # -----------------------------------------------------------------
+    flag:
+      cab: skarabina
+      skip_if_outputs: fresh
+      params:
+        ms: =recipe.ms
+        flag-nan: true
+        flag-clip: [0, 100]
+        flag-uv-above: 1000
+        time-average-factor: 3
+        frequency-average-factor: 20
+        optimize: true
+        msout: cleaned.ms
+        clobber: true
+        summary: true
+
+    # -----------------------------------------------------------------
+    # 2. Analyze the cleaned MS.  `json-stdout: true` is what publishes the
+    #    scalar outputs; `output-json` keeps the full record as an artifact.
+    # -----------------------------------------------------------------
+    analyze:
+      cab: skarabina-analyze
+      params:
+        ms: =steps.flag.msout
+        image-fov: =recipe.image-fov
+        oversampling-factor: =recipe.oversampling-factor
+        json-stdout: true
+        output-json: analysis.json
+
+    # -----------------------------------------------------------------
+    # 3. Third-party imager (for example cult-cargo's wsclean cab).  The
+    #    wrangled outputs bind straight onto the imager's parameters.  Point
+    #    the step at a real imaging cab and uncomment:
+    # -----------------------------------------------------------------
+    # image:
+    #   cab: wsclean
+    #   params:
+    #     ms: =steps.flag.msout
+    #     prefix: image
+    #     size: =steps.analyze.recommended_image_size_pixels
+    #     scale: "=steps.analyze.resolution_arcsec / 3600.0"   # wsclean wants degrees
+
+    # -----------------------------------------------------------------
+    # 4. Runnable stand-in for the imager.  It reads the full analysis record
+    #    from the file output of the previous step (`input-json` is bound to
+    #    `=steps.analyze.output-json`), which is how a real third-party imager
+    #    would consume it.  Scalars come from the wrangler, as in step 3.
+    # -----------------------------------------------------------------
+    imager:
+      info: "Show the imager arguments derived from the analysis"
+      cab:
+        flavour: python-code
+        command: |
+          import json
+
+          with open(input_json) as f:
+              analysis = json.load(f)
+
+          size = analysis["recommended_image_size_pixels"]
+          beam_arcsec = analysis["resolution_arcsec"]
+
+          # Image size and cell size are the two parameters every imager needs.
+          # Cell size is chosen to oversample the synthesised beam; unit
+          # conversion (arcsec -> degrees here) is the pipeline's job.
+          imager_args = [
+              f"-size {size} {size}",
+              f"-scale {beam_arcsec / 3600.0 / 5.0:.6f}",
+              "-weight briggs 0.0",
+          ]
+          print(f"Recommended image size: {size} x {size} pixels")
+          print(f"Synthesised beam:       {beam_arcsec:.2f} arcsec")
+          print(f"Imager arguments:       {' '.join(imager_args)}")
+
+          recommendations = {
+              "image_size_pixels": str(size),
+              "cell_size_arcsec": f"{beam_arcsec / 5.0:.3f}",
+              "imager_args": " ".join(imager_args),
+          }
+        inputs:
+          input-json:
+            dtype: File
+            required: true
+            info: Analysis record to read
+        outputs:
+          recommendations: Dict[str, str]
+      params:
+        input-json: =steps.analyze.output-json
+
+    # -----------------------------------------------------------------
+    # 5. The minimal pattern: bind a wrangled scalar onto any downstream cab.
+    #    (`echo` is not a stimela built-in, so it is defined inline here.)
+    # -----------------------------------------------------------------
+    report:
+      info: "Print the recommendation"
+      cab:
+        command: echo
+        inputs:
+          args:
+            dtype: List[str]
+            required: true
+            policies:
+              positional: true
+              repeat: list
+      params:
+        args:
+          - "Imaging this MS needs"
+          - =steps.analyze.recommended_image_size_pixels
+          - "pixels at"
+          - =steps.analyze.resolution_arcsec
+          - "arcsec resolution"

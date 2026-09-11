@@ -3,7 +3,50 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`--json-stdout` for `skarabina-analyze`.**  Prints the analysis record as
+  a single JSON line on stdout, prefixed by `SKARABINA_ANALYZE_JSON `, so that
+  Stimela can wrangle it into output values (see below).  `--output-json` is
+  unchanged and the two may be combined.
+- **`skarabina-analyze` cab publishes typed outputs.**  The cab now declares
+  `recommended_image_size_pixels`, `resolution_arcsec`, `max_baseline_m`, and
+  `max_frequency_hz` (plus the `output-json` file), extracted from the
+  `--json-stdout` line by a `PARSE_JSON_OUTPUT_DICT` output wrangler.  A larger
+  imaging pipeline can now bind `=steps.analyze.recommended_image_size_pixels`
+  onto an imager's `size` parameter, instead of hard-coding it.
+- **Demo imaging pipeline.**  `cargo/examples/skarabina-demo-pipeline.yml`
+  flags an MS, analyzes it, and shows the analysis driving imager arguments.
+  It demonstrates both consumption routes — wrangled scalars bound onto a cab's
+  parameters, and the `output-json` file read by a `python-code` cab — and
+  aliases the recommendation to typed recipe outputs.  Verified end-to-end with
+  `stimela run` (native backend) against a real measurement set.
+- **Doc fix: `echo` is not a stimela built-in.**  The "printing outputs"
+  examples in `cargo/README.md` used `cab: echo`, which fails on stimela 2.1.4
+  with "unknown cab 'echo'".  They now define the cab inline.  Relatedly,
+  stimela rejects a recipe alias whose name also appears under `inputs`/
+  `outputs` (the `aliases:` section is itself the declaration); the demo and
+  its tests reflect that.
+- **Contract tests.**  `tests/test_analyze_contract.py` and additions to
+  `cargo/tests/test_schema.py` verify that the CLI's JSON keys, the cab's
+  scalar output names, and the wrangler regex cannot drift apart.
+
 ### Changed
+
+- **`output-json` on the `skarabina-analyze` cab is now an output, not an
+  input.**  It was declared among `inputs`, so a recipe had to invent a
+  filename and the resulting file could not be referenced by later steps.  It
+  is now a *named file output*: Stimela supplies the path and passes it as
+  `--output-json`, and downstream steps consume it as
+  `=steps.<step>.output-json`.  Recipes that set `output-json: <path>`
+  explicitly keep working; leaving it unset now lets Stimela manage the name.
+- **`skarabina-analyze` now fails loudly when it cannot measure the MS.**  If
+  the maximum frequency or baseline cannot be determined it raised nothing —
+  it printed "Could not determine resolution from MS" and exited 0, so a
+  pipeline carried on with no outputs.  It now raises a `ClickException` and
+  exits non-zero.
+
+### Fixed
 
 - **`--time-average-factor` now excludes fully-flagged rows from
   per-row metadata.**  Previously UVW, TIME, INTERVAL, and EXPOSURE
@@ -28,8 +71,6 @@
   (previously one scheduler round-trip per entry) and computes per-entry
   visibility counts by factoring 1D channel/row gates instead of summing
   a materialized `(nrow, nchan, ncorr)` array.  Results are unchanged.
-
-### Fixed
 
 - **`--flag-spectral-window` no longer discards `--flag-nan`/`--flag-clip`
   flags.**  `flag_spectral_window` read the stale `FLAG` snapshot cached

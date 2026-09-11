@@ -7,6 +7,7 @@ imaging.
 ## Usage
 
     skarabina-analyze --ms <measurement_set> --image-fov <degrees> [--oversampling-factor <N>]
+                      [--output-json <file>] [--json-stdout]
 
 ## Options
 
@@ -15,6 +16,13 @@ imaging.
 | `--ms` | (required) | Input measurement set |
 | `--image-fov` | (required) | Desired image field-of-view in degrees |
 | `--oversampling-factor` | 5.0 | Pixels per synthesised beam |
+| `--output-json` | (none) | Write the analysis results to this file as JSON |
+| `--json-stdout` | off | Print the analysis results as a single JSON line on stdout |
+
+`--output-json` and `--json-stdout` may be used together or independently.  The
+single-line form exists for stimela, which reads cab console output line by
+line; the `SKARABINA_ANALYZE_JSON ` prefix on that line is a public interface
+(a stimela output wrangler matches on it).
 
 ## How it works
 
@@ -47,6 +55,57 @@ imaging.
       Resolution:     4.47 arcsec
       Field of view:  2.50°
     Recommended image size: 10066 × 10066 pixels
+
+## JSON output
+
+With `--output-json`, the same results are written as a JSON record.  Note that
+the keys are a stable interface — stimela cab outputs are named after them:
+
+```json
+{
+  "ms": "target.ms",
+  "max_baseline_m": 7697.0,
+  "max_frequency_hz": 1800000000.0,
+  "max_frequency_mhz": 1800.0,
+  "resolution_arcsec": 4.4689,
+  "field_of_view": "2.5 deg",
+  "oversampling_factor": 5.0,
+  "recommended_image_size_pixels": 10066
+}
+```
+
+With `--json-stdout`, this record is printed on a single line prefixed by
+`SKARABINA_ANALYZE_JSON `:
+
+    $ skarabina-analyze --ms target.ms --image-fov 2.5 --json-stdout
+    ...
+    SKARABINA_ANALYZE_JSON {"ms": "target.ms", "max_baseline_m": 7697.0, ...}
+
+## Use from stimela
+
+The `skarabina-analyze` cab in
+[skarabina-cargo](https://github.com/tmolteno/skarabina/tree/main/cargo) sets
+`--json-stdout` and wrangles that line into typed outputs, so the recommendation
+can drive a downstream imager:
+
+```yaml
+analyze:
+  cab: skarabina-analyze
+  params:
+    ms: =recipe.ms
+    image-fov: 2.5 deg
+    json-stdout: true
+
+image:
+  cab: wsclean
+  params:
+    ms: =recipe.ms
+    size: =steps.analyze.recommended_image_size_pixels
+```
+
+See the [cargo README](../cargo/README.md) and
+[`cargo/examples/skarabina-demo-pipeline.yml`](../cargo/examples/skarabina-demo-pipeline.yml)
+for a complete example.
 
 ## See also
 
