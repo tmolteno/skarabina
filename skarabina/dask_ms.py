@@ -1,5 +1,6 @@
 # Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 import logging
+import math
 import os
 import shutil
 import sys
@@ -42,6 +43,35 @@ def _maybe_quiet_stderr():
                 yield
             finally:
                 sys.stderr = old_stderr
+
+
+def max_integration_time(nu_max_hz, uv_max_m, fov_rad, loss=0.01):
+    """Fringe-rotation integration-time limit for a full-width field of view.
+
+    Time averaging decorrelates the visibilities.  Following Wijnholds (2018,
+    MNRAS), the amplitude loss at angular distance ℓ from the phase centre is
+
+        ρ = sinc(π · ω_⊕ · Δt · B · ν · ℓ / c)
+
+    so for a small loss L = 1 − |ρ|
+
+        Δt_max = c · √(6L) / (π · ω_⊕ · B_max · ν_max · ℓ)
+
+    ``fov_rad`` is the **full width** of the field of view, so ℓ -- the distance
+    from the phase centre to its edge -- is half of it.  This is the same
+    convention as ``skarabina-analyze --image-fov``.  Degenerate inputs return
+    infinity.
+    """
+    ell = float(fov_rad) / 2.0
+    if uv_max_m <= 0 or nu_max_hz <= 0 or ell <= 0:
+        return float("inf")
+    c_ms = 299792458.0
+    omega_earth = 7.2921150e-5
+    return (
+        c_ms
+        * (6.0 * loss) ** 0.5
+        / (math.pi * omega_earth * uv_max_m * nu_max_hz * ell)
+    )
 
 
 def parse_scan_spec(spec):
@@ -636,37 +666,23 @@ class DaskMS:
 
             # Fringe-rotation integration time limit (Wijnholds 2018, MNRAS).
             # Time averaging causes decorrelation that depends on baseline
-            # length, frequency, and angular distance ℓ from the phase center.
-            # The amplitude loss factor is:
-            #
-            #   ρ = sinc(π · ω_⊕ · Δt · B · ν · ℓ / c)
-            #
-            # For small loss L = 1 − |ρ|:
-            #
-            #   Δt_max = c · √(6L) / (π · ω_⊕ · B_max · ν_max · ℓ)
-            #
-            c_ms = 299792458.0
-            omega_earth = 7.2921150e-5
+            # length, frequency, and angular distance ℓ from the phase centre
+            # (see max_integration_time).  --field-of-view is the full width of
+            # the field of view, matching skarabina-analyze --image-fov; ℓ is
+            # half of it, the distance from the phase centre to its edge.
             max_uv = percentile_values[-1]
             nu_max = fmax * 1e6
+            fov_rad = getattr(self, "_fov_rad", 0.0174533)
 
-            # Distance from phase centre in radians (converted from
-            # --field-of-view degrees).  Default ℓ ≈ 0.0175 rad (1°).
-            ell = getattr(self, "_fov_rad", 0.0174533)
-
-            def dt_max(loss):
-                if max_uv <= 0 or nu_max <= 0 or ell <= 0:
-                    return float("inf")
-                return (
-                    c_ms
-                    * (6.0 * loss) ** 0.5
-                    / (3.14159 * omega_earth * max_uv * nu_max * ell)
+            print(
+                "    Max integration time (fringe-rotation limit,"
+                " FOV=%.2f deg full width):" % math.degrees(fov_rad)
+            )
+            for loss_pc in (1, 3, 5):
+                print(
+                    "        %d%% loss:  %5.1f s"
+                    % (loss_pc, max_integration_time(nu_max, max_uv, fov_rad, loss_pc / 100.0))
                 )
-
-            print("    Max integration time (fringe-rotation lim., ℓ=%.2f rad):" % ell)
-            print("        1%% loss:  %5.1f s" % dt_max(0.01))
-            print("        3%% loss:  %5.1f s" % dt_max(0.03))
-            print("        5%% loss:  %5.1f s" % dt_max(0.05))
 
             if "INTERVAL" in self.ds.data_vars:
                 dt_current = float(self.ds.INTERVAL.data[0].compute())

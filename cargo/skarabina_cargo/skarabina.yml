@@ -75,7 +75,11 @@ cabs:
         dtype: bool
       field-of-view:
         dtype: str
-        info: "Field-of-view half-width from phase centre (value with unit: deg, arcmin, arcsec, rad)"
+        info: >-
+          Field-of-view FULL width (value with unit: deg, arcmin, arcsec, rad).
+          Same convention as skarabina-analyze image-fov; the distance from the
+          phase centre to the edge is half of it. Only affects the
+          fringe-rotation integration-time limit reported by summary.
         default: "1.0 deg"
     outputs:
       msout:
@@ -97,7 +101,9 @@ cabs:
         required: true
       image-fov:
         dtype: str
-        info: "Image field-of-view (value with unit: deg, arcmin, arcsec, rad)"
+        info: >-
+          Image field-of-view, FULL width (value with unit: deg, arcmin,
+          arcsec, rad). Same convention as the skarabina cab field-of-view.
         required: true
       oversampling-factor:
         dtype: float

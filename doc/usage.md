@@ -20,8 +20,11 @@
                                 optional UV constraints to flag
   --time-average-factor INTEGER Average every N rows (see averaging.md)
   --frequency-average-factor INTEGER Average every N channels (see averaging.md)
-  --field-of-view FLOAT         Half-width from phase centre (degrees,
-                                default 1.0)
+  --field-of-view FLOAT         Field-of-view FULL width (degrees,
+                                default 1.0). Same convention as
+                                skarabina-analyze --image-fov: the distance
+                                from the phase centre to the edge is half
+                                of it.
   --optimize / --no-optimize    Remove fully-flagged rows and channels.
                                 Must run after --time-average-factor and
                                 --frequency-average-factor (averaging

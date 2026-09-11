@@ -55,6 +55,11 @@ skarabina --ms raw.ms --scan 1,12,14 --flag-nan \
 skarabina-analyze --ms raw.ms --image-fov 2.5
 ```
 
+`--field-of-view` (flagging/summary) and `--image-fov` (analysis) both take the
+field of view as a **full width**, so the same value can be passed to both.  The
+summary's fringe-rotation limit uses the distance from the phase centre to the
+edge, i.e. half of it.
+
 ## Build
 
 Install [uv](https://docs.astral.sh/uv/), then:
