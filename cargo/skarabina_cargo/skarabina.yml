@@ -96,6 +96,42 @@ cabs:
         dtype: float
         info: Pixels per resolution element (synthesised beam)
         default: 5.0
+      json-stdout:
+        dtype: bool
+        info: >-
+          Emit the analysis results as a single JSON line on stdout, which
+          stimela wrangles into this cab's scalar outputs. Setting this true
+          (or output-json) is what makes the recommended image size available
+          to downstream imaging steps.
+    outputs:
+      # Named file output: stimela supplies the path and passes it as
+      # --output-json <path>.  Consume it downstream as
+      # =steps.<step>.output-json to read the full analysis record.
       output-json:
         dtype: File
-        info: Write analysis results as JSON to this file
+        info: Full analysis results as a JSON file
+      # Value outputs, wrangled out of the --json-stdout line.  These are the
+      # names a larger pipeline binds to, e.g. =steps.analyze.resolution_arcsec.
+      # NB: names must be valid Python identifiers (PARSE_JSON_OUTPUT_DICT
+      # cannot assign a key such as "image-size").
+      recommended_image_size_pixels:
+        dtype: int
+        info: Recommended square image size, in pixels
+      resolution_arcsec:
+        dtype: float
+        info: Synthesised beam (angular resolution), in arcsec
+      max_baseline_m:
+        dtype: float
+        info: Longest baseline (maximum uv distance), in metres
+      max_frequency_hz:
+        dtype: float
+        info: Highest channel frequency, in Hz
+    management:
+      wranglers:
+        # The single-line JSON emitted by --json-stdout.  PARSE_JSON_OUTPUT_DICT
+        # parses the first ()-group and assigns its keys to outputs of the same
+        # name.  Do not add a trailing "$" here: stimela applies this pattern
+        # per output line, and anchoring it interacts badly with the rich
+        # markup it wraps around lines.
+        'SKARABINA_ANALYZE_JSON (.*)':
+          - PARSE_JSON_OUTPUT_DICT

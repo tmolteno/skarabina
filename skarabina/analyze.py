@@ -9,6 +9,10 @@ from angle_parser import parse_angle
 from casacore.tables import table
 from daskms import xds_from_ms
 
+# Sentinel prefix for the single-line JSON emitted by --json-stdout.  Stimela
+# cab definitions match on this exact string, so treat it as a public API.
+JSON_STDOUT_PREFIX = "SKARABINA_ANALYZE_JSON "
+
 
 @click.command("skarabina-analyze")
 @click.option("--ms", required=True, help="Input measurement set")
@@ -31,7 +35,13 @@ from daskms import xds_from_ms
     default=None,
     help="Write analysis results as JSON to this file",
 )
-def main(ms, image_fov, oversampling_factor, output_json):
+@click.option(
+    "--json-stdout",
+    is_flag=True,
+    default=False,
+    help="Print the analysis results as a single JSON line on stdout",
+)
+def main(ms, image_fov, oversampling_factor, output_json, json_stdout):
     """Analyze a measurement set and recommend an image size.
 
     Computes the angular resolution from the longest baseline and
@@ -58,8 +68,7 @@ def main(ms, image_fov, oversampling_factor, output_json):
     t.close()
 
     if nu_max is None or max_uv == 0:
-        print("Could not determine resolution from MS")
-        return
+        raise click.ClickException("Could not determine resolution from MS")
 
     c_ms = 299792458.0
     fov_rad = parse_angle(image_fov)
@@ -82,17 +91,24 @@ def main(ms, image_fov, oversampling_factor, output_json):
     print(f"  Field of view:  {image_fov}")
     print(f"Recommended image size: {n_pix} × {n_pix} pixels")
 
+    result = {
+        "ms": ms,
+        "max_baseline_m": max_uv,
+        "max_frequency_hz": nu_max,
+        "max_frequency_mhz": nu_max / 1e6,
+        "resolution_arcsec": theta_res_arcsec,
+        "field_of_view": image_fov,
+        "oversampling_factor": oversampling_factor,
+        "recommended_image_size_pixels": n_pix,
+    }
+
     if output_json:
-        result = {
-            "ms": ms,
-            "max_baseline_m": max_uv,
-            "max_frequency_hz": nu_max,
-            "max_frequency_mhz": nu_max / 1e6,
-            "resolution_arcsec": theta_res_arcsec,
-            "field_of_view": image_fov,
-            "oversampling_factor": oversampling_factor,
-            "recommended_image_size_pixels": n_pix,
-        }
         with open(output_json, "w") as f:
             json.dump(result, f, indent=2)
         print(f"Wrote {output_json}")
+
+    if json_stdout:
+        # A single line, prefixed by a sentinel, so that a stimela output
+        # wrangler can pick the machine-readable results out of this cab's
+        # console output.  Keep this line intact: it is a public interface.
+        print(f"{JSON_STDOUT_PREFIX}{json.dumps(result)}")
