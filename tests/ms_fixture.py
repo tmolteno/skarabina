@@ -46,8 +46,11 @@ def _fill(path, sub, row, nrows=1):
 
 
 def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None,
-                      field_ids=None, field_names=("TEST",)):
+                      field_ids=None, field_names=("TEST",), auto_rows=0):
     """Create a minimal single-SPW MS at ``path`` and return the path.
+
+    ``auto_rows`` rows are written as autocorrelations (ANTENNA1 ==
+    ANTENNA2); the rest are cross-correlations between antennas 0 and 1.
 
     ``field_ids`` gives the FIELD_ID of each row (default: all in field 0), so
     tests can build a multi-field MS -- the shape of a real calibrator+target
@@ -141,6 +144,10 @@ def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None,
 
     antenna1 = np.resize(np.array([0, 1], dtype=np.int32), nrow)
     antenna2 = np.resize(np.array([1, 0], dtype=np.int32), nrow)
+    if auto_rows:
+        if auto_rows > nrow:
+            raise ValueError("auto_rows cannot exceed nrow")
+        antenna2[:auto_rows] = antenna1[:auto_rows]  # ANTENNA1 == ANTENNA2
     scans = (
         np.zeros(nrow, dtype=np.int32)
         if scan_numbers is None
