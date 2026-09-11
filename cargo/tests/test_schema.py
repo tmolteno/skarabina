@@ -168,3 +168,46 @@ def test_demo_uses_no_undefined_cabs(schemas):
                 f"step '{step_name}' references cab '{cab}', which is not defined "
                 "by this cargo package and is not a stimela built-in"
             )
+
+
+def test_demo_steps_are_container_portable(schemas):
+    """A cab with no `image` is rejected by container backends ("container
+    image not specified by cab"), so every demo step must either use a packaged
+    cab (which defines an image) or be a python-flavour cab, which picks up
+    stimela's default image."""
+    recipe = OmegaConf.load(EXAMPLE_RECIPE)["demo-imaging-pipeline"]
+    for step_name, step in recipe.steps.items():
+        cab = step.get("cab")
+        if not isinstance(cab, dict):
+            continue  # packaged cab: the cargo schema supplies the image
+        flavour = (cab.get("flavour") or {})
+        kind = flavour.get("kind") if isinstance(flavour, dict) else flavour
+        assert kind in ("python", "python-code"), (
+            f"step '{step_name}' defines an inline cab of flavour {kind!r} with no "
+            "image; container backends reject that. Use the python flavour or set image:"
+        )
+
+
+def test_release_versions_are_consistent():
+    """AGENTS.md requires the three version files to agree: the root package,
+    the cargo package, and the container image tag.  The image tag drops the
+    'v' prefix (CI's docker/metadata-action uses type=semver)."""
+    root = Path(__file__).resolve().parent.parent.parent
+    cargo_dir = root / "cargo"
+
+    def project_version(toml_path):
+        m = re.search(r'^version\s*=\s*"([^"]+)"', toml_path.read_text(), re.M)
+        assert m, f"no project version found in {toml_path}"
+        return m.group(1)
+
+    pyproject_version = project_version(root / "pyproject.toml")
+    cargo_version = project_version(cargo_dir / "pyproject.toml")
+    base = (cargo_dir / "skarabina_cargo" / "genesis" / "skarabina-cargo-base.yml").read_text()
+    image_version = re.search(r"^\s+version:\s*(\S+)", base, re.M).group(1)
+
+    assert pyproject_version == cargo_version == image_version, (
+        "version mismatch: pyproject.toml="
+        f"{pyproject_version}, cargo/pyproject.toml={cargo_version}, "
+        f"image={image_version}"
+    )
+    assert not image_version.startswith("v"), "image tag must not carry a 'v' prefix"
