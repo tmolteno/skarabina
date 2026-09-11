@@ -12,8 +12,29 @@ from skarabina import barber, dask_ms
 logger = logging.getLogger(__name__)
 
 
+def build_flag_data_operations(flag_nan, flag_clip):
+    """Build the :meth:`DaskMS.flag_data` operation mapping.
+
+    ``--flag-nan`` and ``--flag-clip`` are independent switches: NaN
+    flagging is requested explicitly, and amplitude clipping only happens
+    when bounds are supplied.
+    """
+    operations = {}
+    if flag_nan:
+        operations["NAN"] = True
+    if flag_clip is not None:
+        operations["CLIP"] = tuple(flag_clip)
+    return operations
+
+
 @click.command("skarabina")
 @click.option("--ms", required=True, help="Input measurement set")
+@click.option(
+    "--scan",
+    default=None,
+    help="Keep only these scans: comma-separated numbers and lo~hi ranges"
+    " (e.g. '1,12,14' or '0~5'). Default is all scans.",
+)
 @click.option("--msout", default=None, help="Output measurement set")
 @click.option(
     "--summary", is_flag=True, default=False, help="Print the flagging summary"
@@ -114,18 +135,22 @@ def main(**kw):
     fov_str = opts.field_of_view if opts.field_of_view is not None else "1.0 deg"
     ms._fov_rad = parse_angle(fov_str)
 
+    # --- Row selection (must precede flagging and averaging) ---
+
+    if opts.scan is not None:
+        print(f"scan selection: {opts.scan!r}")
+        ms.select_scans(opts.scan)
+
     # --- Flagging operations (order-independent) ---
 
     if opts.flag_uv_above is not None:
         print(f"uv_above {opts.flag_uv_above} m")
         ms.flag_uv_above(opts.flag_uv_above)
 
-    flag_data_operations = {}
-    if opts.flag_nan is not None:
-        flag_data_operations["NAN"] = True
-
-    if opts.flag_clip is not None:
-        flag_data_operations["CLIP"] = opts.flag_clip
+    flag_data_operations = build_flag_data_operations(
+        opts.flag_nan, opts.flag_clip
+    )
+    if "CLIP" in flag_data_operations:
         print(f"flag_clip {opts.flag_clip}")
 
     ms.flag_data(flag_data_operations)

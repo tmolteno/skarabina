@@ -15,6 +15,19 @@ cabs:
         dtype: MS
         info: The input measurement set
         required: true
+      scan:
+        dtype: Union[str, None]
+        info: >-
+          Keep only these scans: a comma-separated list of scan numbers and
+          inclusive lo~hi ranges (e.g. "1,12,14" or "0~5"). Filtering happens
+          at read time, so flagging, averaging and optimization all apply to
+          the selected scans only. Default (or an empty value) is all scans.
+      split:
+        dtype: Union[str, None]
+        info: >-
+          When writing the output MS, keep only this field's rows (a field
+          name or a numeric FIELD_ID). Applied at save time, after flagging,
+          averaging and optimization.
       summary:
         dtype: bool
         info: Print the flagging summary
@@ -42,7 +55,7 @@ cabs:
         dtype: bool
       flag-nan:
         dtype: bool
-        info: Flag NaN visibilities
+        info: Flag NaN visibilities (off unless requested)
       flag-clip:
         dtype: Tuple[float, float]
         info: Flag visibilities outside [lo, hi] amplitude range
@@ -69,12 +82,6 @@ cabs:
         dtype: MS
         info: The output measurement set
         required: false
-      reference-antenna:
-        dtype: int
-        info: A recommended reference antenna (close to the core and least flagged)
-      max-uv:
-        dtype: float
-        info: The maximum uv coordinate in the MS.
 
   skarabina-analyze:
     name: skarabina-analyze

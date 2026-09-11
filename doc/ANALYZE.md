@@ -27,7 +27,11 @@ line; the `SKARABINA_ANALYZE_JSON ` prefix on that line is a public interface
 ## How it works
 
 1. Reads the UVW coordinates from the main table to find the longest
-   baseline *B*<sub>max</sub> (maximum UV distance in metres).
+   baseline *B*<sub>max</sub> (maximum UV distance in metres).  Rows with
+   `FLAG_ROW` set are ignored: a flagger such as
+   `skarabina --flag-uv-above` marks exactly the baselines that will never be
+   imaged, and counting them would recommend a size for unusable data.  An MS
+   whose every row is flagged is an error.
 
 2. Reads the SPECTRAL_WINDOW subtable's `CHAN_FREQ` to find the highest
    frequency *ν*<sub>max</sub>.

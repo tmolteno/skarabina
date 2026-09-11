@@ -3,6 +3,64 @@
 
 ## [Unreleased]
 
+## [0.8.0]
+
+### Added
+
+- **Scan selection (`--scan`).** Keeps only the rows of the requested scans:
+  a comma-separated list of scan numbers and inclusive `lo~hi` ranges, e.g.
+  `--scan 1,12,14` or `--scan 0~5`. Filtering happens at read time, so
+  flagging, averaging, `--optimize` and the written output all see the
+  selected scans only; an empty or absent specification keeps every scan, and
+  a selection that matches no rows is an error. The `scan` input is exposed on
+  the `skarabina` cab, so a recipe can keep a subset of scans without a
+  separate `mstransform` pass.
+- **`split` input on the `skarabina` cab.** `--split` (keep one field's rows
+  when writing) existed in the CLI but was not reachable from a recipe.
+
+### Fixed
+
+- **SPECTRAL_WINDOW is rewritten to match the data.** The sub-table is copied
+  verbatim from the input MS, so after frequency averaging the output MS kept
+  the *input* channel count in `NUM_CHAN`/`CHAN_FREQ` (e.g. 2511 channels
+  described for a 314-channel main table), and after `--optimize` removed
+  fully-flagged channels it was left describing channels that no longer
+  existed. `NUM_CHAN`, `CHAN_FREQ`, `RESOLUTION` and `TOTAL_BANDWIDTH` are now
+  rewritten whenever the channel count changes, channel widths follow the
+  averaging (they add up within a group), and `--optimize` drops removed
+  channels from the bookkeeping. A mismatch between the bookkeeping and the
+  data is now a hard error instead of a silently inconsistent MS.
+- **`skarabina-analyze` ignores rows flagged by a flagger.** The recommended
+  image size was driven by the longest baseline in the MS even when that row
+  was flagged (which is exactly what `skarabina --flag-uv-above` does), so it
+  recommended a size for baselines that would never be imaged. Rows with
+  `FLAG_ROW` set are now excluded, and an MS whose every row is flagged is an
+  error rather than a nonsense recommendation.
+- **`--flag-nan` is honoured.** The switch was tested with `is not None`
+  against a flag whose default is `False`, so NaN flagging ran even when it
+  was not requested. It is now off unless asked for.
+- **Multi-`DATA_DESC_ID` measurement sets are rejected.** dask-ms returns one
+  dataset per DDID and only the first was processed, so a multi-DDID MS was
+  silently truncated on write. This is now a clear error telling the user to
+  split by spectral window first.
+- **Scan selection and other row/channel changes refresh the cached column
+  snapshots.** `flag_uv_above`, `flag_data` and `flag_spectral_window` read
+  the live dataset rather than the `__init__` snapshots, which went stale once
+  rows had been selected.
+
+### Changed
+
+- **The `skarabina` cab no longer declares the `reference-antenna` and
+  `max-uv` outputs.** Nothing ever populated them (they had no wrangler and
+  no matching print), so a recipe binding to them silently received nothing.
+- **The documented include path is `(skarabina_cargo)`.** The two READMEs
+  disagreed (`(skarabina)` in the root README, `(cargo)` in the cargo README);
+  only `(skarabina_cargo)` matches the installed package, which is what the
+  demo pipeline and the tests use.
+- **Dev environment**: the root project now installs `skarabina-cargo`
+  (editable, from `cargo/`) so the cab-schema and analyze-contract tests can
+  actually run; previously `uv run pytest` failed to collect them.
+
 ## [0.7.2] — 2026-09-11
 
 ### Added

@@ -14,6 +14,52 @@ from daskms import xds_from_ms
 JSON_STDOUT_PREFIX = "SKARABINA_ANALYZE_JSON "
 
 
+def max_uv_distance(ds):
+    """Longest baseline in the dataset, in metres.
+
+    Rows with ``FLAG_ROW`` set are ignored: they carry no usable data (a
+    flagger such as ``skarabina --flag-uv-above`` marks exactly those rows),
+    so counting them would recommend an image size for baselines that will
+    never be imaged.  Raises :class:`click.ClickException` when every row is
+    flagged.
+    """
+    uvw = da.asarray(ds.UVW)
+    uv_sq = uvw[:, 0] * uvw[:, 0] + uvw[:, 1] * uvw[:, 1]
+
+    if "FLAG_ROW" in ds:
+        keep = da.logical_not(da.asarray(ds.FLAG_ROW))
+        n_flagged = int(da.sum(da.asarray(ds.FLAG_ROW)).compute())
+        n_total = int(ds.FLAG_ROW.shape[0])
+        if n_flagged:
+            print(
+                f"  Ignoring {n_flagged} of {n_total} rows with FLAG_ROW set"
+            )
+        if n_flagged >= n_total:
+            raise click.ClickException(
+                "Every row is flagged (FLAG_ROW) — nothing left to image"
+            )
+        if n_flagged:
+            uv_sq = da.where(keep, uv_sq, 0.0)
+
+    return float(da.sqrt(da.max(uv_sq)).compute())
+
+
+def max_channel_frequency(ms):
+    """Highest channel frequency in the MS, in Hz."""
+    nu_max = None
+    t = table(ms)
+    try:
+        for sub in t.getsubtables():
+            if "SPECTRAL_WINDOW" in sub:
+                sw = table(sub, ack=False)
+                nu_max = float(sw.getcol("CHAN_FREQ").max())
+                sw.close()
+                break
+    finally:
+        t.close()
+    return nu_max
+
+
 @click.command("skarabina-analyze")
 @click.option("--ms", required=True, help="Input measurement set")
 @click.option(
@@ -50,22 +96,11 @@ def main(ms, image_fov, oversampling_factor, output_json, json_stdout):
     datasets = xds_from_ms(ms)
     ds = datasets[0]
 
-    # Max UV distance (metres)
-    uvw = da.asarray(ds.UVW)
-    u_arr = uvw[:, 0]
-    v_arr = uvw[:, 1]
-    max_uv = float(da.sqrt(da.max(u_arr * u_arr + v_arr * v_arr)).compute())
+    # Max UV distance (metres), ignoring rows flagged by a previous flagger
+    max_uv = max_uv_distance(ds)
 
     # Max frequency (Hz) from SPECTRAL_WINDOW
-    nu_max = None
-    t = table(ms)
-    for sub in t.getsubtables():
-        if "SPECTRAL_WINDOW" in sub:
-            sw = table(sub, ack=False)
-            nu_max = float(sw.getcol("CHAN_FREQ").max())
-            sw.close()
-            break
-    t.close()
+    nu_max = max_channel_frequency(ms)
 
     if nu_max is None or max_uv == 0:
         raise click.ClickException("Could not determine resolution from MS")
