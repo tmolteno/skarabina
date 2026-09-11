@@ -39,8 +39,15 @@ def _fill(path, sub, row, nrows=1):
     t.close()
 
 
-def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None):
-    """Create a minimal single-SPW MS at ``path`` and return the path."""
+def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None,
+                      field_ids=None, field_names=("TEST",)):
+    """Create a minimal single-SPW MS at ``path`` and return the path.
+
+    ``field_ids`` gives the FIELD_ID of each row (default: all in field 0), so
+    tests can build a multi-field MS -- the shape of a real calibrator+target
+    observation, where every field must survive flagging, averaging and the
+    write-out.
+    """
     path = str(path)
     shutil.rmtree(path, ignore_errors=True)
 
@@ -71,14 +78,14 @@ def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None):
         "CORR_PRODUCT": np.zeros((1, 1, 2), dtype=np.int32),
     })
     _fill(path, "FIELD", {
-        "NAME": np.array(["TEST"]),
-        "NUM_POLY": np.array([0], dtype=np.int32),
-        "PHASE_DIR": np.zeros((1, 1, 2)),
-        "DELAY_DIR": np.zeros((1, 1, 2)),
-        "REFERENCE_DIR": np.zeros((1, 1, 2)),
-        "SOURCE_ID": np.array([0], dtype=np.int32),
-        "TIME": np.array([0.0]),
-    })
+        "NAME": np.array(list(field_names)),
+        "NUM_POLY": np.zeros(len(field_names), dtype=np.int32),
+        "PHASE_DIR": np.zeros((len(field_names), 1, 2)),
+        "DELAY_DIR": np.zeros((len(field_names), 1, 2)),
+        "REFERENCE_DIR": np.zeros((len(field_names), 1, 2)),
+        "SOURCE_ID": np.arange(len(field_names), dtype=np.int32),
+        "TIME": np.zeros(len(field_names)),
+    }, nrows=len(field_names))
     _fill(path, "ANTENNA", {
         "NAME": np.array(["a0", "a1"]),
         "STATION": np.array(["s0", "s1"]),
@@ -114,6 +121,11 @@ def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None):
         if scan_numbers is None
         else np.asarray(scan_numbers, dtype=np.int32)
     )
+    fields = (
+        np.zeros(nrow, dtype=np.int32)
+        if field_ids is None
+        else np.asarray(field_ids, dtype=np.int32)
+    )
 
     t = table(path, readonly=False)
     t.addrows(nrow)
@@ -123,7 +135,7 @@ def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None):
     t.putcol("ANTENNA1", antenna1)
     t.putcol("ANTENNA2", antenna2)
     t.putcol("DATA_DESC_ID", np.zeros(nrow, dtype=np.int32))
-    t.putcol("FIELD_ID", np.zeros(nrow, dtype=np.int32))
+    t.putcol("FIELD_ID", fields)
     t.putcol("SCAN_NUMBER", scans)
     t.putcol("INTERVAL", np.full(nrow, 10.0))
     t.putcol("EXPOSURE", np.full(nrow, 10.0))

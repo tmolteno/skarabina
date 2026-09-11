@@ -3,6 +3,24 @@
 
 ## [Unreleased]
 
+## [0.8.1]
+
+### Fixed
+
+- **Multi-field measurement sets are no longer reduced to their first field.**
+  dask-ms groups by `(FIELD_ID, DATA_DESC_ID)` by default, so `xds_from_ms`
+  returned one dataset *per field* and the code took the first one: flagging,
+  averaging and the write-out silently kept only the first field of a
+  calibrator + target MS (for a typical observation, just the bandpass
+  calibrator), and `skarabina-analyze` measured the longest baseline from that
+  field alone.  The reader now groups by `DATA_DESC_ID` only, so all fields
+  travel together with `FIELD_ID` as a per-row variable; `--split` still
+  selects a single field.  An MS with more than one DATA_DESC_ID (i.e. more
+  than one spectral window) is rejected with a clear error rather than being
+  partially processed, and `skarabina-analyze` sees the baselines of every
+  field.  Regression tests build multi-field measurement sets and check that
+  all fields survive flagging, averaging, the write-out and `--split`.
+
 ## [0.8.0]
 
 ### Added
