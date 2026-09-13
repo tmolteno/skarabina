@@ -50,6 +50,36 @@ line; the `SKARABINA_ANALYZE_JSON ` prefix on that line is a public interface
 
    The result is rounded up to the next even integer for FFT efficiency.
 
+5. Reads the band edges and channel count from the same SPECTRAL_WINDOW
+   subtable and works out how coarsely the data may be averaged before smearing
+   shows **at the edge of the requested field of view**
+   (``theta_edge = FOV/2``):
+
+   * white-light fringes — the widest channel that keeps the fringes from the
+     two ends of the band coherent at that angle:
+
+     $$\Delta\nu_\text{max} = \frac{c}{B_\text{max} \cdot \theta_\text{edge}}$$
+
+     from which the fewest usable channels follow,
+     ``min_channels = bandwidth / Δν_max`` (the pipeline uses this to check its
+     channel averaging: a channel width above the limit smears the edge of the
+     image);
+   * time-average smearing — the longest integration that keeps the loss at that
+     angle below ~10% (TMS, *Synthesis Imaging in Radio Astronomy II*, p.246):
+
+     $$t_\text{max} = \frac{0.1}{\omega_E \cdot B_\text{max} \cdot \theta_\text{edge}}$$
+
+     with ω<sub>E</sub> the sidereal rotation rate;
+   * the resulting radial bandwidth-smearing factor for the channels as they are,
+
+     $$R_b = \frac{1}{\sqrt{1 + \left(\frac{0.939\, r_1 \, \Delta\nu}
+       {\text{FOV} \cdot \nu_\text{max}}\right)^2}}$$
+
+     with *r*<sub>1</sub> evaluated at the field edge.
+
+   These are the numbers the superseded `set-image-parameters` cab in the
+   white-belt pipeline used to print; that cab has been retired.
+
 ## Example
 
     $ skarabina-analyze --ms target.ms --image-fov 2.5
@@ -59,6 +89,10 @@ line; the `SKARABINA_ANALYZE_JSON ` prefix on that line is a public interface
       Resolution:     4.47 arcsec
       Field of view:  2.50°
     Recommended image size: 10066 × 10066 pixels
+    Averaging limits at the field edge (1.25 deg):
+      Max channel width: 3590.9 kHz  (no fewer than 263 channels)
+      Max integration:   2.9 s
+      Bandwidth smearing factor (as-is): 1.0000
 
 ## JSON output
 
@@ -69,12 +103,19 @@ the keys are a stable interface — stimela cab outputs are named after them:
 {
   "ms": "target.ms",
   "max_baseline_m": 7697.0,
+  "min_frequency_hz": 856000000.0,
   "max_frequency_hz": 1800000000.0,
   "max_frequency_mhz": 1800.0,
+  "bandwidth_hz": 944000000.0,
+  "num_channels": 4096,
   "resolution_arcsec": 4.4689,
   "field_of_view": "2.5 deg",
   "oversampling_factor": 5.0,
-  "recommended_image_size_pixels": 10066
+  "recommended_image_size_pixels": 10066,
+  "max_channel_width_hz": 3590900.0,
+  "min_channels": 263,
+  "max_integration_time_s": 2.9,
+  "bandwidth_smearing_factor": 0.9999
 }
 ```
 
