@@ -113,6 +113,23 @@ def build_flag_data_operations(flag_nan, flag_clip):
     help="When writing (--msout), keep only this field's rows"
     " (field name or numeric FIELD_ID)",
 )
+@click.option(
+    "--flag-restore-before",
+    type=str,
+    default=None,
+    metavar="VERSIONNAME",
+    help="Restore this saved flag version before doing anything else"
+    " (CASA flagmanager layout; see --flag-save-before)",
+)
+@click.option(
+    "--flag-save-before",
+    type=str,
+    default=None,
+    metavar="VERSIONNAME",
+    help="Save the current flags as VERSIONNAME before flagging, as a"
+    " CASA-compatible flag version under <ms>.flagversions/"
+    " (list them with CASA flagmanager mode='list')",
+)
 @click.version_option(
     version=get_version("skarabina"),
     prog_name="skarabina",
@@ -144,6 +161,25 @@ def main(**kw):
     # Full width, in radians; summary() halves it to get the distance from the
     # phase centre to the edge of the field.
     ms._fov_rad = parse_angle(fov_str)
+
+    # --- Flag versions (before anything else touches the flags) ---
+    #
+    # --flag-restore-before runs first, so that --flag-save-before captures the
+    # restored state: restore an earlier version and then back it up under a new
+    # name in a single pass.  Both act on the whole MS, before --scans selects
+    # rows, so that restore sees the same row set the version was saved from.
+
+    if opts.flag_restore_before is not None:
+        print(f"flag_restore_before: {opts.flag_restore_before}")
+        ms.restore_flag_version(opts.flag_restore_before)
+
+    if opts.flag_save_before is not None:
+        print(f"flag_save_before: {opts.flag_save_before}")
+        ms.save_flag_version(
+            opts.flag_save_before,
+            comment="Saved by skarabina before flagging on %s"
+            % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
 
     # --- Row selection (must precede flagging and averaging) ---
 

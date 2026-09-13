@@ -28,6 +28,21 @@ cabs:
           When writing the output MS, keep only this field's rows (a field
           name or a numeric FIELD_ID). Applied at save time, after flagging,
           averaging and optimization.
+      flag-restore-before:
+        dtype: Union[str, None]
+        info: >-
+          Restore this saved flag version before doing anything else. Versions
+          live in <ms>.flagversions, in the layout CASA's flagmanager uses, so
+          a version saved by this cab can be listed or restored by CASA and
+          vice versa.
+      flag-save-before:
+        dtype: Union[str, None]
+        info: >-
+          Save the flags of the input MS as this version name before any
+          flagging runs, as a CASA-compatible backup under <ms>.flagversions.
+          Backs up the whole MS, so the version stays restorable regardless of
+          any row selection. An existing version of the same name is moved
+          aside as <name>.old.<timestamp>.
       summary:
         dtype: bool
         info: Print the flagging summary

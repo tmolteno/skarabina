@@ -3,6 +3,35 @@
 
 ## [Unreleased]
 
+## [0.8.7]
+
+### Added
+
+- **`--flag-save-before <versionname>` and `--flag-restore-before
+  <versionname>`.**  Back up and restore flags the way CASA's `flagmanager`
+  does.  Versions live beside the MS in `<ms>.flagversions/`, in CASA's exact
+  layout: a plain-text `FLAG_VERSION_LIST` holding one `<name> : <comment>`
+  line per version, and a `flags.<versionname>` casacore table per version
+  containing `FLAG` and `FLAG_ROW`.  The layout was taken from versions written
+  by CASA itself, so the two tools interoperate: skarabina reads a CASA-written
+  version byte-for-byte (verified on a 745,996-row `mt0_e45_casa_rflag`
+  version), and a version written by skarabina matches CASA's schema
+  column-for-column and uses the same `TiledShapeStMan` for `FLAG` (737 MB
+  against CASA's 730 MB for the same flags).
+
+  Both options act before any flagging runs.  `--flag-restore-before` is
+  applied first, so the two combine to re-label a version
+  (`--flag-restore-before Original --flag-save-before pre-autos`).  The backup
+  is read from the MS on disk rather than from the in-memory dataset, so a
+  version stays restorable even when the run works on a row selection
+  (`--scan`, `--split`); CASA's flagmanager likewise backs up the whole MS.
+  Saving an existing name moves the old version aside as
+  `<name>.old.<timestamp>`, as CASA does.  Restoring a version whose row count
+  no longer matches the MS is an error, not a silently misaligned restore.
+
+  Both options are also exposed as `flag-save-before` / `flag-restore-before`
+  inputs on the `skarabina` stimela cab.
+
 ## [0.8.6]
 
 ### Added

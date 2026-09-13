@@ -15,6 +15,8 @@ from dask.array import coarsen as da_coarsen
 from dask.diagnostics import ProgressBar
 from daskms import xds_from_ms, xds_to_table
 
+from skarabina import flag_versions
+
 logger = logging.getLogger(__name__)
 
 
@@ -1195,6 +1197,66 @@ class DaskMS:
             if n_rem > 0:
                 avg_width = np.append(avg_width, np.sum(values[trim:]))
             self.chan_axis_hz[col] = avg_width
+
+    def save_flag_version(self, versionname, comment=""):
+        """Back up the flags of the MS as a CASA-compatible flag version.
+
+        Writes ``<ms>.flagversions/flags.<versionname>`` and updates
+        ``FLAG_VERSION_LIST``, in the same layout CASA's ``flagmanager`` uses,
+        so the version can be listed and restored by either tool.
+
+        The flags are read from the MS on disk, not from the in-memory dataset:
+        a version holding only the rows left by a row selection would fail the
+        row-count check on restore, and CASA's flagmanager likewise backs up
+        the whole MS.
+        """
+        flag, flag_row = flag_versions.read_ms_flags(self.name)
+        path = flag_versions.save_version(
+            self.name, versionname, flag, flag_row, comment=comment
+        )
+        print(f"flag version '{versionname}' saved to {path}")
+
+    def restore_flag_version(self, versionname):
+        """Replace the flags in memory with a saved flag version.
+
+        The flags are applied to the dataset, so any later flagging builds on
+        the restored state and ``--msout``/``--apply`` write it out.  With
+        neither of those the restored flags are discarded, exactly as with any
+        other in-memory operation.
+        """
+        flag, flag_row = flag_versions.load_version(self.name, versionname)
+
+        nrow_ms = int(self.ds.FLAG.shape[0])
+        if int(flag.shape[0]) != nrow_ms:
+            raise RuntimeError(
+                f"flag version '{versionname}' has {flag.shape[0]} rows but the"
+                f" MS now has {nrow_ms}: the version no longer matches this data"
+                " (CASA warns that versions are unique to the MS they came from;"
+                " a reduced selection can also cause this)"
+            )
+        if tuple(flag.shape[1:]) != tuple(self.ds.FLAG.shape[1:]):
+            raise RuntimeError(
+                f"flag version '{versionname}' has shape {tuple(flag.shape)} but"
+                f" the MS flags are {tuple(self.ds.FLAG.shape)}"
+            )
+
+        self.ds["FLAG"].data = da.asarray(flag)
+        self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, da.asarray(flag_row))
+        self.changed["FLAG"] = True
+        self.changed["FLAG_ROW"] = True
+        self._refresh_cached_columns()
+        print(
+            "flag version '%s' restored: %.2f%% of visibilities and %d rows flagged"
+            % (
+                versionname,
+                100.0 * float(flag.sum()) / flag.size if flag.size else 0.0,
+                int(flag_row.sum()),
+            )
+        )
+
+    def list_flag_versions(self):
+        """The saved flag versions of this MS as ``[(name, comment), ...]``."""
+        return flag_versions.list_versions(self.name)
 
     def optimize(self):
         """

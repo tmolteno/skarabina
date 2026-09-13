@@ -114,6 +114,36 @@ so flagging, averaging and optimization all see the selected scans only:
 A selection that matches no rows is an error, so a typo cannot silently
 produce an empty MS.
 
+### Flag versions (backups)
+
+Back up and restore flags the way CASA's `flagmanager` does. Versions live
+beside the MS in `<ms>.flagversions/`, and the layout is CASA's, so a version
+written by skarabina can be listed and restored by CASA, and one written by
+CASA can be restored here:
+
+    # back up before a risky flagging pass
+    skarabina --ms raw.ms --flag-save-before Original
+
+    # ... and undo it later, writing the restored flags back
+    skarabina --ms raw.ms --flag-restore-before Original --apply --clobber
+
+Both act before any flagging runs, and `--flag-restore-before` is applied
+first, so the two can be combined to re-label a version:
+
+    skarabina --ms raw.ms --flag-restore-before Original --flag-save-before pre-autos
+
+The backup is taken from the MS on disk, so a version stays restorable even if
+the run itself is working on a row selection (`--scan`, `--split`). Saving a
+version name that already exists moves the old one aside as
+`<name>.old.<timestamp>`, matching `flagmanager`.
+
+List what is available with CASA:
+
+    flagmanager('raw.ms', mode='list')
+
+Restoring a version from a different MS, or one whose row count no longer
+matches, is an error rather than a silently misaligned restore.
+
 ### Full pipeline
 
     skarabina --ms raw.ms \

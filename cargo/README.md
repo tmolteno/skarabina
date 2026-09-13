@@ -122,6 +122,41 @@ Where `spectral-flags.yml` defines frequency ranges to flag:
   uv_below: 600
 ```
 
+#### Flag versions (backups)
+
+`flag-save-before` and `flag-restore-before` back up and restore flags, in the
+same `<ms>.flagversions/` layout CASA's `flagmanager` uses:
+
+```yaml
+steps:
+  flag:
+    cab: skarabina
+    params:
+      ms: =recipe.ms
+      flag-save-before: pre-flagging   # back up before touching anything
+      flag-autos: true
+      flag-nan: true
+      msout: flagged.ms
+      clobber: true
+
+  undo:
+    cab: skarabina
+    params:
+      ms: =steps.flag.msout
+      flag-restore-before: pre-flagging   # restore, then write it out
+      msout: restored.ms
+      clobber: true
+```
+
+Both act before any flagging runs, and restore is applied before save, so
+combining them re-labels a version.  Because the backup is taken from the MS on
+disk, a version is restorable even when the step works on a row selection.
+
+A version written here can be listed and restored by CASA, and one written by
+CASA can be restored by skarabina:
+
+    flagmanager('flagged.ms', mode='list')
+
 ### skarabina-analyze cab
 
 ```yaml
