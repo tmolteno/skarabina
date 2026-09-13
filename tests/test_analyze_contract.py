@@ -77,6 +77,10 @@ def test_cli_reports_all_schema_outputs():
         "resolution_arcsec",
         "max_baseline_m",
         "max_frequency_hz",
+        "max_channel_width_hz",
+        "min_channels",
+        "max_integration_time_s",
+        "bandwidth_smearing_factor",
     ):
         assert name in declared, f"analyze cab should expose '{name}'"
         assert name in keys, f"CLI JSON should contain '{name}'"

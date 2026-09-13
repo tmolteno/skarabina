@@ -161,6 +161,35 @@ cabs:
       max_frequency_hz:
         dtype: float
         info: Highest channel frequency, in Hz
+      min_frequency_hz:
+        dtype: float
+        info: Lowest channel frequency, in Hz
+      bandwidth_hz:
+        dtype: float
+        info: Total bandwidth (highest minus lowest channel frequency), in Hz
+      num_channels:
+        dtype: int
+        info: Number of channels per spectral window
+      max_channel_width_hz:
+        dtype: float
+        info: >-
+          Widest channel that keeps white-light fringes coherent at the edge of
+          the field of view, in Hz
+      min_channels:
+        dtype: int
+        info: >-
+          Fewest channels the data supports at that field edge (bandwidth
+          divided by max_channel_width_hz)
+      max_integration_time_s:
+        dtype: float
+        info: >-
+          Longest integration that keeps time-average smearing at the field
+          edge below ~10%, in seconds (TMS p.246)
+      bandwidth_smearing_factor:
+        dtype: float
+        info: >-
+          Radial bandwidth-smearing factor R_b for the channels as they are,
+          before any averaging
     management:
       wranglers:
         # The single-line JSON emitted by --json-stdout.  PARSE_JSON_OUTPUT_DICT
