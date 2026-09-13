@@ -74,6 +74,98 @@ def max_integration_time(nu_max_hz, uv_max_m, fov_rad, loss=0.01):
     )
 
 
+# An integration whose rows are stamped with several TIME values, all within
+# this fraction of the observing cadence, is treated as one integration.  The
+# offset a writer introduces is far smaller than the gap between genuine
+# integrations, so the split is unambiguous (see group_integrations).
+INTEGRATION_TOLERANCE = 0.5
+
+
+def group_integrations(time, tol_fraction=INTEGRATION_TOLERANCE):
+    """Group rows of a measurement set into logical integrations.
+
+    The obvious grouping -- start a new integration whenever ``TIME`` changes --
+    is unreliable.  Some MS writers stamp a *single* integration's rows with
+    more than one TIME value, splitting one integration into two partial
+    groups.  Consumers then report the observation as having incomplete
+    integration groups ("1695 rows where 1711 are needed for 58 antennas"),
+    even though no data is missing: the parts hold disjoint baseline sets that
+    together are the whole integration.
+
+    On a MeerKAT MT0 file, 4 of 440 integrations were split this way, with
+    offsets of exactly 1.000 s and part sizes of 333+1378, 1480+231, 1539+172
+    and 1276+435 rows -- each pair summing to the full 1711 baselines.
+
+    This grouping is gap-tolerant: the cadence is estimated from the median
+    spacing of distinct TIME values, and a group is extended across any TIME
+    change closer than ``tol_fraction`` of that cadence.  Intra-integration
+    offsets are small compared with the cadence, so the parts are re-united
+    while genuine integrations (one cadence apart) stay separate.
+
+    Args:
+        time: per-row TIME values (array-like), e.g. ``ds.TIME.data``.
+        tol_fraction: split tolerance as a fraction of the estimated cadence.
+
+    Returns:
+        list of ``(start, end)`` index pairs, one per integration, in the order
+        the rows appear in the input.
+    """
+    time = np.asarray(time, dtype=float)
+    nrow = len(time)
+    if nrow == 0:
+        return []
+
+    # Runs of *identical* TIME: the naive grouping before tolerance is applied.
+    changes = np.nonzero(time[1:] != time[:-1])[0] + 1
+    starts = np.concatenate(([0], changes))
+    ends = np.concatenate((changes, [nrow]))
+
+    # cadence = typical spacing between consecutive TIME values
+    cadence = float(np.median(np.diff(time[starts]))) if len(starts) > 1 else 0.0
+    tol = tol_fraction * cadence
+
+    groups = []
+    group_start = starts[0]
+    for start, end in zip(starts[1:], ends[1:]):
+        # Extend the current group across a TIME change that is merely a
+        # re-stamping artefact; a gap of a full cadence starts a new one.
+        if time[start] - time[group_start] < tol:
+            continue
+        groups.append((group_start, start))
+        group_start = start
+    groups.append((group_start, nrow))
+    return groups
+
+
+def integration_interval(interval, time=None):
+    """The nominal, per-integration interval of an MS.
+
+    ``summary()`` reports a single "current integration time".  Taking it from
+    the first row's INTERVAL (or EXPOSURE) is fragile: if the writer split an
+    integration, the first row may carry a shortened interval -- 5.997 s
+    instead of the nominal 7.997 s on the MT0 file above -- so the reported
+    figure understates the integration time and makes the fringe-rotation
+    comparison misleading.  The most common value is the nominal one.
+
+    Falls back to the median spacing between distinct TIME values when no
+    interval column is available, and returns ``None`` if neither can be used.
+    """
+    if interval is not None:
+        values = np.round(np.asarray(interval, dtype=float), 6)
+        if values.size:
+            counts = np.bincount(
+                np.unique(values, return_inverse=True)[1], minlength=len(values)
+            )
+            return float(values[int(np.argmax(counts))])
+
+    if time is not None:
+        time = np.asarray(time, dtype=float)
+        starts = np.concatenate(([0], np.nonzero(time[1:] != time[:-1])[0] + 1))
+        if len(starts) > 1:
+            return float(np.median(np.diff(time[starts])))
+    return None
+
+
 def parse_scan_spec(spec):
     """Parse a CASA-style scan selection into a sorted list of scan numbers.
 
@@ -596,6 +688,57 @@ class DaskMS:
                     )
                 )
 
+    def _report_integrations(self):
+        """Report the integration structure of the MS, gap-tolerantly.
+
+        Integrations are counted via :func:`group_integrations` rather than by
+        counting distinct TIME values, so an integration whose rows were
+        stamped with more than one TIME value counts once instead of twice.
+        Groups holding fewer rows than a complete baseline set are called out:
+        that is the shape of the "incomplete integration group" warning, and it
+        is worth knowing about before time averaging.
+        """
+        if "TIME" not in self.ds.data_vars:
+            return
+        time = self.ds.TIME.data.compute()
+        if time.size == 0:
+            return
+
+        groups = group_integrations(time)
+        counts = np.array([end - start for start, end in groups])
+        print(f"    Integrations: {len(groups)}")
+
+        starts = np.array([start for start, _ in groups])
+        if len(starts) > 1:
+            cadence = float(np.median(np.diff(time[starts])))
+            print("    Integration cadence: %.3f s" % cadence)
+
+        # Number of baselines in a complete integration, autos included.  A
+        # group smaller than this has lost baselines (from flagging + optimize,
+        # or because it is a subset of the MS).
+        nant = None
+        for sub in self.sub_table_names:
+            if sub.endswith("/ANTENNA"):
+                try:
+                    at = table(sub, ack=False)
+                    nant = at.nrows()
+                    at.close()
+                except Exception:
+                    nant = None
+                break
+        if nant:
+            complete = nant * (nant + 1) // 2
+            # Only meaningful if the MS actually holds full integrations;
+            # a deliberately reduced MS (a single field, say) has smaller ones.
+            if counts.max() >= complete:
+                n_short = int((counts < complete).sum())
+                if n_short:
+                    print(
+                        "    Incomplete integration groups: %d/%d"
+                        " (fewer than %d baselines)"
+                        % (n_short, len(groups), complete)
+                    )
+
     def summary(self):
         num_flagged = da.sum(self.ds.FLAG)
         rows_flagged = da.sum(self.ds.FLAG_ROW)
@@ -732,11 +875,15 @@ class DaskMS:
                 )
 
             if "INTERVAL" in self.ds.data_vars:
-                dt_current = float(self.ds.INTERVAL.data[0].compute())
-                print("    Current integration time: %.1f s" % dt_current)
+                dt_current = integration_interval(self.ds.INTERVAL.data.compute())
+                if dt_current is not None:
+                    print("    Current integration time: %.1f s" % dt_current)
             elif "EXPOSURE" in self.ds.data_vars:
-                dt_current = float(self.ds.EXPOSURE.data[0].compute())
-                print("    Current integration time: %.1f s" % dt_current)
+                dt_current = integration_interval(self.ds.EXPOSURE.data.compute())
+                if dt_current is not None:
+                    print("    Current integration time: %.1f s" % dt_current)
+
+            self._report_integrations()
 
         # Field listing
         print("    Fields:")

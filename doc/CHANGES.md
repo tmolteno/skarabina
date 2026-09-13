@@ -3,6 +3,41 @@
 
 ## [Unreleased]
 
+## [0.8.6]
+
+### Added
+
+- **Gap-tolerant integration grouping (the default).**  Some MS writers stamp a
+  single integration's rows with more than one `TIME` value, splitting one
+  integration into two partial groups.  Grouping rows by "`TIME` changed" then
+  reports integrations that look incomplete — on a MeerKAT MT0 file, 4 of 440
+  integrations were split, with offsets of exactly 1.000 s and part sizes of
+  333+1378, 1480+231, 1539+172 and 1276+435 rows, each pair summing to the full
+  1711 baselines for 58 antennas.  No data is missing: the parts hold disjoint
+  baseline sets that together are the whole integration, and the second part is
+  the baselines *within* a k-antenna subset.  `--summary` now groups
+  integrations with `group_integrations()`, which estimates the cadence from
+  the median spacing of distinct `TIME` values and extends a group across any
+  `TIME` change closer than half that cadence.  Intra-integration offsets are
+  far below the cadence (1.0 s against 8.0 s), so the parts are re-united while
+  genuine integrations stay separate.  On the MT0 file the reported count
+  becomes 436 rather than 440.
+- **Integration structure reported by `--summary`.**  The summary now prints the
+  number of integrations (`Integrations: 436`) and the cadence (`Integration
+  cadence: 7.997 s`), and calls out `Incomplete integration groups` when an MS
+  that does hold full integrations has groups short of a complete baseline set.
+  A deliberately reduced MS — a single field, say — is not flagged, because its
+  groups are smaller by construction.
+
+### Fixed
+
+- **`--summary` no longer takes the integration time from row 0.**
+  `INTERVAL`/`EXPOSURE` was read from the first row, so a split integration
+  whose first row carried a shortened interval reported 6.0 s instead of the
+  nominal 8.0 s — which changes whether the observation appears to exceed the
+  fringe-rotation limit.  The nominal (most common) value is now used, falling
+  back to the median spacing of distinct `TIME` values.
+
 ## [0.8.5]
 
 ### Added

@@ -41,7 +41,16 @@ $$ \Delta t_\text{max} = \frac{c \cdot \sqrt{6L}}{\pi \cdot \omega_\oplus \cdot 
 The `summary()` function reports:
 - Δt<sub>max</sub> for 1%, 3%, and 5% loss using the MS's maximum UV distance
   and highest channel frequency.
-- The current integration time from the MS's `INTERVAL` or `EXPOSURE` column.
+- The current integration time: the nominal (most common) value of the MS's
+  `INTERVAL` or `EXPOSURE` column.  It is deliberately not taken from the first
+  row, because an MS whose writer split an integration can carry a shortened
+  interval there (6.0 s instead of 8.0 s on a real MeerKAT file).
+- The number of integrations and the observing cadence, grouped gap-tolerantly:
+  some writers stamp one integration's rows with more than one `TIME` value, so
+  counting distinct `TIME` values over-counts.  See the 0.8.6 changelog entry.
+  Integrations short of a complete baseline set are reported as
+  `Incomplete integration groups`, which is worth checking before time
+  averaging.
 
 `--field-of-view` is the **full width** of the field of view (default 1°), the same
 convention as `skarabina-analyze --image-fov`.  ℓ -- the distance from the phase
