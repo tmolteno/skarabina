@@ -124,6 +124,85 @@ Where `spectral-flags.yml` defines frequency ranges to flag:
   uv_below: 600
 ```
 
+#### The order of the `flag` list is the order it runs
+
+`flag` is an ordered list, and an operation that is not listed does not run.
+Order is not cosmetic: `spectral-window` counts the live flags to decide which
+channels are dead, so anything listed before it changes what it does, and a
+`save:` marker must come before the operations it is meant to undo.
+
+```yaml
+steps:
+  flag:
+    cab: skarabina
+    params:
+      ms: =recipe.ms
+      flag:
+        - "save:raw"                  # snapshot the input as it stands
+        - "autos"                     # flag autocorrelations
+        - "uv-above 4000"             # then long baselines
+        - "nan"
+        - "clip 0 100"                # clip what NaN flagging left behind
+        - "spectral-window bands.yml" # last: it reads the flags above
+        - "save:cleaned"
+      msout: flagged.ms
+      clobber: true
+```
+
+A single string may hold a comma-separated run, and both forms mix freely, so
+these two are equivalent:
+
+```yaml
+      flag:
+        - "autos, uv-above 4000"
+        - "nan, clip 0 100"
+```
+
+```yaml
+      flag:
+        - "autos"
+        - "uv-above 4000"
+        - "nan"
+        - "clip 0 100"
+```
+
+Commas inside brackets are not separators, so a `spectral-window` rule file
+stays one entry, and paths containing spaces can be quoted.
+
+For a long sequence, or one shared between recipes, `flag-file` reads the
+entries from a file instead. It takes a YAML list or one entry per line with
+`#` comments, may be given more than once, and its entries run before those in
+`flag`:
+
+```yaml
+steps:
+  flag:
+    cab: skarabina
+    params:
+      ms: =recipe.ms
+      flag:
+        - "spectral-window bands.yml"   # runs after the file's entries
+      flag-file:
+        - flags/rfi.txt
+        - flags/known-bad.yml
+      msout: flagged.ms
+      clobber: true
+```
+
+with `flags/rfi.txt`:
+
+```text
+# persistent RFI and a receiver artefact
+spectral-window bands.yml
+clip 0 100
+nan
+```
+
+Every run names each operation as it executes, in order, so the console output
+records which sequence was used. The grammar, the migration from the 0.8.x
+options and the measurements behind it are in
+[`doc/NEW_FLAGGING.md`](../doc/NEW_FLAGGING.md).
+
 #### Flag versions (backups)
 
 `save:` and `restore:` entries in the `flag` list back up and restore flags,
