@@ -82,11 +82,20 @@ cabs:
           listed does not run. See doc/NEW_FLAGGING.md in the skarabina
           distribution.
         required: true
+        # scabha refuses a list-typed input with no repeat policy, so without
+        # this the cab cannot be used at all.  "repeat" matches the CLI, which
+        # takes --flag once per entry (and accepts a comma-separated run in any
+        # one of them).
+        policies:
+          repeat: repeat
       flag-file:
-        dtype: Union[File, None]
+        dtype: List[File]
         info: >-
           Read flagging operations from a file: a YAML list, or one entry per
-          line with '#' comments. Runs before the entries in 'flag'.
+          line with '#' comments. Runs before the entries in 'flag'. May be
+          given more than once; the files are read in order.
+        policies:
+          repeat: repeat
       # field:
       #     dtype: List[int]
       #     info: Use this FIELD_ID from the measurement set

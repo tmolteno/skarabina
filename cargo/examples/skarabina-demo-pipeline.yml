@@ -55,8 +55,13 @@ demo-imaging-pipeline:
       skip_if_outputs: fresh
       params:
         ms: =recipe.ms
+        # One YAML list entry per operation, in the order they run.  A single
+        # entry may also hold a comma-separated run ("nan, clip 0 100"), and
+        # both forms mix.  An operation not listed here does not run.
         flag:
-          - "nan, clip 0 100, uv-above 1000"
+          - nan
+          - clip 0 100
+          - uv-above 1000
         time-average-factor: 3
         frequency-average-factor: 20
         optimize: true

@@ -239,3 +239,45 @@ def test_release_versions_are_consistent():
         f"image={image_version}"
     )
     assert not image_version.startswith("v"), "image tag must not carry a 'v' prefix"
+
+
+def test_list_inputs_declare_a_repeat_policy(schemas):
+    """Every list-typed input needs a repeat policy, or the cab is unusable.
+
+    scabha's CLI builder raises "list-type parameter '<name>' does not have a
+    repeat policy set" when it meets a ``List[...]`` input without one, and that
+    error only fires when a recipe actually passes the parameter -- so a schema
+    with the omission loads, renders its docs, and passes every other test here
+    while being impossible to run.  That is exactly how the ordered ``flag``
+    list shipped broken, hence this check.
+
+    ``repeat: repeat`` is the policy matching these cabs: the CLI takes the
+    option once per list element.
+    """
+    checked = 0
+    for cab_name, cab in schemas.cabs.items():
+        for name, schema in (cab.get("inputs") or {}).items():
+            if not str(schema.get("dtype", "")).startswith("List["):
+                continue
+            checked += 1
+            policies = schema.get("policies") or {}
+            assert policies.get("repeat"), (
+                f"cab '{cab_name}' input '{name}' is a list type with no repeat"
+                " policy; scabha will refuse it at run time"
+            )
+    assert checked, "no list-typed inputs found -- this test would pass vacuously"
+
+
+def test_flag_list_accepts_the_documented_yaml_form(schemas):
+    """A recipe must be able to write the flagging sequence as a YAML list.
+
+    This is the ergonomic form from the README and the release notes, so it is
+    pinned here rather than left implied by the repeat policy."""
+    flag = schemas.cabs["skarabina"].inputs["flag"]
+    assert str(flag.dtype) == "List[str]"
+    assert flag.get("required") is True
+    assert (flag.get("policies") or {}).get("repeat") == "repeat"
+    # the documented verbs must be named in the info text a user reads
+    info = str(flag.get("info", ""))
+    for verb in ("autos", "nan", "clip", "uv-above", "spectral-window", "save:"):
+        assert verb in info, f"flag info does not mention '{verb}'"

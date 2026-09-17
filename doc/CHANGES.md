@@ -48,6 +48,23 @@ substance and is recorded below it.
 - **``--flag-file``** for long sequences, and the ``flag`` / ``flag-file``
   inputs on the ``skarabina`` stimela cab, replacing its removed flagging
   inputs.  ``barber`` and ``barber.pol`` are unchanged on the cab.
+  Both are list-typed inputs and carry ``policies.repeat: repeat``, so a recipe
+  can give the flagging sequence as an ordinary YAML list:
+
+  ```yaml
+  flag:
+    - autos
+    - nan
+    - uv-above 4000
+  ```
+
+  **This was broken on the cab until it was run.**  scabha refuses a list-typed
+  input with no repeat policy — "list-type parameter 'flag' does not have a
+  repeat policy set" — and it does so only when a recipe actually passes the
+  parameter.  The schema loaded, `stimela doc` rendered it, and every schema
+  test passed, while the cab could not be used at all.  `cargo/tests/
+  test_schema.py` now asserts the policy on every list-typed input, and that
+  check was confirmed to fail when the policy is removed.
 - **``--write-changed-only``** for the ``--msout`` path.  A flagging run changes
   ``FLAG`` and nothing else, yet writing an output MS re-reads and rewrites every
   column: on a 92 GB measurement set a flagging run writes 103 GB through the
