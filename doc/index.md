@@ -17,8 +17,8 @@ flagging of measurement sets.
 pip install skarabina
 
 # Flag and write a cleaned MS
-skarabina --ms raw.ms --flag-nan --flag-uv-above 4000 \
-    --flag-spectral-window spectral-flags.yml \
+skarabina --ms raw.ms \
+    --flag "nan, uv-above 4000, spectral-window spectral-flags.yml" \
     --time-average-factor 3 --optimize --msout clean.ms --clobber
 
 # Analyze a measurement set

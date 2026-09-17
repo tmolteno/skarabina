@@ -51,7 +51,7 @@ docker run --rm -it -v $(pwd):/data \
 docker run --rm -it -v $(pwd):/data \
     ghcr.io/tmolteno/skarabina:latest run \
     --ms /data/myobs.ms \
-    --flag-nan --flag-clip 0,10 --flag-uv-above 250 \
+    --flag "nan, clip 0 10, uv-above 250" \
     --msout /data/myobs_flagged.ms --clobber
 ```
 

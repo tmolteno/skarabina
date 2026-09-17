@@ -38,9 +38,8 @@ my-recipe:
       cab: skarabina
       params:
         ms: =recipe.ms
-        flag-autos: true
-        flag-nan: true
-        flag-uv-above: 4000
+        flag:
+          - "autos, nan, uv-above 4000"
         time-average-factor: 3
         optimize: true
         msout: cleaned.ms
@@ -69,7 +68,8 @@ steps:
     params:
       ms: =recipe.ms
       scan: "1,12,14"
-      flag-nan: true
+      flag:
+        - "nan"
       frequency-average-factor: 8
       msout: kept.ms
       clobber: true
@@ -89,7 +89,8 @@ steps:
     cab: skarabina
     params:
       ms: =recipe.ms
-      flag-nan: true
+      flag:
+        - "nan"
       msout: target.ms
       split: "J0159.0-3413"
       clobber: true
@@ -103,7 +104,8 @@ steps:
     cab: skarabina
     params:
       ms: =recipe.ms
-      flag-spectral-window: spectral-flags.yml
+      flag:
+        - "spectral-window spectral-flags.yml"
       msout: spw-flagged.ms
 ```
 
@@ -124,8 +126,10 @@ Where `spectral-flags.yml` defines frequency ranges to flag:
 
 #### Flag versions (backups)
 
-`flag-save-before` and `flag-restore-before` back up and restore flags, in the
-same `<ms>.flagversions/` layout CASA's `flagmanager` uses:
+`save:` and `restore:` entries in the `flag` list back up and restore flags,
+in the same `<ms>.flagversions/` layout CASA's `flagmanager` uses.  Because a
+marker acts on the flag state where it appears in the sequence, ordering the
+markers is what makes a sequence of snapshots meaningful:
 
 ```yaml
 steps:
@@ -133,9 +137,8 @@ steps:
     cab: skarabina
     params:
       ms: =recipe.ms
-      flag-save-before: pre-flagging   # back up before touching anything
-      flag-autos: true
-      flag-nan: true
+      flag:
+        - "save:pre-flagging, autos, nan"   # back up, then flag
       msout: flagged.ms
       clobber: true
 
@@ -143,19 +146,47 @@ steps:
     cab: skarabina
     params:
       ms: =steps.flag.msout
-      flag-restore-before: pre-flagging   # restore, then write it out
+      flag:
+        - "restore:pre-flagging"   # restore, then write it out
       msout: restored.ms
       clobber: true
 ```
 
-Both act before any flagging runs, and restore is applied before save, so
-combining them re-labels a version.  Because the backup is taken from the MS on
-disk, a version is restorable even when the step works on a row selection.
+A version is taken from the MS on disk, so it is restorable even when the step
+works on a row selection.  An existing version name is moved aside as
+`<name>.old.<timestamp>`, matching `flagmanager`.
 
 A version written here can be listed and restored by CASA, and one written by
 CASA can be restored by skarabina:
 
     flagmanager('flagged.ms', mode='list')
+
+#### Avoiding the full copy on write
+
+`msout` copies every column.  For a flagging-only run that is almost all waste:
+measured on a 92 GB measurement set, a full copy writes 103 GB while a flagging
+run changes 6.1 GB.  Set `write-changed-only` to hard-link the unchanged
+columns into the output and write only the columns that changed:
+
+```yaml
+steps:
+  flag:
+    cab: skarabina
+    params:
+      ms: =recipe.ms
+      flag:
+        - "autos, nan, clip 0 100"
+      msout: flagged.ms
+      write-changed-only: true
+      clobber: true
+```
+
+It needs the input and output on the same filesystem, and it saves *writes*
+only — the output is still read through dask-ms, which loads the whole MS to
+write it.  Where reading dominates, `apply` is the cheaper option: it edits in
+place and writes only the changed columns, so pair it with `save:` for
+rollback.  `write-changed-only` is for the cases where the input must stay
+untouched.
 
 ### skarabina-analyze cab
 
@@ -227,7 +258,8 @@ steps:
     cab: skarabina
     params:
       ms: =recipe.ms
-      flag-nan: true
+      flag:
+        - "nan"
       msout: cleaned.ms
       clobber: true
 

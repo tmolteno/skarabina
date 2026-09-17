@@ -7,24 +7,9 @@ from types import SimpleNamespace
 import click
 from angle_parser import parse_angle
 
-from skarabina import barber, dask_ms
+from skarabina import barber, dask_ms, flag_ops
 
 logger = logging.getLogger(__name__)
-
-
-def build_flag_data_operations(flag_nan, flag_clip):
-    """Build the :meth:`DaskMS.flag_data` operation mapping.
-
-    ``--flag-nan`` and ``--flag-clip`` are independent switches: NaN
-    flagging is requested explicitly, and amplitude clipping only happens
-    when bounds are supplied.
-    """
-    operations = {}
-    if flag_nan:
-        operations["NAN"] = True
-    if flag_clip is not None:
-        operations["CLIP"] = tuple(flag_clip)
-    return operations
 
 
 @click.command("skarabina")
@@ -37,6 +22,16 @@ def build_flag_data_operations(flag_nan, flag_clip):
 )
 @click.option("--msout", default=None, help="Output measurement set")
 @click.option(
+    "--write-changed-only",
+    is_flag=True,
+    default=False,
+    help="With --msout, share the input's unchanged column blocks with the"
+    " output and write only the columns that changed. Avoids re-reading and"
+    " rewriting the whole MS for a flagging run. Requires the same row and"
+    " channel shape as the input, and the same filesystem for the sharing to"
+    " take effect",
+)
+@click.option(
     "--summary", is_flag=True, default=False, help="Print the flagging summary"
 )
 @click.option(
@@ -44,6 +39,15 @@ def build_flag_data_operations(flag_nan, flag_clip):
     is_flag=True,
     default=False,
     help="Optimize measurement set size while keeping rows of equal length",
+)
+@click.option(
+    "--keep-fully-flagged-channels",
+    is_flag=True,
+    default=False,
+    help="With --optimize, keep channels whose visibilities are all flagged"
+    " instead of removing them. Flagging already excludes them from imaging,"
+    " so keeping them only costs file size -- but it avoids splitting the band"
+    " with a hole that SPECTRAL_WINDOW cannot record",
 )
 @click.option(
     "--time-average-factor",
@@ -71,30 +75,24 @@ def build_flag_data_operations(flag_nan, flag_clip):
     help="Apply flags in-place (update the input MS)",
 )
 @click.option(
-    "--flag-uv-above",
-    type=float,
-    default=None,
-    help="Flag UVW above this limit (in meters)",
+    "--flag",
+    "flag_specs",
+    multiple=True,
+    metavar="ENTRY[, ENTRY...]",
+    help="A flagging operation, or a comma-separated run of them, in the"
+    " order they should run. Repeatable; occurrences are concatenated."
+    " Verbs: autos, uv-above <metres>, nan, clip <lo> <hi>,"
+    " spectral-window <file.yml>, and the markers save:<name> / restore:<name>."
+    " See doc/NEW_FLAGGING.md.",
 )
 @click.option(
-    "--flag-autos",
-    is_flag=True,
-    default=False,
-    help="Flag autocorrelation visibilities (ANTENNA1 == ANTENNA2)",
-)
-@click.option("--flag-nan", is_flag=True, default=False, help="Flag NaN visibilities")
-@click.option(
-    "--flag-clip",
-    type=float,
-    nargs=2,
-    default=None,
-    help="Flag visibilities outside [lo, hi] range",
-)
-@click.option(
-    "--flag-spectral-window",
-    type=click.Path(exists=True, dir_okay=False),
-    default=None,
-    help="YAML file with spectral window flagging rules",
+    "--flag-file",
+    "flag_files",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+    metavar="FILE",
+    help="Read --flag entries from a file: a YAML list, or one entry per line"
+    " with '#' comments. Concatenated with --flag in the order given.",
 )
 @click.option("--debug", is_flag=True, default=False, help="Switch on debugging output")
 @click.option(
@@ -112,23 +110,6 @@ def build_flag_data_operations(flag_nan, flag_clip):
     default=None,
     help="When writing (--msout), keep only this field's rows"
     " (field name or numeric FIELD_ID)",
-)
-@click.option(
-    "--flag-restore-before",
-    type=str,
-    default=None,
-    metavar="VERSIONNAME",
-    help="Restore this saved flag version before doing anything else"
-    " (CASA flagmanager layout; see --flag-save-before)",
-)
-@click.option(
-    "--flag-save-before",
-    type=str,
-    default=None,
-    metavar="VERSIONNAME",
-    help="Save the current flags as VERSIONNAME before flagging, as a"
-    " CASA-compatible flag version under <ms>.flagversions/"
-    " (list them with CASA flagmanager mode='list')",
 )
 @click.version_option(
     version=get_version("skarabina"),
@@ -162,52 +143,30 @@ def main(**kw):
     # phase centre to the edge of the field.
     ms._fov_rad = parse_angle(fov_str)
 
-    # --- Flag versions (before anything else touches the flags) ---
+    # --- Flagging: the --flag list IS the run ---
     #
-    # --flag-restore-before runs first, so that --flag-save-before captures the
-    # restored state: restore an earlier version and then back it up under a new
-    # name in a single pass.  Both act on the whole MS, before --scans selects
-    # rows, so that restore sees the same row set the version was saved from.
+    # The entries are the operations, in the order they will run, so there is no
+    # separate "enable" step and no hidden canonical order.  Statistics for the
+    # data-flagging steps are deferred into one dask pass (see flag_ops.run), so
+    # a long sequence reads the data column once rather than once per step.
 
-    if opts.flag_restore_before is not None:
-        print(f"flag_restore_before: {opts.flag_restore_before}")
-        ms.restore_flag_version(opts.flag_restore_before)
+    flag_specs = list(opts.flag_specs)
+    for path in opts.flag_files:
+        flag_specs.extend(flag_ops.load_file(path))
+    ops = flag_ops.parse(flag_specs)
 
-    if opts.flag_save_before is not None:
-        print(f"flag_save_before: {opts.flag_save_before}")
-        ms.save_flag_version(
-            opts.flag_save_before,
-            comment="Saved by skarabina before flagging on %s"
-            % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        )
+    if not ops:
+        print("No flagging operations requested (--flag was not given)")
 
-    # --- Row selection (must precede flagging and averaging) ---
-
+    # Row selection precedes the sequence: a version saved after a scan
+    # selection would hold only the selected rows and could never be restored.
+    # With no 'scan' verb in --flag, doing it here keeps --scan's documented
+    # meaning ("keep only these scans") without needing a token for it.
     if opts.scan is not None:
         print(f"scan selection: {opts.scan!r}")
         ms.select_scans(opts.scan)
 
-    # --- Flagging operations (order-independent) ---
-
-    if opts.flag_autos:
-        print("flag_autos")
-        ms.flag_autocorrelations()
-
-    if opts.flag_uv_above is not None:
-        print(f"uv_above {opts.flag_uv_above} m")
-        ms.flag_uv_above(opts.flag_uv_above)
-
-    flag_data_operations = build_flag_data_operations(
-        opts.flag_nan, opts.flag_clip
-    )
-    if "CLIP" in flag_data_operations:
-        print(f"flag_clip {opts.flag_clip}")
-
-    ms.flag_data(flag_data_operations)
-
-    if opts.flag_spectral_window is not None:
-        print(f"flag_spectral_window: {opts.flag_spectral_window}")
-        ms.flag_spectral_window(opts.flag_spectral_window)
+    flag_ops.run(ms, ops)
 
     # --- Row removal / averaging (MUST be last before writing) ---
 
@@ -226,7 +185,7 @@ def main(**kw):
                 " Add --msout PATH to write a new MS or --apply to"
                 " update the input MS in place."
             )
-        ms.optimize()
+        ms.optimize(keep_fully_flagged_channels=opts.keep_fully_flagged_channels)
 
     # --- Read-only reports (after all processing) ---
 
@@ -239,6 +198,11 @@ def main(**kw):
     # --- Write output ---
 
     if opts.msout:
-        ms.write_new_ms(opts.msout, opts.clobber, split=opts.split)
+        ms.write_new_ms(
+            opts.msout,
+            opts.clobber,
+            split=opts.split,
+            changed_only=opts.write_changed_only,
+        )
     elif opts.apply:
         ms.update_ms(opts.ms, opts.clobber)

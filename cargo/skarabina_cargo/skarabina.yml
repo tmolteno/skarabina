@@ -28,27 +28,21 @@ cabs:
           When writing the output MS, keep only this field's rows (a field
           name or a numeric FIELD_ID). Applied at save time, after flagging,
           averaging and optimization.
-      flag-restore-before:
-        dtype: Union[str, None]
-        info: >-
-          Restore this saved flag version before doing anything else. Versions
-          live in <ms>.flagversions, in the layout CASA's flagmanager uses, so
-          a version saved by this cab can be listed or restored by CASA and
-          vice versa.
-      flag-save-before:
-        dtype: Union[str, None]
-        info: >-
-          Save the flags of the input MS as this version name before any
-          flagging runs, as a CASA-compatible backup under <ms>.flagversions.
-          Backs up the whole MS, so the version stays restorable regardless of
-          any row selection. An existing version of the same name is moved
-          aside as <name>.old.<timestamp>.
       summary:
         dtype: bool
         info: Print the flagging summary
       optimize:
         dtype: bool
         info: Optimize the size of the measurement set while keeping all rows of equal length.
+      keep-fully-flagged-channels:
+        dtype: bool
+        info: >-
+          With optimize, keep channels whose visibilities are all flagged
+          instead of removing them. Flagging already excludes them from
+          imaging, so keeping them only costs file size -- but removing one
+          from the middle of the band leaves a hole that SPECTRAL_WINDOW cannot
+          record, so keeping them is the safer choice when the output feeds
+          other tools.
       time-average-factor:
         dtype: int
         info: Combine every N consecutive rows by averaging UVW and visibility data. Must run before optimize.
@@ -60,6 +54,15 @@ cabs:
       clobber:
         dtype: bool
         info: Replace the output measurement set
+      write-changed-only:
+        dtype: bool
+        info: >-
+          With msout, share the input's unchanged column blocks with the output
+          and write only the columns that changed, instead of copying every
+          column. Avoids re-reading and rewriting the whole MS for a flagging
+          run. Requires the same row and channel shape as the input, and the
+          same filesystem for the sharing to take effect; apply is still
+          cheaper when the input may be modified.
       barber:
         dtype: bool
         info: Perform barber flagging (removes fringes in a jiffy)
@@ -68,27 +71,22 @@ cabs:
         info: Polarization selection for barber.
       apply:
         dtype: bool
-      flag-autos:
-        dtype: bool
+      flag:
+        dtype: List[str]
         info: >-
-          Flag autocorrelation visibilities (ANTENNA1 == ANTENNA2).  Auto
-          baselines measure the total power of one antenna, carry no fringe
-          information and are normally excluded from imaging and calibration;
-          their FLAG_ROW bits are set as well, so optimize can drop the rows.
-      flag-nan:
-        dtype: bool
-        info: Flag NaN visibilities (off unless requested)
-      flag-clip:
-        dtype: Tuple[float, float]
-        info: Flag visibilities outside [lo, hi] amplitude range
-        policies:
-          repeat: "list"
-      flag-uv-above:
-        dtype: float
-        info: Flag baselines longer than this limit (metres)
-      flag-spectral-window:
-        dtype: File
-        info: YAML file with spectral window flagging rules
+          Flagging operations, in the order they should run. Each entry is
+          'verb [args]': autos, uv-above <metres>, nan, clip <lo> <hi>,
+          spectral-window <rules.yml>, or the markers save:<name> /
+          restore:<name>. Commas inside brackets are not separators, so
+          'spectral-window' takes a file. The list is the run: an operation not
+          listed does not run. See doc/NEW_FLAGGING.md in the skarabina
+          distribution.
+        required: true
+      flag-file:
+        dtype: Union[File, None]
+        info: >-
+          Read flagging operations from a file: a YAML list, or one entry per
+          line with '#' comments. Runs before the entries in 'flag'.
       # field:
       #     dtype: List[int]
       #     info: Use this FIELD_ID from the measurement set
@@ -166,7 +164,24 @@ cabs:
         info: Lowest channel frequency, in Hz
       bandwidth_hz:
         dtype: float
-        info: Total bandwidth (highest minus lowest channel frequency), in Hz
+        info: >-
+          Spectrum recorded, in Hz: the sum of the channel widths. Equals
+          span_hz plus half a channel at each end for a contiguous band.
+      span_hz:
+        dtype: float
+        info: >-
+          Highest minus lowest channel frequency, in Hz. Includes any hole left
+          by removed channels.
+      channel_width_hz:
+        dtype: float
+        info: >-
+          Width of one channel, in Hz, read from the subtable (CHAN_WIDTH or
+          RESOLUTION) rather than derived from the band span.
+      band_has_gaps:
+        dtype: bool
+        info: >-
+          True when the channels are not contiguous: a hole left by removed
+          channels, or more than one spectral window.
       num_channels:
         dtype: int
         info: Number of channels per spectral window

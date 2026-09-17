@@ -3,4 +3,4 @@ vars:
   skarabina-cargo:
     images:
       registry: ghcr.io/tmolteno
-      version: 0.8.7
+      version: 1.0.0

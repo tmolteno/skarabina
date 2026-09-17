@@ -55,9 +55,8 @@ demo-imaging-pipeline:
       skip_if_outputs: fresh
       params:
         ms: =recipe.ms
-        flag-nan: true
-        flag-clip: [0, 100]
-        flag-uv-above: 1000
+        flag:
+          - "nan, clip 0 100, uv-above 1000"
         time-average-factor: 3
         frequency-average-factor: 20
         optimize: true
