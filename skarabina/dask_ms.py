@@ -47,6 +47,73 @@ def _maybe_quiet_stderr():
                 sys.stderr = old_stderr
 
 
+# Single source of truth for time-average smearing: both the flagger's summary
+# and skarabina-analyze quote the same limit, so the constant and the loss
+# criterion live here and nowhere else.
+C_MS = 299792458.0
+OMEGA_EARTH = 7.2921150e-5
+# Default criterion for the reported limit: the longest integration whose
+# time-average smearing costs at most this fraction of the amplitude at the
+# edge of the field.  Expressed as a loss, not as a sinc argument, so the
+# number means what its label says.
+TIME_AVERAGE_LOSS = 0.10
+
+
+def time_average_smearing_loss(dt_s, nu_hz, uv_m, theta_rad):
+    """Fractional amplitude lost to time-average smearing.
+
+    A visibility at angular distance ``theta_rad`` from the phase centre has
+    delay ``τ = B·θ/c``; the Earth's rotation sweeps θ during an integration, so
+    the residual phase sweeps by ``2π·x`` with
+
+        x = ω_⊕ · Δt · B · ν · θ / c
+
+    Averaging the phasor over the integration leaves the fringe-washing factor
+
+        ρ = sinc(π·x) = sin(πx)/(πx)
+
+    and this returns the loss ``1 − ρ``.  (Checked against a direct numerical
+    average of the phasor in real units: the two agree to ~1e-6 over
+    0 < x < 0.7, the range these limits live in.)  Inverse of
+    :func:`time_average_loss_to_dt`; keep the two in step.
+    """
+    x = OMEGA_EARTH * float(dt_s) * float(uv_m) * float(nu_hz) * float(theta_rad) / C_MS
+    if x == 0.0:
+        return 0.0
+    return 1.0 - math.sin(math.pi * x) / (math.pi * x)
+
+
+def time_average_loss_to_dt(loss, nu_hz, uv_m, theta_rad):
+    """Longest integration whose smearing loss stays at or below ``loss``.
+
+    The inverse of :func:`time_average_smearing_loss`: solve
+    ``sinc(π·x) = 1 − L`` for the first crossing and return the corresponding
+    Δt.  Inverting the relation exactly rather than through the small-angle
+    form keeps the criterion meaning what it says at any loss: the usual
+    ``x ≈ √(6L)/π`` is 1.5% low at L = 0.1 and 3.7% low at L = 0.2.
+    """
+    loss = float(loss)
+    if uv_m <= 0 or nu_hz <= 0 or theta_rad <= 0:
+        return float("inf")
+    if loss <= 0.0:
+        return 0.0
+    if loss >= 1.0:
+        return float("inf")
+
+    # First positive root of sinc(pi*x) = 1 - loss, by bisection on (0, 1).
+    target = 1.0 - loss
+    lo, hi = 1e-12, 1.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if math.sin(math.pi * mid) / (math.pi * mid) > target:
+            lo = mid
+        else:
+            hi = mid
+    x = 0.5 * (lo + hi)
+
+    return x * C_MS / (OMEGA_EARTH * float(uv_m) * float(nu_hz) * float(theta_rad))
+
+
 def max_integration_time(nu_max_hz, uv_max_m, fov_rad, loss=0.01):
     """Fringe-rotation integration-time limit for a full-width field of view.
 
@@ -55,24 +122,22 @@ def max_integration_time(nu_max_hz, uv_max_m, fov_rad, loss=0.01):
 
         ρ = sinc(π · ω_⊕ · Δt · B · ν · ℓ / c)
 
-    so for a small loss L = 1 − |ρ|
+    and this returns the longest Δt whose loss stays at or below ``loss``, i.e.
+    the inverse of that relation.  For small losses it approaches the familiar
 
         Δt_max = c · √(6L) / (π · ω_⊕ · B_max · ν_max · ℓ)
+
+    which is what earlier versions used; the exact inverse is 1.8% longer at
+    L = 0.01 and 15.5% longer at L = 0.1, and the small-angle value is the more
+    conservative of the two.
 
     ``fov_rad`` is the **full width** of the field of view, so ℓ -- the distance
     from the phase centre to its edge -- is half of it.  This is the same
     convention as ``skarabina-analyze --image-fov``.  Degenerate inputs return
     infinity.
     """
-    ell = float(fov_rad) / 2.0
-    if uv_max_m <= 0 or nu_max_hz <= 0 or ell <= 0:
-        return float("inf")
-    c_ms = 299792458.0
-    omega_earth = 7.2921150e-5
-    return (
-        c_ms
-        * (6.0 * loss) ** 0.5
-        / (math.pi * omega_earth * uv_max_m * nu_max_hz * ell)
+    return time_average_loss_to_dt(
+        loss, nu_max_hz, uv_max_m, float(fov_rad) / 2.0
     )
 
 
@@ -635,9 +700,17 @@ class DaskMS:
         self.ds["FLAG"].data = new_flags
         self.changed["FLAG"] = True
 
-    def flag_data(self, operations=None):
+    def flag_data(self, operations=None, defer=None):
         """
         flag_data: Flag all NAN visibilities.
+
+        ``defer`` lets a caller that runs several operations in sequence avoid
+        a full pass over ``DATA`` per operation.  Pass a dict; the reductions
+        are collected into it as ``defer[label] = (label, |data|, mask)`` and
+        nothing is computed.  The caller then evaluates them all at once with
+        :meth:`report_data_flags`, which shares the single ``abs(DATA)``
+        subgraph between every entry.  When ``defer`` is None the statistics are
+        computed and printed here, as before.
         """
         if operations is None:
             operations = {}
@@ -671,6 +744,15 @@ class DaskMS:
         if update:
             self.ds["FLAG"].data = clip_updated_flags
             self.changed["FLAG"] = True
+
+            if defer is not None:
+                # Collect for one shared evaluation; the caller owns the print.
+                if "NAN" in operations:
+                    defer[("nan",)] = abs_vis, nan_flag_mask
+                if "CLIP" in operations:
+                    defer[("clip", clip_min, clip_max)] = abs_vis, clip_flag_mask
+                return
+
             total_vis = da.prod(da.array(self.ds.FLAG.shape))
             n_nan_v, n_clip_v, total_v = dask.compute(n_nan, n_clip, total_vis)
             if "NAN" in operations:
@@ -687,6 +769,41 @@ class DaskMS:
                         int(n_clip_v),
                         int(total_v),
                         100.0 * int(n_clip_v) / int(total_v),
+                    )
+                )
+
+    def report_data_flags(self, defer):
+        """Evaluate and print the reductions collected by ``flag_data(defer=...)``.
+
+        One ``dask.compute`` covers every entry, so ``abs(DATA)`` — the
+        expensive part, and the only thing here that reads the data column — is
+        built once no matter how many operations were deferred.  This is what
+        keeps an ordered sequence of N operations at one pass over ``DATA``
+        instead of N.
+        """
+        if not defer:
+            return
+        reductions = [da.sum(mask) for _, mask in defer.values()]
+        total = da.prod(da.array(self.ds.FLAG.shape))
+        results = dask.compute(*reductions, total)
+        total_v = int(results[-1])
+        for (label, _), count in zip(defer.items(), results[:-1]):
+            kind = label[0]
+            if kind == "nan":
+                print(
+                    "flag_data (NaN): flagged %d / %d visibilities (%.2f%%)"
+                    % (int(count), total_v, 100.0 * int(count) / total_v)
+                )
+            else:
+                _, clip_min, clip_max = label
+                print(
+                    "flag_data (clip [%s, %s]): flagged %d / %d visibilities (%.2f%%)"
+                    % (
+                        clip_min,
+                        clip_max,
+                        int(count),
+                        total_v,
+                        100.0 * int(count) / total_v,
                     )
                 )
 
@@ -848,13 +965,40 @@ class DaskMS:
             nchan = len(self.chan_freq_hz)
             fmin = self.chan_freq_hz[0] / 1e6
             fmax = self.chan_freq_hz[-1] / 1e6
-            bw = fmax - fmin
-            print(
-                f"    Spectral windows: {self.nspw}"
-                f" (channels: {nchan},"
-                f" {fmin:.3f}–{fmax:.3f} MHz,"
-                f" bandwidth: {bw:.1f} MHz)"
-            )
+            span = fmax - fmin
+            widths = self.chan_width_hz
+            if widths is not None and len(widths) == nchan:
+                # Report the spectrum actually present (the sum of the channel
+                # widths), not the span between the band edges: those differ
+                # when --optimize has dropped channels from the middle of the
+                # band, and the span would then overstate the band.
+                bw = float(np.sum(widths)) / 1e6
+                chan_width = float(np.median(widths)) / 1e3
+                print(
+                    f"    Spectral windows: {self.nspw}"
+                    f" (channels: {nchan},"
+                    f" {fmin:.3f}–{fmax:.3f} MHz,"
+                    f" {chan_width:.1f} kHz each,"
+                    f" {bw:.1f} MHz of spectrum)"
+                )
+                gaps = np.diff(self.chan_freq_hz) > 0.5 * (
+                    np.asarray(widths)[1:] + np.asarray(widths)[:-1]
+                )
+                if gaps.any():
+                    hole = float(np.sum(np.diff(self.chan_freq_hz)[gaps])) - float(
+                        np.sum(np.asarray(widths)[1:][gaps])
+                    )
+                    print(
+                        f"    Band has holes: {hole / 1e6:.3f} MHz inside the"
+                        f" {span:.1f} MHz span is not covered by any channel"
+                    )
+            else:
+                print(
+                    f"    Spectral windows: {self.nspw}"
+                    f" (channels: {nchan},"
+                    f" {fmin:.3f}–{fmax:.3f} MHz,"
+                    f" bandwidth: {span:.1f} MHz)"
+                )
 
             # Fringe-rotation integration time limit (Wijnholds 2018, MNRAS).
             # Time averaging causes decorrelation that depends on baseline
@@ -870,7 +1014,11 @@ class DaskMS:
                 "    Max integration time (fringe-rotation limit,"
                 " FOV=%.2f deg full width):" % math.degrees(fov_rad)
             )
-            for loss_pc in (1, 3, 5):
+            # The 10% row is TIME_AVERAGE_LOSS, the criterion
+            # `skarabina-analyze` quotes as max_integration_time_s, so the two
+            # commands can be compared directly.
+            loss_pcts = sorted({1, 3, 5, int(round(TIME_AVERAGE_LOSS * 100))})
+            for loss_pc in loss_pcts:
                 print(
                     "        %d%% loss:  %5.1f s"
                     % (loss_pc, max_integration_time(nu_max, max_uv, fov_rad, loss_pc / 100.0))
@@ -1258,7 +1406,7 @@ class DaskMS:
         """The saved flag versions of this MS as ``[(name, comment), ...]``."""
         return flag_versions.list_versions(self.name)
 
-    def optimize(self):
+    def optimize(self, keep_fully_flagged_channels=False):
         """
         Run through the flags, and remove all completely flagged rows
         and channels.
@@ -1270,6 +1418,13 @@ class DaskMS:
 
         A channel is removed if all rows and all correlations are flagged
         for that channel (e.g. after flag_spectral_window).
+
+        ``keep_fully_flagged_channels`` keeps those dead channels in the data
+        instead.  Flagging already excludes them from imaging, so dropping them
+        buys file size and nothing else -- and when a dead channel sits inside
+        the band rather than at its edge, dropping it leaves a hole that no
+        SPECTRAL_WINDOW column records (see :meth:`_warn_about_band_holes`).
+        Keeping them is the safer choice when the output feeds other tools.
         """
         print("Remove all flagged rows and channels...")
 
@@ -1287,7 +1442,12 @@ class DaskMS:
         # Combined: a row is removed if EITHER condition is true
         is_flagged = da.logical_or(row_flagged, all_data_flagged)
         unflagged_rows = da.logical_not(is_flagged)
-        keep_channels = da.logical_not(chan_fully_flagged)
+        if keep_fully_flagged_channels:
+            # Keep every channel; the flags already exclude the dead ones from
+            # any image, and keeping them keeps the band contiguous.
+            keep_channels = da.ones_like(chan_fully_flagged, dtype=bool)
+        else:
+            keep_channels = da.logical_not(chan_fully_flagged)
 
         # Compute all statistics in one pass
         n_overlap = da.sum(da.logical_and(row_flagged, all_data_flagged))
@@ -1327,7 +1487,16 @@ class DaskMS:
             )
 
         if int(n_chan_flagged) == int(n_chan_total):
-            raise RuntimeError("All channels fully flagged — nothing to write")
+            if keep_fully_flagged_channels:
+                # Every channel is dead but we are keeping them: the output is
+                # fully flagged, which is a legitimate (if useless) MS, so warn
+                # rather than refuse.
+                print(
+                    "WARNING: every channel is fully flagged; the output MS is"
+                    " entirely flagged"
+                )
+            else:
+                raise RuntimeError("All channels fully flagged — nothing to write")
 
         # Find dimension names from DATA (typically "row", "chan")
         row_dim = self.ds.DATA.dims[0]
@@ -1336,7 +1505,8 @@ class DaskMS:
         # Build indexers for rows and channels.  Compute both masks in a
         # SINGLE dask pass (the channel mask is only needed when at least
         # one channel is fully flagged).
-        if int(n_chan_flagged) > 0:
+        drop_channels = int(n_chan_flagged) > 0 and not keep_fully_flagged_channels
+        if drop_channels:
             keep_row_mask, keep_chan_mask = dask.compute(
                 unflagged_rows, keep_channels
             )
@@ -1353,12 +1523,13 @@ class DaskMS:
         # Removing channels must also drop them from the SPECTRAL_WINDOW
         # bookkeeping, otherwise the subtable written by write_new_ms() would
         # describe channels the data no longer has.
-        if int(n_chan_flagged) > 0:
+        if drop_channels:
             if self.chan_freq_hz is not None:
                 self.chan_freq_hz = self.chan_freq_hz[keep_chan_idx]
             for col, values in list((self.chan_axis_hz or {}).items()):
                 if values is not None:
                     self.chan_axis_hz[col] = values[keep_chan_idx]
+            self._warn_about_band_holes(keep_chan_idx, n_chan_total)
         self._refresh_cached_columns()
 
         # Mark all changed variables
@@ -1370,6 +1541,52 @@ class DaskMS:
             f"Optimize complete."
             f" Rows: {int(n_unflagged)}, Channels: {int(n_chan_total) - int(n_chan_flagged)}"
         )
+
+    def _warn_about_band_holes(self, keep_chan_idx, n_chan_total):
+        """Warn when dropping channels leaves a hole inside the band.
+
+        Removing a fully-flagged channel from the *edge* of the band just
+        shortens it.  Removing one from the *middle* leaves a gap that no
+        SPECTRAL_WINDOW column records: ``CHAN_WIDTH`` still describes each kept
+        channel and ``TOTAL_BANDWIDTH`` still sums what is left, so a consumer
+        that assumes contiguous channels will silently read the band as wider
+        per channel than it is.  Say so, with the size of the hole.
+        """
+        freqs = self.chan_freq_hz
+        if freqs is None or len(keep_chan_idx) < 2:
+            return
+        widths = (self.chan_axis_hz or {}).get("CHAN_WIDTH")
+        if widths is None:
+            widths = (self.chan_axis_hz or {}).get("RESOLUTION")
+        if widths is None or len(widths) != len(freqs):
+            return
+
+        gaps = np.diff(freqs) > 0.5 * (widths[1:] + widths[:-1])
+        n_gaps = int(np.count_nonzero(gaps))
+        if n_gaps == 0:
+            return
+        hole_hz = float(np.sum(np.diff(freqs)[gaps] - widths[1:][gaps]))
+        n_dropped_interior = int(
+            np.count_nonzero(
+                (keep_chan_idx > keep_chan_idx.min())
+                & (keep_chan_idx < keep_chan_idx.max())
+            )
+        )
+        print(
+            f"WARNING: dropping {int(n_chan_total) - len(keep_chan_idx)} fully"
+            f" flagged channel(s) split the band into {n_gaps + 1} pieces,"
+            f" leaving {hole_hz / 1e6:.3f} MHz unused inside the band."
+        )
+        print(
+            "         The hole is not recorded in SPECTRAL_WINDOW (CHAN_WIDTH"
+            " and TOTAL_BANDWIDTH still describe the kept channels), so tools"
+            " that assume contiguous channels will misread the band."
+        )
+        if n_dropped_interior:
+            print(
+                "         Use --keep-fully-flagged-channels to retain them and"
+                " keep the band contiguous."
+            )
 
     def _resolve_field_id(self, field):
         """Resolve a field name or numeric id to a FIELD_ID integer.
@@ -1439,16 +1656,35 @@ class DaskMS:
         print(f"--split: single-field MS (FIELD_ID={field_id}), no rows removed")
         return ds
 
-    def write_new_ms(self, name, clobber, split=None):
+    def write_new_ms(self, name, clobber, split=None, changed_only=False):
         """
         Write a new MS, and make sure it doesn't already exist.
 
         If ``split`` is given (a field name or FIELD_ID), only that
         field's rows are written to the output MS.
+
+        ``changed_only`` avoids re-reading and rewriting the columns that did
+        not change (see :meth:`_write_changed_only`).  It is only valid when the
+        output has the same row and channel shape as the input; ``--split`` and
+        any row/channel reduction change that shape, so they fall back to a full
+        write with a warning.
         """
         ds_to_write = self.ds
         if split is not None:
             ds_to_write = self._select_field(ds_to_write, split)
+
+        if changed_only:
+            reason = self._changed_only_blocker(split)
+            if reason is not None:
+                logger.warning(
+                    "--write-changed-only: %s; writing every column instead",
+                    reason,
+                )
+                print(f"--write-changed-only not applicable: {reason}")
+                changed_only = False
+            else:
+                self._write_changed_only(ds_to_write, name, clobber)
+                return
 
         all_tables = list(ds_to_write.keys())
         print(f"Writing {all_tables} to {name}")
@@ -1503,6 +1739,205 @@ class DaskMS:
                 )
             if self.spw_chan_count != nchan_in_ds:
                 self._rewrite_spw_channels(name, nchan_in_ds)
+
+    def _changed_only_blocker(self, split):
+        """Why ``--write-changed-only`` cannot be used, or None if it can.
+
+        The mode copies the input MS and overwrites only the changed columns in
+        place, so it requires the output to have the input's row and channel
+        shape: a different shape means every column's data layout changes.
+        """
+        if split is not None:
+            return "--split selects rows, so every column must be rewritten"
+        src = table(self.name, ack=False, readonly=True)
+        try:
+            src_rows = src.nrows()
+            src_chan = src.getcell("FLAG", 0).shape[0]
+        except Exception:
+            src_rows = src.nrows()
+            src_chan = None
+        finally:
+            src.close()
+        ds_rows = int(self.ds.FLAG.shape[0])
+        ds_chan = int(self.ds.FLAG.shape[1])
+        if ds_rows != src_rows:
+            return (
+                f"the output has {ds_rows} rows against the input's {src_rows}"
+                " (row selection or removal), so every column must be rewritten"
+            )
+        if src_chan is not None and ds_chan != src_chan:
+            return (
+                f"the output has {ds_chan} channels against the input's"
+                f" {src_chan} (frequency averaging or channel removal), so every"
+                " column must be rewritten"
+            )
+        return None
+
+    def _column_file_groups(self, dminfo):
+        """Group the table's ``table.fN`` blocks, and name the column each holds.
+
+        Returns ``{base_name: (members, column_or_None)}`` where ``members`` are
+        the block files belonging to one storage manager (``table.f1``,
+        ``table.f1_TSM0``, ...).  The column is identified from the storage
+        manager name recorded inside the block, which is how a bare column file
+        can be attributed without parsing the binary ``table.dat``.
+
+        ``None`` means the group could not be attributed.  Callers must treat an
+        unattributed group as changed: sharing blocks with a column we cannot
+        name would risk rewriting the input MS.
+        """
+        name2cols = {}
+        for spec in dminfo.values():
+            for col in spec.get("COLUMNS") or []:
+                name2cols.setdefault(spec.get("NAME"), []).append(col)
+        names = sorted((n for n in name2cols if n), key=len, reverse=True)
+
+        groups = {}
+        for entry in os.listdir(self.name):
+            if not entry.startswith("table.f"):
+                continue
+            groups.setdefault(entry.split("_")[0], []).append(entry)
+
+        result = {}
+        for base, members in groups.items():
+            blob = b""
+            for member in members:
+                try:
+                    with open(os.path.join(self.name, member), "rb") as fh:
+                        blob += fh.read(4096)
+                except OSError:
+                    pass
+            column = None
+            for name in names:
+                if name.encode() in blob:
+                    cols = name2cols[name]
+                    column = cols[0] if len(cols) == 1 else None
+                    break
+            result[base] = (sorted(members), column)
+        return result
+
+    def _write_changed_only(self, ds_to_write, name, clobber):
+        """Write only the columns that changed, reusing the input's blocks.
+
+        A flagging run changes the flags and nothing else, so rewriting the
+        whole measurement set is almost all waste: measured on the 92 GB MT0 MS,
+        a full write puts 103 GB through casacore where a flagging run changes
+        6.1 GB.  This copies the input MS's structure and shares the unchanged
+        columns' data blocks with it, then writes only the changed columns.
+
+        The saving is on writes only.  Reading the input goes through dask-ms,
+        which attaches the whole measurement set's read graph to the table it
+        opens for the write, so this path still reads every column; use
+        ``update_ms`` (--apply) when the read dominates.
+
+        Sharing is by hard link, so unchanged columns cost no data transfer at
+        all.  That requires the output to be on the same filesystem as the
+        input; where the link fails the block is copied instead, which is no
+        worse than the full write.
+
+        Shared blocks are then made read-only.  They are still perfectly
+        readable -- both MSes open normally -- but an attempt to rewrite an
+        unchanged column in the output is refused by the filesystem instead of
+        silently altering the input MS.  Change the changed columns as often as
+        you like; the changed columns always get fresh blocks.  ``--apply``
+        remains the better option when the input itself may be modified.
+        """
+        if os.path.exists(name):
+            if not clobber:
+                raise RuntimeError(
+                    f"Measurement set {name} already exists. Use --clobber to overwrite"
+                )
+            logger.warning(f"Overwriting {name}")
+            shutil.rmtree(name)
+
+        columns = {c for c, changed in self.changed.items() if changed}
+        src = table(self.name, ack=False, readonly=True)
+        dminfo = src.getdminfo()
+        src.close()
+        groups = self._column_file_groups(dminfo)
+
+        shared, rewritten = [], []
+        for base, (members, column) in sorted(groups.items()):
+            if column is not None and column not in columns:
+                shared.append((base, members))
+            else:
+                rewritten.append((base, members, column))
+
+        n_shared = sum(len(m) for _, m in shared)
+        print(
+            f"Writing {name} (changed only): sharing {len(shared)} unchanged"
+            f" column group(s), rewriting {len(columns)}:"
+            f" {', '.join(sorted(columns)) or 'none'}"
+        )
+        for base, _, column in rewritten:
+            if column in columns:
+                logger.debug("  %s holds %s (changed)", base, column)
+
+        with _maybe_quiet_stderr():
+            os.makedirs(name, exist_ok=True)
+            linked = copied = 0
+            protected = []
+            for base, members in shared:
+                for member in members:
+                    source = os.path.join(self.name, member)
+                    target = os.path.join(name, member)
+                    try:
+                        os.link(source, target)
+                        linked += 1
+                        protected.append(target)
+                    except OSError:
+                        shutil.copy2(source, target)
+                        copied += 1
+            for base, members, _ in rewritten:
+                for member in members:
+                    source = os.path.join(self.name, member)
+                    if os.path.exists(source):
+                        shutil.copy2(source, os.path.join(name, member))
+                        copied += 1
+
+            # Everything that is not a column block: table.dat, table.info,
+            # table.lock targets, the subtables and the main-table keywords.
+            for entry in os.listdir(self.name):
+                if entry.startswith("table.f"):
+                    continue
+                source = os.path.join(self.name, entry)
+                target = os.path.join(name, entry)
+                if os.path.isdir(source):
+                    shutil.copytree(source, target, symlinks=True)
+                elif not os.path.exists(target):
+                    shutil.copy2(source, target)
+
+            self._copy_missing_keywords(name)
+            if self.chan_freq_hz is not None:
+                nchan_in_ds = self.ds.FLAG.shape[1]
+                if self.spw_chan_count != nchan_in_ds:
+                    self._rewrite_spw_channels(name, nchan_in_ds)
+
+            for col in sorted(columns):
+                print(f"Updating table: {col} in {name}")
+                # Passing only ``col`` here does *not* avoid reading the other
+                # columns: dask-ms attaches the MS's whole read graph to the
+                # table handle it opens for the write, so the DATA read tasks
+                # run either way (measured: a one-column dataset executes the
+                # same 75 ``read~DATA`` tasks as the full one).  Narrowing the
+                # dataset is therefore not worth doing, and the read cost is
+                # not avoidable on this path.
+                writes = xds_to_table(ds_to_write, name, col)
+                with ProgressBar():
+                    dask.compute(writes)
+
+            # Make the shared blocks read-only, so that rewriting an unchanged
+            # column in the output fails loudly rather than altering the input.
+            for target in protected:
+                try:
+                    os.chmod(target, os.stat(target).st_mode & ~0o222)
+                except OSError:
+                    pass
+
+        print(
+            f"  {linked} block(s) shared with the input ({n_shared} column"
+            f" group(s), left read-only), {copied} copied or written"
+        )
 
     def _copy_missing_keywords(self, name):
         """Copy main-table keywords the written MS is missing.

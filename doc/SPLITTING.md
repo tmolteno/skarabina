@@ -75,7 +75,7 @@ Split a calibrator out of a multi-field MS, after flagging:
 
 ```sh
 skarabina --ms raw.ms \
-    --flag-nan --flag-uv-above 4000 \
+    --flag "nan, uv-above 4000" \
     --msout calibrator.ms --split "3C 286" --clobber
 ```
 

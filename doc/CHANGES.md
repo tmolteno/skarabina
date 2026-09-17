@@ -3,6 +3,203 @@
 
 ## [Unreleased]
 
+## [1.0.0]
+
+**Breaking release.**  Flagging is now expressed as one ordered list, and the
+0.8.x flagging options are removed.  This also carries the analysis, band-hole
+and `--optimize` work previously staged for 0.8.9, which is unchanged in
+substance and is recorded below it.
+
+### Changed
+
+- **Flagging is one ordered `--flag` list.**  The order the flagging operations
+  run in is now the order they are written, instead of a fixed sequence buried
+  in the code:
+
+  ```
+  skarabina --ms obs.ms --flag "save:before, uv-above 2000, nan, clip 0 100, save:after"
+  ```
+
+  Entries are ``verb [args...]`` separated by top-level commas; commas inside
+  brackets are not separators, so a spectral-window rule file stays a file, and
+  quoting is honoured for paths with spaces.  The option is repeatable and
+  occurrences concatenate in the order given, and ``--flag-file`` reads entries
+  from a YAML list or one entry per line with ``#`` comments.
+- **Removed:** ``--flag-nan``, ``--flag-clip``, ``--flag-uv-above``,
+  ``--flag-spectral-window``, ``--flag-autos``, ``--flag-save-before`` and
+  ``--flag-restore-before``.  Their replacements are ``nan``, ``clip <lo> <hi>``,
+  ``uv-above <m>``, ``spectral-window <file>``, ``autos``, ``save:<name>`` and
+  ``restore:<name>``.  There is no deprecation window and no dual interface:
+  each removed option now errors with a hint at ``--flag``.
+- **``barber`` is deliberately not a verb.**  ``--barber`` and ``--barber-pol``
+  are unchanged, and ``--flag barber`` is rejected: barber never writes ``FLAG``
+  — it computes statistics over the unflagged data and prints a report — so it
+  is a read-only diagnostic with no ordering relationship to flagging.
+- **Ordering means more operations over the same data, so statistics are
+  deferred.**  Each data-flagging step appends its reduction instead of
+  computing it, and one ``dask.compute`` at the end of the sequence evaluates
+  them together.  Dask shares the single ``abs(DATA)`` subgraph, so a sequence
+  of N operations still loads the data column once: measured, a two-operation
+  sequence executes **one** DATA-loading task rather than two.  Without this the
+  read cost would grow with the number of operations.
+
+### Added
+
+- **``--flag-file``** for long sequences, and the ``flag`` / ``flag-file``
+  inputs on the ``skarabina`` stimela cab, replacing its removed flagging
+  inputs.  ``barber`` and ``barber.pol`` are unchanged on the cab.
+- **``--write-changed-only``** for the ``--msout`` path.  A flagging run changes
+  ``FLAG`` and nothing else, yet writing an output MS re-reads and rewrites every
+  column: on a 92 GB measurement set a flagging run writes 103 GB through the
+  full-copy path.  With this option the unchanged columns' storage blocks are
+  hard-linked into the output and left read-only, and only ``self.changed`` is
+  written: measured, 6.1 GB written instead of 103 GB, with 97.8 GB of the output
+  shared with the input.  The *read* cost is unchanged -- the write path reads
+  its input through dask-ms, which attaches the whole MS read graph to the table
+  it writes -- so use ``--apply`` when the read dominates and the input may be
+  modified.  This option is for read-only mounts, provenance requirements, or a
+  pipeline that needs the raw MS alongside the flagged one.  Also an input on the
+  ``skarabina`` cab.
+
+  The sharing is exact, not a re-read: unchanged blocks are the *same inode*, so
+  the mode is only offered when the output has the input's row and channel shape.
+  ``--split`` and averaging change that shape, so they fall back to a full write
+  with a warning naming the reason.  Because a hard link has one inode, the
+  shared blocks are made read-only, which means a later write to a shared column
+  through *either* path fails rather than silently corrupting the input.
+
+## [0.8.9]
+
+### Added
+
+- **`--keep-fully-flagged-channels`.**  With `--optimize`, keeps channels whose
+  visibilities are all flagged instead of removing them.  Flagging already
+  excludes them from imaging, so keeping them costs file size and nothing else,
+  but it avoids the band-splitting described under *Fixed* below.  Also an
+  input on the `skarabina` cab.
+- **`band_has_gaps`, `span_hz` and `channel_width_hz` on the `skarabina-analyze`
+  cab**, reporting whether the band is contiguous and, if not, how wide the
+  channels really are.
+
+### Changed
+
+- **`skarabina-analyze` reports the averaging limits at an explicit loss.**
+  ``max_integration_time_s`` is now the limit for a 10% loss at the field edge
+  (``TIME_AVERAGE_LOSS``) rather than for an unstated criterion, and the console
+  line says so.  ``max_channel_width_hz`` and ``bandwidth_smearing_factor`` are
+  unchanged in value.
+- **The resolution's assumptions are documented.**  ``resolution_arcsec`` is
+  ``c/(ν_max·B_max)``: the top of the band, unweighted and untapered, i.e. the
+  best case for the array as measured, so the recommended pixel size errs on the
+  side of oversampling.  `band_info`'s treatment of disjoint spectral windows as
+  one band is likewise documented as a deliberate, conservative simplification.
+- **The direction cosine in the bandwidth-smearing factor is computed
+  directly.**  ``r_1`` was ``hypot(sinθcosθ, sin²θ)``, which equals ``sin θ``
+  only by an identity; it is now ``sin θ_edge``, with the relation it comes from
+  quoted in the code.
+
+### Fixed
+
+- **`skarabina-analyze` no longer reports a band with holes as if its channels
+  were wider than they are.**  The channel width was derived as
+  ``(nu_max - nu_min) / n_channels`` and never read from the subtable, so an MS
+  whose channels are not uniformly spaced -- the shape `--flag-spectral-window`
+  followed by `--optimize` leaves behind -- had its per-channel width
+  overstated by the fraction of the band missing (17% in a worked case).  The
+  width now comes from `CHAN_WIDTH` (falling back to `RESOLUTION`), the
+  reported `bandwidth_hz` is the sum of the channel widths (the spectrum
+  recorded), and the new `span_hz`/`band_has_gaps` make the difference
+  explicit.  `min_channels` follows the recorded bandwidth, so a hole
+  correctly lowers the number of channels the data supports.
+- **`--optimize` warns when it splits the band.**  Removing a fully-flagged
+  channel from the *middle* of a band leaves a hole that no SPECTRAL_WINDOW
+  column records: `CHAN_WIDTH` still describes each surviving channel and
+  `TOTAL_BANDWIDTH` still sums what is left, so a consumer assuming contiguous
+  channels reads the band as wider per channel than it is.  `optimize` now
+  reports the number of pieces and the width of the hole, and points at
+  `--keep-fully-flagged-channels`.
+- **`--summary` reports the spectrum present, not the span.**  The
+  `Spectral windows:` line now shows the per-channel width and the total
+  spectrum recorded, and adds a `Band has holes:` line when channels are not
+  contiguous.  Previously it printed the band span as "bandwidth", which
+  overstates a band with holes.
+
+- **`skarabina-analyze` and `skarabina --summary` now agree on the
+  integration-time limit.**  The two quoted the same physical quantity from
+  different formulas: `analyze` used a bare ``0.1/(ω_E·B·θ)`` while the summary
+  used the small-angle form ``c·√(6L)/(π·ω_E·B·ν·ℓ)``.  For the mergA_tim field
+  that was 19.0 s against 21.8 s for the same observation and criterion — close,
+  but there was no statement of *which* loss either corresponded to, and
+  ``analyze``'s constant was labelled "~10% loss" in the code and in
+  `doc/ANALYZE.md` while actually allowing ~0.4%.  Both now call
+  `skarabina.dask_ms.max_integration_time`, which inverts
+  ``ρ = sinc(π·ω_⊕·Δt·B·ν·θ/c)`` for a stated loss.  `--summary` prints the 10%
+  row (the criterion `analyze` reports) alongside 1%, 3% and 5%.  Verified on a
+  real MS: both commands report 3.6 s.
+- **The smearing relation behind those limits is now documented correctly.**
+  The fringe-washing factor was written as ``sinc(π·x/2)`` with
+  ``x = ω·Δt·B·ν·θ/c``, which is a factor of two away from the relation the code
+  actually needs; the correct form is ``sinc(π·x)``.  The limit itself was
+  verified against a direct numerical average of the visibility phasor in real
+  units (agreement to ~1e-6), and the small-angle ``√(6L)`` form below is
+  confirmed as its approximation rather than its definition.
+- **`doc/ANALYZE.md`'s worked example was stale and wrong.**  It claimed a
+  7697 m baseline gives 4.47 arcsec and a 10066-pixel image; it actually gives
+  5.68 arcsec and 7922 pixels, and the example predated both the full-width FOV
+  convention and the averaging limits.  The example is now a real run (7625 m,
+  1711.791 MHz → 4.74 arcsec, 9500 px) and a test pins its numbers to the code
+  so it cannot silently drift again.
+
+### Tests
+
+- **`tests/test_integration_time.py` no longer tests a copy of the formula.**
+  It defined its own local ``max_integration_time``, so it passed regardless of
+  what the package did — the reason the divergence above went unnoticed.  It now
+  imports and exercises the real implementation, asserting that the returned
+  limit really achieves the requested loss and comparing the relation against a
+  brute-force phasor average.
+- **`tests/test_fov_convention.py`** compares against the small-angle form with
+  an explicit tolerance, since the exact inverse now sits slightly above it
+  (0.15% at L = 0.01, 0.76% at L = 0.05).
+- **`tests/test_analyze_smearing.py`** pins `analyze`'s limit to the shared
+  function, pins the documented worked example in `doc/ANALYZE.md`, reads
+  `CHAN_WIDTH` off a real MS, detects a hole written into a subtable, and checks
+  that R_b uses the real channel width rather than the band average.
+- **`tests/test_optimize_band.py`** covers the band `--optimize` leaves behind:
+  the hole and its warning, that an edge channel does not warn, that
+  `--keep-fully-flagged-channels` keeps the band contiguous while still
+  dropping rows, and that a wholly-flagged MS trips the row guard (every
+  channel is dead exactly when every row is, so the channel guard is
+  unreachable for a single dataset).
+- **`tests/test_integration_time.py`** likewise pins `doc/AVERAGING.md`: the
+  small-angle-vs-exact coefficient table and the worked example values are
+  checked against the code.  `doc/AVERAGING.md` itself was updated: its
+  Δt<sub>max</sub> was presented as an exact formula when the code inverts the
+  relation exactly instead (the small-angle form is now shown as the
+  approximation it is, with the size of the gap), its example table gained the
+  10% column that `skarabina-analyze` reports, and its summary description now
+  lists the 10% row.
+
+## [0.8.8]
+
+### Added
+
+- **`skarabina-analyze` reports the averaging limits.**  Reads the band edges
+  and channel count from the SPECTRAL_WINDOW subtable it already used for
+  ``nu_max`` and reports, at the edge of the *requested* field of view
+  (``theta_edge = FOV/2``): ``max_channel_width_hz`` — the white-light fringe
+  limit ``c/(B_max·theta_edge)``, and ``min_channels``, the fewest channels the
+  data supports; ``max_integration_time_s`` — the longest integration before
+  time-average smearing matters; and ``bandwidth_smearing_factor`` — the radial
+  R_b for the channels as they are.  These are the numbers the superseded
+  ``set-image-parameters`` cab in the white-belt pipeline printed.  All are
+  exposed as scalar outputs on the cab.  (Recorded after the fact: this release
+  was tagged without a changelog entry, and its
+  ``cargo/skarabina_cargo/genesis/skarabina-cargo-base.yml`` was left at image
+  version 0.8.7 while both ``pyproject.toml`` files said 0.8.8, so the published
+  cab declared an image built from the previous release's code.  Both are
+  corrected in 0.8.9; the published 0.8.8 artifacts are immutable.)
+
 ## [0.8.7]
 
 ### Added

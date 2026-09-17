@@ -97,12 +97,22 @@ def _sample_analyze_stdout(schemas):
     declared = set(_value_outputs(schemas.cabs["skarabina-analyze"]))
     payload = {
         "max_baseline_m": 7697.0,
+        "min_frequency_hz": 856000000.0,
         "max_frequency_hz": 1800000000.0,
         "max_frequency_mhz": 1800.0,
+        "bandwidth_hz": 944000000.0,
+        "span_hz": 944000000.0,
+        "channel_width_hz": 230468.75,
+        "band_has_gaps": False,
+        "num_channels": 4096,
         "resolution_arcsec": 4.4689,
         "field_of_view": "2.5 deg",
         "oversampling_factor": 5.0,
         "recommended_image_size_pixels": 10066,
+        "max_channel_width_hz": 3590900.0,
+        "min_channels": 263,
+        "max_integration_time_s": 2.9,
+        "bandwidth_smearing_factor": 0.9999,
         "ms": "observation.ms",
     }
     assert declared <= set(payload), f"sample output lacks declared keys: {declared - set(payload)}"
