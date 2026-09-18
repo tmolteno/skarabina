@@ -100,12 +100,11 @@ also flagging the bright end of the band, which a plain `clip` cannot do.
 
     skarabina --ms test.ms --flag "tfcrop" --apply --clobber
 
-With no parameters it uses CASA's defaults. Parameters are `key=value`, named
-after CASA's, in any order and any subset:
+With no parameters it uses CASA's defaults. Parameters are named after CASA's,
+in any order and any subset, written with `=` or `:`:
 
-    skarabina --ms test.ms \
-        --flag "tfcrop [timecutoff=5, freqcutoff=2.5, maxnpieces=3]" \
-        --apply --clobber
+    skarabina --ms test.ms --flag "tfcrop [timecutoff=5, freqcutoff=2.5]" --apply
+    skarabina --ms test.ms --flag "tfcrop timecutoff: 5, freqcutoff: 2.5" --apply
 
 | Parameter | Default | Meaning |
 |---|---|---|

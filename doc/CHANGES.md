@@ -3,6 +3,28 @@
 
 ## [Unreleased]
 
+## [1.0.3]
+
+### Added
+
+- **``tfcrop`` parameters accept ``:`` as well as ``=``.**  So a recipe can
+  write several of them readably inside one quoted YAML list entry::
+
+      flag:
+        - save:before
+        - "tfcrop timefit: line usewindowstats: both"
+
+  A nested mapping cannot be used.  A stimela input of type ``List[str]``
+  requires every element to be a string, so ``- tfcrop: [{timefit: line}]`` is
+  rejected with "Input should be a valid string" before the cab runs, and an
+  unquoted ``: `` inside a YAML sequence item is invalid YAML besides.  Both
+  the cab README and ``doc/NEW_FLAGGING.md`` §9.2 now show the working form and
+  the one that cannot work.
+
+  A colon is only read as a separator when a real parameter name precedes it:
+  ``save:``/``restore:`` are the grammar's other colon syntax, and a rule-file
+  path may contain a colon.
+
 ## [1.0.2]
 
 ### Added
@@ -30,6 +52,18 @@
   parameters, since at the top level a comma separates ``--flag`` entries.
   Stimela escapes brackets on the way to a container, so that form is accepted
   too -- otherwise the syntax would break in exactly the case it was added for.
+  ``:`` may be used instead of ``=``, so that several parameters can be written
+  readably inside one quoted YAML list entry::
+
+      flag:
+        - save:before
+        - "tfcrop timefit: line usewindowstats: both"
+
+  A colon is only a separator when a real parameter name precedes it, since
+  ``save:``/``restore:`` and rule-file paths also contain colons.  A nested
+  mapping cannot be used -- a stimela ``List[str]`` input requires every element
+  to be a string -- and an unquoted ``: `` inside a YAML sequence item is itself
+  invalid YAML, so the entry has to be quoted.
 
   ``ntime`` is deliberately not offered: the chunk the bandpass is averaged over
   is the dask chunk, so the chunk length *is* ``ntime`` and a separate parameter

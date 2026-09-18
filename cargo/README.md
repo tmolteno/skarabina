@@ -226,13 +226,32 @@ steps:
       clobber: true
 ```
 
-The brackets are optional, but a comma *between* `tfcrop` parameters needs them:
-at the top level a comma separates the entries of `flag`, so
+A `tfcrop` entry must be **one string**.  A stimela input of type `List[str]`
+requires every element to be a string, so this does not work -- stimela rejects
+it with "Input should be a valid string" before the cab runs:
+
+```yaml
+      flag:
+        - tfcrop:              # WRONG
+            - timefit: line
+```
+
+An unquoted `: ` inside a YAML sequence item is invalid YAML as well.  Quote the
+entry and keep the parameters inside it, with `=` or `:` between name and value:
+
+```yaml
+      flag:
+        - save:before
+        - "tfcrop timefit: line usewindowstats: both"
+        - "tfcrop [flagdimension=freqtime, maxnpieces=5]"
+```
+
+The brackets around parameters are optional, but a comma *between* them needs
+them: at the top level a comma separates the entries of `flag`, so
 `"tfcrop a=1, b=2"` would be read as two entries and the second rejected as an
-unknown verb.  With no parameters `tfcrop` uses CASA's defaults; the full list
-is in [`doc/usage.md`](../doc/usage.md), and the algorithm and its deviations
-from the published one are in
-[`doc/NEW_FLAGGING.md`](../doc/NEW_FLAGGING.md) §9.
+unknown verb.  With no parameters `tfcrop` uses CASA's defaults; the full list is
+in [`doc/usage.md`](../doc/usage.md), and the algorithm and its deviations from
+the published one are in [`doc/NEW_FLAGGING.md`](../doc/NEW_FLAGGING.md) §9.
 
 #### Flag versions (backups)
 

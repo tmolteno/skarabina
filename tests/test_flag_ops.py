@@ -279,3 +279,56 @@ def test_run_reports_every_operation_in_order(tmp_path):
     ops = flag_ops.parse(["uv-above 1000, clip 0 100, nan"])
     flag_ops.run(DaskMS(path), ops, log=seen.append)
     assert seen == ["uv-above 1000", "clip 0 100", "nan"]
+
+
+def test_tfcrop_parameters_accept_a_colon_separator():
+    """`tfcrop timefit: line` must work, because the parameters usually arrive
+    inside a YAML list where a mapping is the natural way to write them.
+
+    A YAML list item cannot be a mapping -- a stimela list-typed input requires
+    each element to be a string -- so the parameter names have to live inside
+    the string.  The colon form is the readable way to do that.
+    """
+    for spec in (
+        "tfcrop timefit: line",
+        "tfcrop timefit: line usewindowstats: both",
+        "tfcrop [timefit: line, usewindowstats: both]",
+        "tfcrop timecutoff: 5 freqcutoff: 2.5 maxnpieces: 3",
+    ):
+        op = flag_ops.parse([spec])[0]
+        assert op.verb == "tfcrop", spec
+        for arg in op.args:
+            assert "=" in arg and ":" not in arg, (spec, arg)
+
+
+def test_a_colon_is_only_a_separator_for_a_real_parameter_name():
+    """`save:` and `restore:` own the colon syntax, and a path may contain one.
+
+    Treating every colon as a parameter separator would quietly break the
+    markers and misread file paths, so only a known parameter name qualifies.
+    """
+    assert flag_ops.parse(["save:before"])[0].verb == "save"
+    assert flag_ops.parse(["restore:pre-flagging"])[0].verb == "restore"
+    # an unknown name before a colon is not a parameter, so it is an error
+    # rather than a silently accepted setting
+    with pytest.raises(FlagOrderError):
+        flag_ops.parse(["tfcrop maxnpices: 3"])
+
+
+def test_colon_form_rejects_a_missing_value():
+    with pytest.raises(FlagOrderError, match="no value"):
+        flag_ops.parse(["tfcrop timefit:"])
+
+
+def test_tfcrop_parameters_work_inside_a_quoted_yaml_list_entry():
+    """The form a stimela recipe actually delivers.
+
+    YAML will not accept an unquoted ``: `` inside a sequence item, so the entry
+    arrives quoted; this pins that the quoted string is what is parsed.
+    """
+    ops = flag_ops.parse([
+        "save:before",
+        "tfcrop timefit: line usewindowstats: both",
+    ])
+    assert [op.verb for op in ops] == ["save", "tfcrop"]
+    assert ops[1].args == ("timefit=line", "usewindowstats=both")

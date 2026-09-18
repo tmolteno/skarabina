@@ -285,37 +285,73 @@ def parse_entry(entry: str) -> FlagOp:
 def _parse_tfcrop_args(rest, entry) -> Tuple[str, ...]:
     """Parameters for ``tfcrop``, as ``key=value`` pairs.
 
-    Written either after the verb or inside brackets, the two being equivalent::
+    Written after the verb, in brackets, or with colons, all equivalent::
 
         tfcrop timecutoff=5 freqcutoff=2.5
         tfcrop [timecutoff=5, freqcutoff=2.5]
+        tfcrop timecutoff: 5
 
     Keyword form rather than positional because the verb has nine parameters
     whose names are the ones CASA's ``flagdata`` uses, so a recipe reads the
     same way it would there and only the parameters being changed need naming.
     ``TFCropParams`` validates them, so a typo is an error rather than a
     silently ignored setting.
+
+    The colon form exists because the parameters usually arrive inside a YAML
+    list, one entry per operation, and a mapping is the natural way to write
+    several of them there::
+
+        flag:
+          - tfcrop timefit: line usewindowstats: both
+
+    A colon is only read as a separator when what precedes it is a real
+    parameter name.  ``save:`` and ``restore:`` are the grammar's other colon
+    syntax and a rule file path may contain one, so a colon is not treated as a
+    separator in general.
     """
     tokens = [t.strip() for t in rest]
     if tokens and tokens[0].startswith("[") and tokens[-1].endswith("]"):
         tokens[0] = tokens[0][1:]
         tokens[-1] = tokens[-1][:-1]
-    named = []
+    pieces = []
     for token in tokens:
         # Accept commas as well as spaces between parameters, so a bracketed
         # list and a bare run of pairs mean the same thing.
         for piece in _unescape_brackets(token).split(","):
             piece = piece.strip()
             if piece:
-                named.append(piece)
-    for token in named:
-        if "=" not in token:
+                pieces.append(piece)
+
+    named: List[str] = []
+    index = 0
+    while index < len(pieces):
+        piece = pieces[index]
+        index += 1
+        head, sep, tail = piece.partition("=")
+        if not sep:
+            colon_head, colon_sep, colon_tail = piece.partition(":")
+            if colon_sep and colon_head.strip() in TFCropParams.DEFAULTS:
+                head, sep, tail = colon_head, colon_sep, colon_tail
+        if not sep:
             raise FlagOrderError(
                 f"entry {entry!r}: tfcrop parameters are given as key=value, so"
-                f" {token!r} is missing its '='. For example"
-                " 'tfcrop timecutoff=5 freqcutoff=2.5', or"
-                " 'tfcrop [timecutoff=5, freqcutoff=2.5]'"
+                f" {piece!r} is missing its separator. For example"
+                " 'tfcrop timecutoff=5 freqcutoff=2.5',"
+                " 'tfcrop [timecutoff=5, freqcutoff=2.5]', or"
+                " 'tfcrop timecutoff: 5'"
             )
+        name, value = head.strip(), tail.strip()
+        if not value:
+            # 'timefit: line' arrives as the two pieces 'timefit:' and 'line';
+            # the next piece is the value, and is consumed here so it is not
+            # read again as a parameter of its own.
+            if index == len(pieces):
+                raise FlagOrderError(
+                    f"entry {entry!r}: tfcrop parameter {name!r} has no value"
+                )
+            value = pieces[index]
+            index += 1
+        named.append(f"{name}={value}")
     try:
         # Constructed for its validation side effect; the values are parsed
         # again at run time, so the parsed form stays a plain tuple of strings.
