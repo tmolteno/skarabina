@@ -563,13 +563,41 @@ end of the band.  So TFCrop fits the bandpass first and flags the *residuals*:
 ### 9.2 Grammar
 
 Parameters are `key=value`, in any order, and any subset may be given.  The
-brackets are optional and purely for grouping:
+brackets are optional and purely for grouping, and `:` may be used for the
+separator instead of `=`:
 
 ```
 --flag "tfcrop"
 --flag "tfcrop timecutoff=5 freqcutoff=2.5"
 --flag "tfcrop [timecutoff=5, freqcutoff=2.5, maxnpieces=3]"
+--flag "tfcrop timecutoff: 5 freqcutoff: 2.5"
 ```
+
+A colon is only a separator when a real parameter name precedes it.  `save:` and
+`restore:` are the grammar's other colon syntax and a rule file path may itself
+contain a colon, so treating a colon as a separator in general would break both.
+
+**In a recipe, the entry must be one string.**  A stimela input of type
+`List[str]` requires every element to be a string, so a nested mapping is
+rejected before the cab runs:
+
+```yaml
+flag:
+  - tfcrop:            # WRONG: "Input should be a valid string"
+      - timefit: line
+```
+
+An unquoted `: ` inside a YAML sequence item is also invalid YAML.  Quote the
+whole entry, and put the parameters inside it:
+
+```yaml
+flag:
+  - save:before
+  - "tfcrop timefit: line usewindowstats: both"
+  - "tfcrop [flagdimension=freqtime, maxnpieces=5]"
+```
+
+The same applies to a path with spaces in a `spectral-window` entry.
 
 The names are CASA's, so a recipe written for `flagdata(mode='tfcrop')`
 transfers unchanged.  A comma *between parameters* requires the brackets,
