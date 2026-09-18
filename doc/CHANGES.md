@@ -3,6 +3,55 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A ``tfcrop`` flagging verb**, a reimplementation of CASA's
+  ``flagdata(mode='tfcrop')``: outlier detection on the 2-D time-frequency
+  plane, by fitting the bandpass robustly, dividing it out, and flagging the
+  residuals.  That is what lets it catch a weak narrow-band spike without also
+  flagging the bright end of the band, which a plain ``clip`` cannot do.
+
+  ```
+  skarabina --ms obs.ms --flag "autos, uv-above 4000, tfcrop, clip 0 100"
+  ```
+
+  Parameters are `key=value`, named after CASA's so that a
+  ``flagdata(mode='tfcrop')`` recipe transfers unchanged, and validated at parse
+  time -- ``maxnpices=3`` is an error naming ``maxnpieces`` rather than a
+  silently ignored setting:
+
+  ```
+  --flag "tfcrop [timecutoff=5, freqcutoff=2.5, maxnpieces=3]"
+  ```
+
+  The bracketed form is optional; the brackets exist so that commas can separate
+  parameters, since at the top level a comma separates ``--flag`` entries.
+  Stimela escapes brackets on the way to a container, so that form is accepted
+  too -- otherwise the syntax would break in exactly the case it was added for.
+
+  ``ntime`` is deliberately not offered: the chunk the bandpass is averaged over
+  is the dask chunk, so the chunk length *is* ``ntime`` and a separate parameter
+  could only contradict it.  ``combinescans`` is accepted for compatibility and
+  does nothing, for the same reason.
+
+  The published algorithm is followed, including growing the piece count from
+  one to ``maxnpieces`` as it iterates -- and that growth is load-bearing, as
+  the first implementation showed.  Fixing the piece count from the start let a
+  cubic bend to follow an RFI spike, so the spike never looked like an outlier
+  and was never removed: measured on a band with spikes straddling a piece
+  boundary, it mis-fitted by 0.31 in a band whose clean points fit to 0.0001.
+  Growing the count brought that to 0.095, against 0.097 for the best possible
+  fit to the known-clean points.  `doc/NEW_FLAGGING.md` §9.4 records that and
+  the other places where the published description does not determine an
+  implementation.
+
+### Fixed
+
+- **``--flag`` accepts stimela's escaped brackets.**  Stimela escapes ``[`` and
+  ``]`` when passing a parameter to a container, so a bracketed entry arrives as
+  ``\\[...\\]`` and the backslashes reached the parameter names.  The parser now
+  treats a backslash-escaped bracket as the bracket itself.
+
 ## [1.0.1]
 
 ### Fixed

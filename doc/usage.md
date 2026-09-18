@@ -91,6 +91,46 @@ Write a new MS:
 
     skarabina --ms test.ms --flag "clip 0 100, nan" --msout bar.ms --clobber
 
+### TFCrop (automatic RFI flagging)
+
+`tfcrop` finds outliers in the time-frequency plane the way CASA's
+`flagdata(mode='tfcrop')` does: it fits the bandpass, divides it out, and flags
+what is left over. That is what lets it catch a weak narrow-band spike without
+also flagging the bright end of the band, which a plain `clip` cannot do.
+
+    skarabina --ms test.ms --flag "tfcrop" --apply --clobber
+
+With no parameters it uses CASA's defaults. Parameters are `key=value`, named
+after CASA's, in any order and any subset:
+
+    skarabina --ms test.ms \
+        --flag "tfcrop [timecutoff=5, freqcutoff=2.5, maxnpieces=3]" \
+        --apply --clobber
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `timecutoff` | 4.0 | threshold in robust sigmas, time direction |
+| `freqcutoff` | 3.0 | threshold in robust sigmas, frequency direction |
+| `timefit` | `line` | `line` or `poly` along time |
+| `freqfit` | `poly` | `line` or `poly` along frequency |
+| `maxnpieces` | 7 | most pieces in a piece-wise fit (1-7) |
+| `flagdimension` | `freqtime` | `freqtime`, `timefreq`, `freq` or `time` |
+| `usewindowstats` | `none` | `none`, `sum`, `std` or `both` |
+| `halfwin` | 1 | sliding-window half-width (1-3) |
+
+A typo is an error rather than a silently ignored setting, so `maxnpices=3`
+fails with a message naming `maxnpieces`.
+
+`flagdimension` decides which directions are searched. Narrow-band RFI -- a
+channel that is bright at every time -- can only be found by a `freq`-containing
+mode, and a bad integration can only be found by a `time`-containing one. The
+default searches both and unions the results. TFCrop is usually worth running
+after `uv-above`, and before `clip`:
+
+    skarabina --ms test.ms \
+        --flag "autos, uv-above 4000, tfcrop, clip 0 100" \
+        --msout cleaned.ms --clobber --write-changed-only
+
 ### Spectral-window flagging
 
 Flag known RFI frequency ranges from a YAML file:

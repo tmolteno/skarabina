@@ -203,6 +203,37 @@ records which sequence was used. The grammar, the migration from the 0.8.x
 options and the measurements behind it are in
 [`doc/NEW_FLAGGING.md`](../doc/NEW_FLAGGING.md).
 
+#### Automatic RFI flagging with `tfcrop`
+
+`tfcrop` is a reimplementation of CASA's `flagdata(mode='tfcrop')`: it fits the
+bandpass, divides it out, and flags what deviates.  That is what lets it find a
+weak narrow-band spike without also flagging the bright end of the band, which a
+plain `clip` cannot do.  It takes CASA's parameter names as `key=value` pairs,
+so a `flagdata(mode='tfcrop')` recipe transfers unchanged:
+
+```yaml
+steps:
+  flag:
+    cab: skarabina
+    params:
+      ms: =recipe.ms
+      flag:
+        - autos
+        - uv-above 4000
+        - "tfcrop [timecutoff=5, freqcutoff=2.5, maxnpieces=3]"
+        - clip 0 100
+      msout: cleaned.ms
+      clobber: true
+```
+
+The brackets are optional, but a comma *between* `tfcrop` parameters needs them:
+at the top level a comma separates the entries of `flag`, so
+`"tfcrop a=1, b=2"` would be read as two entries and the second rejected as an
+unknown verb.  With no parameters `tfcrop` uses CASA's defaults; the full list
+is in [`doc/usage.md`](../doc/usage.md), and the algorithm and its deviations
+from the published one are in
+[`doc/NEW_FLAGGING.md`](../doc/NEW_FLAGGING.md) §9.
+
 #### Flag versions (backups)
 
 `save:` and `restore:` entries in the `flag` list back up and restore flags,

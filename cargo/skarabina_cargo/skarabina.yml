@@ -76,10 +76,14 @@ cabs:
         info: >-
           Flagging operations, in the order they should run. Each entry is
           'verb [args]': autos, uv-above <metres>, nan, clip <lo> <hi>,
-          spectral-window <rules.yml>, or the markers save:<name> /
-          restore:<name>. Commas inside brackets are not separators, so
-          'spectral-window' takes a file. The list is the run: an operation not
-          listed does not run. See doc/NEW_FLAGGING.md in the skarabina
+          tfcrop [key=value ...], spectral-window <rules.yml>, or the markers
+          save:<name> / restore:<name>. Commas inside brackets are not
+          separators, so 'spectral-window' takes a file and tfcrop's parameters
+          can be written as a bracketed list. The list is the run: an operation
+          not listed does not run. tfcrop takes CASA's flagdata(mode='tfcrop')
+          parameters -- timecutoff, freqcutoff, timefit, freqfit, maxnpieces,
+          flagdimension, usewindowstats, halfwin, combinescans -- so a CASA
+          recipe transfers unchanged. See doc/NEW_FLAGGING.md in the skarabina
           distribution.
         required: true
         # scabha refuses a list-typed input with no repeat policy, so without

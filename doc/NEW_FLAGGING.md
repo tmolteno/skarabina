@@ -80,13 +80,16 @@ Quoting is honoured, so paths containing spaces work:
 | `nan` | — | `--flag-nan` |
 | `clip` | `lo hi` | `--flag-clip lo hi` |
 | `uv-above` | `metres` | `--flag-uv-above metres` |
+| `tfcrop` | `[key=value ...]` | — (new) |
 | `spectral-window` | `file.yml` | `--flag-spectral-window file.yml` |
 | `autos` | — | `--flag-autos` |
 | `save:NAME` | — | `--flag-save-before NAME` |
 | `restore:NAME` | — | `--flag-restore-before NAME` |
 
-`save:` and `restore:` keep the colon form because they take a bare name; verbs
-take space-separated values.
+`save:` and `restore:` keep the colon form because they take a bare name.  Every
+other verb but `tfcrop` takes space-separated positional values; `tfcrop` takes
+`key=value` pairs, because it has nine parameters and positional order for nine
+values would be a trap.  See §9.
 
 Accepted spellings for the hyphenated verb: `uv-above`, `uvabove`, `uv_above`.
 `uv-above` is the documented form; the others are accepted so that a shell
@@ -511,9 +514,11 @@ and `tests/test_flag_versions.py` (save/restore).
   without `defer` must produce byte-identical `FLAG`.
 - **Rollback**: `save:NAME` then flag then `restore:NAME` returns the MS to its
   pre-flagging flags (covered in `tests/test_flag_versions.py`).
-- **Not yet written**, because §5.3 is not implemented: the test that
-  `xds_to_table` receives the `changed` set rather than `"ALL"` under
-  `--write-changed-only`.
+- **Write path**: `tests/test_write_changed_only.py`.  The output is compared
+  column by column against a full write; sharing is asserted on storage-block
+  *inodes*, not on sizes or timings, so the test cannot pass by accident; and
+  the input's own `FLAG` is checked to be untouched afterwards.
+- **TFCrop**: `tests/test_tfcrop.py`, described in §9.5.
 
 ## 8. Open questions
 
@@ -526,3 +531,157 @@ and `tests/test_flag_versions.py` (save/restore).
 3. The major release will also carry the `--keep-fully-flagged-channels` and
    band-hole work from 0.8.9; confirm the changelog presents the flagging
    rewrite as the headline breaking change rather than burying it among fixes.
+
+
+## 9. The `tfcrop` verb
+
+A reimplementation of CASA's `flagdata(mode='tfcrop')`, described in the CASA
+User Reference §3.4.2.7 and NCRA Technical Report 202 (Oct 2003).  The
+implementation is `skarabina/tfcrop.py` and is deliberately free of dask: it
+operates on one `(time, chan)` plane of numpy and knows nothing about how the
+data is stored.
+
+### 9.1 Why a bandpass fit is needed at all
+
+RFI appears as outliers in the time-frequency plane of a single baseline and
+correlation.  A plain amplitude clip cannot separate it from the bandpass,
+because the bandpass is itself a large, smooth, frequency-dependent gain: a
+threshold that catches a weak spike at the band edge also flags the whole bright
+end of the band.  So TFCrop fits the bandpass first and flags the *residuals*:
+
+1. average the chunk over time to get the mean bandpass, and fit a robust
+   piece-wise polynomial to it.  "Robust" matters: the fit must follow the base
+   of the RFI spikes, not be dragged up by them;
+2. divide that fit out of every timestep.  The result is flat -- near 1 wherever
+   the band is clean -- so one threshold means the same thing at the band edge
+   and in the middle;
+3. flag points deviating from 1, iterating so that the scatter estimate is
+   itself computed from the surviving points;
+4. repeat the whole thing the other way: average over frequency, take each
+   column's own baseline, and flag deviations from that.
+
+### 9.2 Grammar
+
+Parameters are `key=value`, in any order, and any subset may be given.  The
+brackets are optional and purely for grouping:
+
+```
+--flag "tfcrop"
+--flag "tfcrop timecutoff=5 freqcutoff=2.5"
+--flag "tfcrop [timecutoff=5, freqcutoff=2.5, maxnpieces=3]"
+```
+
+The names are CASA's, so a recipe written for `flagdata(mode='tfcrop')`
+transfers unchanged.  A comma *between parameters* requires the brackets,
+because at the top level a comma separates `--flag` entries; inside brackets it
+does not, which is the same rule that lets `spectral-window` take a file.
+
+`TFCropParams` validates every value at parse time, so `maxnpices=3` is an error
+naming `maxnpieces` rather than a silently ignored setting.  That check is the
+reason the parameter list is not simply passed through to the algorithm.
+
+Stimela escapes `[` and `]` when it hands a parameter to a container, so a
+bracketed entry arrives as `\[...\]`.  The parser accepts that form, because
+otherwise the bracket syntax would break in exactly the case it was introduced
+for.
+
+### 9.3 Parameters
+
+| Name | Default | Meaning |
+|---|---|---|
+| `timecutoff` | 4.0 | threshold in robust sigmas, time direction |
+| `freqcutoff` | 3.0 | threshold in robust sigmas, frequency direction |
+| `timefit` | `line` | fit function along time (`line`/`poly`) |
+| `freqfit` | `poly` | fit function along frequency (`line`/`poly`) |
+| `maxnpieces` | 7 | most pieces in a piece-wise fit (1-7) |
+| `flagdimension` | `freqtime` | `freqtime`/`timefreq`/`freq`/`time` |
+| `usewindowstats` | `none` | `none`/`sum`/`std`/`both` |
+| `halfwin` | 1 | half-width of the sliding window (1-3) |
+| `combinescans` | `false` | accepted for compatibility; see §9.4 |
+
+`ntime` is deliberately **not** offered.  In CASA it chooses the chunk of time
+the bandpass is averaged over; here the dask chunk plays that role, so the
+chunk length *is* `ntime` and a separate parameter could only contradict it.
+
+### 9.4 Deliberate deviations from the published algorithm
+
+Each of these is a place where the description does not determine an
+implementation, and the choice is recorded here rather than left implicit.
+
+1. **The piece count grows from 1 to `maxnpieces`.**  This follows the
+   published description, and the first implementation got it wrong by fixing
+   the count from the start.  With seven pieces from the outset and no rejection
+   yet performed, a cubic will happily bend to follow an RFI spike, so the spike
+   never looks like an outlier and is never removed.  Starting at one piece
+   makes the first fit a low-order curve that RFI cannot bend, so the outliers
+   are obvious immediately, and the extra pieces then refine the band shape
+   around them.  Measured on a band with spikes straddling a piece boundary, the
+   fixed-count version mis-fitted by 0.31 in a band whose clean points fit to
+   0.0001; growing the count removed the error while still rejecting every
+   spike (0.095, against 0.097 for the best possible fit to the known-clean
+   points).
+2. **The fit is tapered at the ends of each piece.**  A polynomial fitted to a
+   span is least trustworthy at its outermost samples, and a boxcar weight made
+   the robust iteration reject the *first and last channel of a clean band*.
+3. **The rejection threshold has an absolute floor**, set to 0.1% of the data's
+   own scale.  A noiseless or nearly-noiseless plane -- a deterministic model,
+   or data already calibrated and averaged -- fits its own polynomial so exactly
+   that the residuals underflow, and a purely relative 3-sigma rule then rejects
+   every point.  The floor is scaled to the data so it means the same in Jy and
+   in K.
+4. **A piece is only trusted near its own surviving samples.**  The rejection
+   iterations can strip a piece down to a cluster of channels at one end --
+   exactly what happens to a piece containing RFI at the other end -- and the
+   polynomial then has nothing to say about the empty part.  Extrapolating there
+   is meaningless: measured, one such piece reached 395 on a band whose values
+   run 7 to 16, and the next rejection pass removed almost everything.  Those
+   channels are interpolated between the neighbouring fitted regions instead.
+5. **The two directions are computed independently.**  The published
+   description runs the second direction after the first, so the first
+   direction's flags are already excluded from the second's average.  Here both
+   are computed from the *input* flags, so neither biases the other.  The four
+   `flagdimension` spellings therefore reduce to: union (`freqtime`,
+   `timefreq`), frequency only (`freq`), time only (`time`).  The order within
+   the name carries no meaning.
+6. **`combinescans` is accepted but does nothing.**  The chunk is the fit unit
+   and a chunk does not cross a scan boundary in the data this tool reads, so
+   the parameter has nothing to control.  It is accepted so that a CASA recipe
+   does not fail on an unknown name, and rejecting it as unsupported would be
+   worse than accepting it as a no-op.  This is the one parameter whose
+   acceptance is not backed by behaviour.
+7. **Window statistics are approximate.**  `sum` and `std` are CASA's own
+   approximations to the LOFAR sum-threshold and AIPS `rflag` statistics, and
+   are marked experimental there.  They are kept for parity, not because either
+   is well founded, and the sliding window is clipped at the plane edges rather
+   than wrapped or shrunk.
+
+One consequence worth stating: a channel that is bright in *every* integration
+is invisible to the time direction by construction, because that direction
+averages over frequency and a constant-in-time channel is part of the mean
+rather than a deviation from it.  Only a `freq`-containing mode can find
+narrow-band RFI; only a `time`-containing mode can find a bad integration.  The
+default `freqtime` is the union of both, which is why it is the default.
+
+### 9.5 Tests
+
+`tests/test_tfcrop.py`, on synthetic planes with RFI at known positions, so that
+recall and false-positive rate can both be measured.  A flagger that flags
+everything scores 100% recall and is useless, so every recall assertion is
+paired with a false-positive bound.  The properties pinned are:
+
+- the robust fit tracks a smooth bandpass (max error 0.0001 on a band of width
+  ~8) and beats a plain polynomial fit by ~4x on a band with spikes, rejecting
+  every spike;
+- the fit converges, and no pass diverges -- the specific regression above;
+- the adaptive scatter shrinks as outliers are removed, so a single pass
+  estimates a larger scatter than five;
+- a clean plane is left almost untouched (under 1% flagged);
+- narrow-band RFI and bad integrations are both found, with the false-positive
+  rate bounded;
+- pre-existing flags are excluded from the fits and preserved in the result;
+- the band and time axes are not transposed.  This is the regression test for a
+  bug that survived every other test, because they all fitted a single block and
+  so never depended on how a block is sliced.  Transposing the two axes made
+  each block a plane of two channels rather than the whole band, and *every*
+  visibility in the MS came back flagged -- 100%, from a change that looked like
+  tidying.

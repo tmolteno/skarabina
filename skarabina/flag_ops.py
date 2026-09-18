@@ -23,6 +23,8 @@ from typing import List, Optional, Tuple
 import click
 import yaml
 
+from skarabina.tfcrop import TFCropParams
+
 # Canonical order used by the 0.8.x flagger, kept as the migration reference in
 # the documentation.  The new interface does NOT consult it: the list is the
 # run, so there is no unlisted-but-enabled operation to place.
@@ -31,6 +33,7 @@ CANONICAL_ORDER: Tuple[str, ...] = (
     "uv-above",
     "nan",
     "clip",
+    "tfcrop",
     "spectral-window",
 )
 
@@ -47,6 +50,7 @@ VERB_ALIASES = {
     "spectral-window": "spectral-window",
     "spectral_window": "spectral-window",
     "spectralwindow": "spectral-window",
+    "tfcrop": "tfcrop",
 }
 
 # Markers take a name rather than a value, hence the colon form.
@@ -113,7 +117,16 @@ def split_top_level(text: str) -> List[str]:
     parts, current = [], []
     depth = 0
     quote = None
+    escaped = False
     for ch in text:
+        if escaped:
+            # A backslash-escaped bracket must not count towards the depth:
+            # stimela escapes ``[`` and ``]`` when passing a parameter to a
+            # container, so a comma inside a bracketed entry would otherwise be
+            # taken for a top-level separator and split the entry in two.
+            escaped = False
+        elif ch == "\\":
+            escaped = True
         if quote:
             current.append(ch)
             if ch == quote:
@@ -137,14 +150,26 @@ def split_top_level(text: str) -> List[str]:
 
 
 def _tokenize(entry: str) -> List[str]:
-    """Split an entry into whitespace-separated tokens, honouring quotes."""
-    tokens, current, quote = [], [], None
+    """Split an entry into whitespace-separated tokens, honouring quotes.
+
+    A backslash escapes the next character.  Stimela escapes brackets when it
+    passes a parameter to a container, and without this the escaped bracket
+    survives into a parameter name and the entry is rejected with a confusing
+    message.
+    """
+    tokens, current, quote, escaped = [], [], None, False
     for ch in entry:
+        if escaped:
+            current.append(ch)
+            escaped = False
+            continue
         if quote:
             if ch == quote:
                 quote = None
             else:
                 current.append(ch)
+        elif ch == "\\":
+            escaped = True
         elif ch in "'\"":
             quote = ch
         elif ch.isspace():
@@ -243,6 +268,9 @@ def parse_entry(entry: str) -> FlagOp:
             ) from None
         return FlagOp(verb, rest, entry)
 
+    if verb == "tfcrop":
+        return FlagOp(verb, _parse_tfcrop_args(rest, entry), entry)
+
     if verb == "spectral-window":
         if len(rest) != 1:
             raise FlagOrderError(
@@ -252,6 +280,100 @@ def parse_entry(entry: str) -> FlagOp:
         return FlagOp(verb, rest, entry)
 
     raise FlagOrderError(f"entry {entry!r}: unhandled verb '{verb}'")
+
+
+def _parse_tfcrop_args(rest, entry) -> Tuple[str, ...]:
+    """Parameters for ``tfcrop``, as ``key=value`` pairs.
+
+    Written either after the verb or inside brackets, the two being equivalent::
+
+        tfcrop timecutoff=5 freqcutoff=2.5
+        tfcrop [timecutoff=5, freqcutoff=2.5]
+
+    Keyword form rather than positional because the verb has nine parameters
+    whose names are the ones CASA's ``flagdata`` uses, so a recipe reads the
+    same way it would there and only the parameters being changed need naming.
+    ``TFCropParams`` validates them, so a typo is an error rather than a
+    silently ignored setting.
+    """
+    tokens = [t.strip() for t in rest]
+    if tokens and tokens[0].startswith("[") and tokens[-1].endswith("]"):
+        tokens[0] = tokens[0][1:]
+        tokens[-1] = tokens[-1][:-1]
+    named = []
+    for token in tokens:
+        # Accept commas as well as spaces between parameters, so a bracketed
+        # list and a bare run of pairs mean the same thing.
+        for piece in _unescape_brackets(token).split(","):
+            piece = piece.strip()
+            if piece:
+                named.append(piece)
+    for token in named:
+        if "=" not in token:
+            raise FlagOrderError(
+                f"entry {entry!r}: tfcrop parameters are given as key=value, so"
+                f" {token!r} is missing its '='. For example"
+                " 'tfcrop timecutoff=5 freqcutoff=2.5', or"
+                " 'tfcrop [timecutoff=5, freqcutoff=2.5]'"
+            )
+    try:
+        # Constructed for its validation side effect; the values are parsed
+        # again at run time, so the parsed form stays a plain tuple of strings.
+        TFCropParams(**dict(_coerce_tfcrop(named)))
+    except ValueError as exc:
+        raise FlagOrderError(f"entry {entry!r}: {exc}") from None
+    return tuple(named)
+
+
+def _unescape_brackets(text: str) -> str:
+    """``\\[`` -> ``[`` and ``\\]`` -> ``]``.
+
+    Stimela escapes brackets on the way to a container.  They are decoration in
+    this grammar -- the parameters are the ``key=value`` pairs -- so the
+    backslashes are dropped rather than being treated as part of a name.
+    """
+    out, escaped = [], False
+    for ch in text:
+        if escaped:
+            out.append(ch if ch in "[](){}" else "\\" + ch)
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        else:
+            out.append(ch)
+    if escaped:
+        out.append("\\")
+    return "".join(out)
+
+
+def _coerce_tfcrop(named):
+    """``key=value`` strings to typed keyword arguments for :class:`TFCropParams`."""
+    coerced = {}
+    for token in named:
+        key, _, value = token.partition("=")
+        coerced[key.strip()] = _literal(value.strip())
+    return coerced
+
+
+def _literal(text: str):
+    """A parameter value as the type it looks like.
+
+    Only the types CASA's tfcrop parameters actually take: numbers, one of a
+    few names, and booleans.  Anything else stays a string, which
+    :class:`TFCropParams` then rejects by name.
+    """
+    lowered = text.lower()
+    if lowered in ("true", "false"):
+        return lowered == "true"
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    return text
 
 
 def _spec_entries(spec: str) -> List[str]:
@@ -341,6 +463,8 @@ def run(ms, ops, log=print):
             ms.flag_data(
                 {"CLIP": (float(op.args[0]), float(op.args[1]))}, defer=defer
             )
+        elif op.verb == "tfcrop":
+            ms.flag_tfcrop(TFCropParams(**_coerce_tfcrop(op.args)))
         elif op.verb == "spectral-window":
             ms.flag_spectral_window(op.args[0])
         else:  # pragma: no cover - parse() rejects anything else
