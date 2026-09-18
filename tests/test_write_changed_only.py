@@ -6,57 +6,79 @@ copying every column reads and writes ~104 GB to change ~6 GB of flags, which
 dominates the runtime on a network mount.  This mode shares the unchanged
 columns' data blocks with the input and writes only what changed.
 
-The sharing tests are built from a real measurement set rather than from
-``ms_fixture``: casacore's ``default_ms`` puts every column in one
-``IncrementalStMan`` file, so nothing could be shared there, whereas a real MS
-writes each large column with its own tiled storage manager -- which is exactly
-what makes this mode work.  The fallback tests need no particular layout, so
-they use the synthetic fixture, which is the only one that can hold more than
-one channel: a casacore array column cannot be resized once it holds rows, so
-the template's channel count is fixed.
+The sharing tests need a *real* table layout, which ``ms_fixture`` does not
+provide: ``default_ms`` puts every column in one ``IncrementalStMan`` file, so
+nothing could be shared, whereas a real MS writes each large column with its own
+tiled storage manager -- exactly what makes this mode work.  ``real_layout_ms``
+below builds one, giving each bulk column a ``TiledShapeStMan`` of its own.
+
+It is built rather than copied from a measurement set on the author's disk.  An
+earlier version read a fixture from a sibling checkout, which meant that on any
+machine without that checkout every sharing test silently *skipped* instead of
+failing -- the tests for the feature disappeared exactly when they could not be
+checked.
 """
 import os
-import shutil
 
 import numpy as np
 import pytest
-from casacore.tables import table
+from casacore.tables import makearrcoldesc, maketabdesc, table
 
 from ms_fixture import make_synthetic_ms
 
 from skarabina.dask_ms import DaskMS
 
-#: A single-row MS on disk used only for its table layout.
-TEMPLATE = "/home/tim/git/spotless/test_data/tart.ms"
-
-pytestmark = pytest.mark.skipif(
-    not os.path.isdir(TEMPLATE),
-    reason=f"no template measurement set at {TEMPLATE}",
+#: Bulk columns re-laid into one tiled store each, as a real MS has them.
+BULK_COLUMNS = (
+    ("DATA", "TiledData"),
+    ("FLAG", "TiledFlag"),
+    ("WEIGHT_SPECTRUM", "TiledWtSpec"),
 )
+
+
+def real_layout_ms(path, nrow=24, nchan=4, ncorr=2):
+    """A small MS in the layout a real one uses: one tile store per bulk column.
+
+    ``ms_fixture`` builds a valid MS, but with every column in a single
+    ``IncrementalStMan`` store, so there would be nothing to share.  Each bulk
+    column is therefore moved into its own ``TiledShapeStMan`` here, which is
+    what gives it a separate ``table.fN_TSM1`` file.
+
+    Built rather than copied from a measurement set on the author's disk: an
+    earlier version read a fixture from a sibling checkout, so on any machine
+    without that checkout every sharing test silently *skipped* rather than
+    failed, and the tests for this feature vanished exactly where they could not
+    be checked.
+    """
+    path = str(path)
+    make_synthetic_ms(path, nchan=nchan, nrow=nrow, ncorr=ncorr)
+    t = table(path, readonly=False)
+    for column, group in BULK_COLUMNS:
+        cell = t.getcell(column, 0)
+        values = t.getcol(column)
+        if column in set(t.colnames()):
+            t.removecols(column)
+        t.addcols(
+            maketabdesc(
+                makearrcoldesc(column, [], ndim=cell.ndim, shape=list(cell.shape),
+                               valuetype=_CASACORE_TYPE[cell.dtype.kind])
+            ),
+            {"TYPE": "TiledShapeStMan", "NAME": group,
+             "SPEC": {"DEFAULTTILESHAPE": np.array(cell.shape, dtype=np.int32)}},
+        )
+        t.putcol(column, values)
+    t.close()
+    return path
+
+
+#: numpy kind -> the name casacore wants in ``valuetype``.
+_CASACORE_TYPE = {"c": "complex", "b": "bool", "f": "double", "i": "int"}
 
 
 @pytest.fixture
 def ms(tmp_path):
-    """A real-layout MS holding deterministic data.
-
-    The template's row and channel shape is kept exactly as it is: the point of
-    the fixture is the table *layout*, and resizing a column would rewrite the
-    storage it is here to preserve.
-    """
-    path = str(tmp_path / "in.ms")
-    shutil.copytree(TEMPLATE, path)
-    t = table(path, readonly=False)
-    shape = t.getcell("DATA", 0).shape
-    nrow = t.nrows()
-    rng = np.random.default_rng(0)
-    data = (rng.normal(size=(nrow,) + shape)
-            + 1j * rng.normal(size=(nrow,) + shape)).astype(complex)
-    t.putcol("DATA", data)
-    t.putcol("FLAG", np.zeros((nrow,) + shape, bool))
-    if "WEIGHT_SPECTRUM" in t.colnames():
-        t.putcol("WEIGHT_SPECTRUM", rng.random((nrow,) + shape))
-    t.close()
-    return path
+    """A real-layout MS holding deterministic data."""
+    return real_layout_ms(str(tmp_path / "in.ms"))
 
 
 def _nrow(path):
@@ -73,6 +95,20 @@ def _read(path, col):
         return np.asarray(t.getcol(col))
     finally:
         t.close()
+
+
+def _readable(path, col):
+    """The column's data, or None if casacore cannot read it back.
+
+    ``FLAG_CATEGORY`` and the other hypercolumns exist in the schema but hold no
+    arrays, so reading one raises.  Both outputs must be read the same way, so
+    the comparison below skips what neither can produce rather than treating the
+    failure as a difference.
+    """
+    try:
+        return _read(path, col)
+    except Exception:
+        return None
 
 
 def _cols(path):
@@ -134,8 +170,17 @@ def test_output_matches_a_full_write(ms, tmp_path):
     # columns exist in the schema but hold no rows), so it is a superset of what
     # a full write produces.  Every column a full write has must match.
     assert full_cols <= changed_cols, full_cols - changed_cols
+    compared = 0
     for col in sorted(full_cols):
-        assert np.array_equal(_read(changed, col), _read(full, col)), col
+        expected = _readable(full, col)
+        if expected is None:
+            continue
+        assert np.array_equal(_readable(changed, col), expected), col
+        compared += 1
+    assert compared > 5, (
+        f"only {compared} column(s) were comparable; the test is not checking"
+        " much"
+    )
 
 
 def test_unchanged_columns_are_shared_with_the_input(ms, tmp_path):

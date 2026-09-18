@@ -206,6 +206,67 @@ def test_two_data_operations_read_data_once(tmp_path):
     )
 
 
+def test_tfcrop_parameters_are_key_value_pairs():
+    """tfcrop takes CASA's parameter names, in any order, any subset."""
+    assert flag_ops.parse(["tfcrop"])[0].args == ()
+    ops = flag_ops.parse(["tfcrop timecutoff=5 freqcutoff=2.5"])
+    assert ops[0].verb == "tfcrop"
+    assert ops[0].args == ("timecutoff=5", "freqcutoff=2.5")
+    # the bracketed list form is equivalent
+    assert flag_ops.parse(["tfcrop [timecutoff=5, freqcutoff=2.5]"])[0].args == \
+        ops[0].args
+    # A comma between tfcrop parameters needs the brackets: at the top level a
+    # comma separates --flag *entries*, so 'tfcrop a=1, b=2' is two entries and
+    # the second is not a verb.  That is the grammar working, not a gap.
+    with pytest.raises(FlagOrderError, match="unknown verb"):
+        flag_ops.parse(["tfcrop timecutoff=5, freqcutoff=2.5"])
+
+
+def test_tfcrop_accepts_stimela_escaped_brackets():
+    """Stimela escapes ``[`` and ``]`` when passing a parameter to a container.
+
+    A bracketed entry therefore arrives as ``\\[...\\]``, and without handling
+    that the brackets survive into the parameter names and the cab rejects a
+    recipe that works perfectly on the command line -- in the one situation the
+    brackets were introduced for.
+    """
+    expected = ("timecutoff=5", "freqcutoff=2.5")
+    for spec in (
+        r"tfcrop \[timecutoff=5, freqcutoff=2.5\]",
+        r"nan, tfcrop \[timecutoff=5, freqcutoff=2.5\], clip 0 100",
+    ):
+        ops = [op for op in flag_ops.parse([spec]) if op.verb == "tfcrop"]
+        assert len(ops) == 1, spec
+        assert ops[0].args == expected, (spec, ops[0].args)
+
+
+def test_tfcrop_rejects_a_bad_parameter_name_or_value():
+    """A typo must be an error, not a silently ignored setting."""
+    with pytest.raises(Exception, match="maxnpices"):
+        flag_ops.parse(["tfcrop maxnpices=3"])
+    with pytest.raises(Exception, match="maxnpieces"):
+        flag_ops.parse(["tfcrop maxnpieces=99"])
+    with pytest.raises(Exception, match="key=value"):
+        flag_ops.parse(["tfcrop timecutoff"])
+    with pytest.raises(Exception, match="flagdimension"):
+        flag_ops.parse(["tfcrop flagdimension=diagonal"])
+
+
+def test_tfcrop_runs_through_the_dispatcher(tmp_path):
+    """`run` must dispatch tfcrop to DaskMS.flag_tfcrop with parsed params."""
+    from ms_fixture import make_synthetic_ms
+
+    from skarabina.dask_ms import DaskMS
+
+    path = str(tmp_path / "tfcrop.ms")
+    make_synthetic_ms(path, nchan=32, ncorr=1, nrow=40)
+    ms = DaskMS(path)
+    ops = flag_ops.parse(["tfcrop [timecutoff=4, freqcutoff=3, maxnpieces=2]"])
+    flag_ops.run(ms, ops, log=lambda *_: None)
+    import numpy as np
+    assert np.asarray(ms.ds.FLAG.data).any(), "the verb flagged nothing"
+
+
 def test_run_reports_every_operation_in_order(tmp_path):
     """flag_ops.run announces each entry, in the order it executes."""
     from ms_fixture import make_synthetic_ms

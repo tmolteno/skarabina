@@ -12,12 +12,55 @@ import numpy as np
 import yaml
 from casacore.tables import table
 from dask.array import coarsen as da_coarsen
+from dask import delayed
 from dask.diagnostics import ProgressBar
 from daskms import xds_from_ms, xds_to_table
 
 from skarabina import flag_versions
+from skarabina.tfcrop import tfcrop_plane
 
 logger = logging.getLogger(__name__)
+
+
+def _tfcrop_block(amplitude, existing, params):
+    """TFCrop over one ``(time, chan, corr)`` block: a flag plane per correlation.
+
+    ``tfcrop_plane`` works on a single baseline and correlation.  Which
+    correlation a plane belongs to is a bookkeeping detail of how the MS stores
+    its data -- the four polarisation products are fitted independently, exactly
+    as CASA does -- so the loop lives here rather than in the algorithm.
+    """
+    planes = []
+    for corr in range(amplitude.shape[2]):
+        flag, _ = tfcrop_plane(
+            amplitude[:, :, corr], params, existing[:, :, corr]
+        )
+        planes.append(flag)
+    return np.stack(planes, axis=2)
+
+
+def _flags_and_count(flags):
+    """A block's flag plane together with its count, in one computed value.
+
+    Returning the count alongside the flags means the count is a cheap
+    reduction of an array that already exists, rather than a second traversal
+    that would force the block to be recomputed.
+    """
+    return flags, int(np.count_nonzero(flags))
+
+
+def _tfcrop_summary(params):
+    """A one-line description of a tfcrop run, for the console.
+
+    Only the parameters that differ from CASA's defaults are named, so a default
+    run prints just its name and an unusual one is obvious at a glance.
+    """
+    deviations = [
+        "%s=%s" % (name, getattr(params, name))
+        for name in sorted(params.DEFAULTS)
+        if getattr(params, name) != params.DEFAULTS[name]
+    ]
+    return ", ".join(deviations) if deviations else "CASA defaults"
 
 
 def _block_reduce(func, arr, factor, axis):
@@ -604,6 +647,92 @@ class DaskMS:
 
         self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, new_flag_row)
         self.changed["FLAG_ROW"] = True
+
+    #: Rough cap on the floating-point values a single tfcrop block may hold.
+    #: The block is the unit the algorithm fits over, so it has to be big enough
+    #: for a meaningful bandpass and small enough to hold in memory: 8M values is
+    #: 64 MB of float64, or 128 MB once the amplitude and its flags are both
+    #: live, which is a reasonable working set per dask worker.
+    TFCROP_BLOCK_VALUES = 8_000_000
+
+    def flag_tfcrop(self, params):
+        """Flag outliers on the 2-D time-frequency plane (a CASA ``tfcrop``).
+
+        See :mod:`skarabina.tfcrop` for the algorithm and its deviations from
+        the published one.  The data is transposed so that time varies along the
+        dask chunk, then one chunk at a time is handed to
+        :func:`skarabina.tfcrop.tfcrop_plane`.
+
+        The chunk is the fit unit -- the bandpass is averaged over exactly the
+        integrations in a block -- so the chunk length *is* CASA's ``ntime``.
+        Chunking on time rather than on frequency is what makes a block a
+        usable plane: a chunk holding a slice of the band could not see the band
+        shape it is supposed to fit.
+        """
+        import dask.array as _da
+
+        print("flag_tfcrop: %s" % _tfcrop_summary(params))
+
+        shape = self.ds.DATA.shape
+        n_time, n_chan, n_corr = shape
+        # The cube keeps the MS's own axis order, (time, chan, corr), and only
+        # the *time* axis is chunked: a fit needs the whole band and every
+        # correlation, so both are kept whole.  Getting this wrong is expensive
+        # and silent.  Transposing the chan and corr axes here made each block a
+        # plane of two channels instead of the full band, and the fit then
+        # flagged every visibility in the MS -- 100%, from a change that looked
+        # like a tidy-up.
+        chunk = max(1, self.TFCROP_BLOCK_VALUES // max(1, n_chan * n_corr))
+        chunk = min(chunk, max(1, n_time))
+
+        def cube(array):
+            """The data cube as (time, chan, corr), chunked along time.
+
+            The band and correlation axes must each be a single chunk, since a
+            fit needs both whole.  When the data already arrives that way -- the
+            usual case for a measurement set, where dask-ms reads a column as
+            one array per data description -- the existing graph is used as it
+            is.  Re-chunking would be a no-op in meaning but a real pass over
+            the data in time, and on a 340k-row MS that pass is most of the run.
+            """
+            data = _da.asarray(array)
+            if data.chunks[1:] == ((n_chan,), (n_corr,)):
+                return data
+            return _da.rechunk(data, (chunk, n_chan, n_corr))
+
+        amplitude = _da.absolute(cube(self.ds.DATA.data))
+        existing = cube(self.ds.FLAG.data)
+
+        # One ``delayed`` call per block, and the per-block flag count is taken
+        # from that same call.  Summing a dask array built from the blocks would
+        # evaluate every block a second time, because nothing is persisted --
+        # measurable here, and pure waste: the blocks are the expensive part.
+        blocks, counts, prior = [], [], []
+        for time_index in range(amplitude.numblocks[0]):
+            block = delayed(_tfcrop_block)(
+                amplitude.blocks[time_index], existing.blocks[time_index], params
+            )
+            block = delayed(_flags_and_count)(block)
+            blocks.append(
+                _da.from_delayed(
+                    block[0], shape=amplitude.blocks[time_index].shape, dtype=bool
+                )
+            )
+            counts.append(block[1])
+            prior.append(delayed(int)(np.count_nonzero(existing.blocks[time_index])))
+        new_flags = _da.concatenate(blocks, axis=0)
+
+        total = int(np.prod(shape))
+        new_count, already = dask.compute(sum(counts), sum(prior))
+        new_count, already = int(new_count), int(already)
+
+        self.ds["FLAG"] = (self.ds.FLAG.dims, new_flags)
+        self.changed["FLAG"] = True
+        print(
+            "flag_tfcrop: %d of %d visibilities flagged, %d newly (%.2f%% of all)"
+            % (new_count, total, new_count - already,
+               100.0 * (new_count - already) / total if total else 0.0)
+        )
 
     def flag_spectral_window(self, yaml_file):
         """
