@@ -17,40 +17,67 @@ from dask.diagnostics import ProgressBar
 from daskms import xds_from_ms, xds_to_table
 
 from skarabina import flag_versions
+from skarabina.rflag import rflag_plane
 from skarabina.tfcrop import tfcrop_plane
 
 logger = logging.getLogger(__name__)
 
 
-def _tfcrop_block(amplitude, existing, params):
-    """TFCrop over one ``(time, chan, corr)`` block: a flag plane per correlation.
+def _autofit_block(plane_function, data, existing, params):
+    """Run a plane-wise auto-flagger over one ``(time, chan, corr)`` block.
 
-    ``tfcrop_plane`` works on a single baseline and correlation.  Which
-    correlation a plane belongs to is a bookkeeping detail of how the MS stores
-    its data -- the four polarisation products are fitted independently, exactly
-    as CASA does -- so the loop lives here rather than in the algorithm.
+    Both auto-flagging algorithms work on a single baseline and correlation.
+    Which correlation a plane belongs to is a bookkeeping detail of how the MS
+    stores its data -- the polarisation products are flagged independently,
+    exactly as CASA does -- so the loop lives here rather than in the algorithm.
     """
     planes = []
-    for corr in range(amplitude.shape[2]):
-        flag, _ = tfcrop_plane(
-            amplitude[:, :, corr], params, existing[:, :, corr]
-        )
+    for corr in range(data.shape[2]):
+        flag, _ = plane_function(data[:, :, corr], params, existing[:, :, corr])
         planes.append(flag)
     return np.stack(planes, axis=2)
 
 
-def _flags_and_count(flags):
-    """A block's flag plane together with its count, in one computed value.
+def _tfcrop_block(amplitude, existing, params):
+    """TFCrop over one block; see :func:`_autofit_block`."""
+    return _autofit_block(tfcrop_plane, amplitude, existing, params)
 
-    Returning the count alongside the flags means the count is a cheap
-    reduction of an array that already exists, rather than a second traversal
-    that would force the block to be recomputed.
+
+def _rflag_block(data, existing, params):
+    """RFlag over one block; see :func:`_autofit_block`."""
+    return _autofit_block(rflag_plane, data, existing, params)
+
+
+def _prepare_block(block_function):
+    """The block function for a verb, with the conversion that verb needs.
+
+    TFCrop fits the amplitude plane; RFlag measures the scatter of the real and
+    imaginary parts, so it needs the complex visibilities as they are.  Doing
+    the conversion here keeps it in the same deferred call as the algorithm.
     """
-    return flags, int(np.count_nonzero(flags))
+    def run(data, existing, params):
+        if block_function is _tfcrop_block:
+            data = np.absolute(data)
+        return block_function(data, existing, params)
+    return run
 
 
-def _tfcrop_summary(params):
-    """A one-line description of a tfcrop run, for the console.
+def _flags_and_counts(block_function):
+    """Wrap a block function so one call yields flags and both flag counts.
+
+    The new count and the pre-existing count are reductions of arrays that
+    already exist at that point, so returning them here costs nothing and saves
+    a second traversal -- which, on a graph that is not persisted, means saving
+    a second evaluation of the whole block.
+    """
+    def run(data, existing, params):
+        flags = block_function(data, existing, params)
+        return flags, int(np.count_nonzero(flags)), int(np.count_nonzero(existing))
+    return run
+
+
+def _parameter_summary(params):
+    """A one-line description of an auto-flagging run, for the console.
 
     Only the parameters that differ from CASA's defaults are named, so a default
     run prints just its name and an unusual one is obvious at a glance.
@@ -653,46 +680,38 @@ class DaskMS:
     #: for a meaningful bandpass and small enough to hold in memory: 8M values is
     #: 64 MB of float64, or 128 MB once the amplitude and its flags are both
     #: live, which is a reasonable working set per dask worker.
-    TFCROP_BLOCK_VALUES = 8_000_000
+    AUTOFIT_BLOCK_VALUES = 8_000_000
 
-    def flag_tfcrop(self, params):
-        """Flag outliers on the 2-D time-frequency plane (a CASA ``tfcrop``).
+    def _run_autofit(self, params, plane_function, block_function, label):
+        """Chunk the cube along time and run a plane-wise flagger over it.
 
-        See :mod:`skarabina.tfcrop` for the algorithm and its deviations from
-        the published one.  The data is transposed so that time varies along the
-        dask chunk, then one chunk at a time is handed to
-        :func:`skarabina.tfcrop.tfcrop_plane`.
-
-        The chunk is the fit unit -- the bandpass is averaged over exactly the
-        integrations in a block -- so the chunk length *is* CASA's ``ntime``.
-        Chunking on time rather than on frequency is what makes a block a
-        usable plane: a chunk holding a slice of the band could not see the band
-        shape it is supposed to fit.
+        Shared by ``tfcrop`` and ``rflag``: both take the whole band and every
+        correlation as the unit they work on, and neither can be vectorised
+        across those axes, so both need the same chunking and reassembly.
         """
         import dask.array as _da
 
-        print("flag_tfcrop: %s" % _tfcrop_summary(params))
+        print("%s: %s" % (label, _parameter_summary(params)))
 
         shape = self.ds.DATA.shape
         n_time, n_chan, n_corr = shape
         # The cube keeps the MS's own axis order, (time, chan, corr), and only
-        # the *time* axis is chunked: a fit needs the whole band and every
+        # the *time* axis is chunked: a plane needs the whole band and every
         # correlation, so both are kept whole.  Getting this wrong is expensive
-        # and silent.  Transposing the chan and corr axes here made each block a
-        # plane of two channels instead of the full band, and the fit then
-        # flagged every visibility in the MS -- 100%, from a change that looked
-        # like a tidy-up.
-        chunk = max(1, self.TFCROP_BLOCK_VALUES // max(1, n_chan * n_corr))
+        # and silent -- transposing the chan and corr axes here made each block a
+        # plane of two channels, and the fit then flagged every visibility in
+        # the MS, 100 %, from a change that looked like a tidy-up.
+        chunk = max(1, self.AUTOFIT_BLOCK_VALUES // max(1, n_chan * n_corr))
         chunk = min(chunk, max(1, n_time))
 
         def cube(array):
             """The data cube as (time, chan, corr), chunked along time.
 
             The band and correlation axes must each be a single chunk, since a
-            fit needs both whole.  When the data already arrives that way -- the
-            usual case for a measurement set, where dask-ms reads a column as
-            one array per data description -- the existing graph is used as it
-            is.  Re-chunking would be a no-op in meaning but a real pass over
+            plane needs both whole.  When the data already arrives that way --
+            the usual case for a measurement set, where dask-ms reads a column
+            as one array per data description -- the existing graph is used as
+            it is.  Re-chunking would be a no-op in meaning but a real pass over
             the data in time, and on a 340k-row MS that pass is most of the run.
             """
             data = _da.asarray(array)
@@ -700,7 +719,7 @@ class DaskMS:
                 return data
             return _da.rechunk(data, (chunk, n_chan, n_corr))
 
-        amplitude = _da.absolute(cube(self.ds.DATA.data))
+        payload = cube(self.ds.DATA.data)
         existing = cube(self.ds.FLAG.data)
 
         # One ``delayed`` call per block, and the per-block flag count is taken
@@ -708,31 +727,58 @@ class DaskMS:
         # evaluate every block a second time, because nothing is persisted --
         # measurable here, and pure waste: the blocks are the expensive part.
         blocks, counts, prior = [], [], []
-        for time_index in range(amplitude.numblocks[0]):
-            block = delayed(_tfcrop_block)(
-                amplitude.blocks[time_index], existing.blocks[time_index], params
+        for time_index in range(payload.numblocks[0]):
+            # TFCrop works on amplitudes and RFlag on the complex visibilities,
+            # so each block converts its own; the conversion is deferred with
+            # the rest of the block to keep it inside the per-block working set.
+            block = delayed(_flags_and_counts(_prepare_block(block_function)))(
+                payload.blocks[time_index], existing.blocks[time_index], params
             )
-            block = delayed(_flags_and_count)(block)
             blocks.append(
                 _da.from_delayed(
-                    block[0], shape=amplitude.blocks[time_index].shape, dtype=bool
+                    block[0], shape=payload.blocks[time_index].shape, dtype=bool
                 )
             )
             counts.append(block[1])
-            prior.append(delayed(int)(np.count_nonzero(existing.blocks[time_index])))
+            prior.append(block[2])
         new_flags = _da.concatenate(blocks, axis=0)
 
-        total = int(np.prod(shape))
-        new_count, already = dask.compute(sum(counts), sum(prior))
+        # Both counts come out of the same call as the flags.  Counting the
+        # pre-existing flags separately would be a second traversal of the same
+        # dask array, and since nothing is persisted that re-runs every block --
+        # which doubled the runtime of the whole operation when it was done that
+        # way, for a number that was already in hand.
+        new_count, already = dask.compute(
+            delayed(sum)(counts), delayed(sum)(prior)
+        )
         new_count, already = int(new_count), int(already)
+        total = int(np.prod(shape))
 
         self.ds["FLAG"] = (self.ds.FLAG.dims, new_flags)
         self.changed["FLAG"] = True
         print(
-            "flag_tfcrop: %d of %d visibilities flagged, %d newly (%.2f%% of all)"
-            % (new_count, total, new_count - already,
+            "%s: %d of %d visibilities flagged, %d newly (%.2f%% of all)"
+            % (label, new_count, total, new_count - already,
                100.0 * (new_count - already) / total if total else 0.0)
         )
+
+    def flag_rflag(self, params):
+        """Flag outliers from sliding-window statistics (a CASA ``rflag``).
+
+        See :mod:`skarabina.rflag` for the algorithm and its deviations from the
+        published one.  Shares its chunking with :meth:`flag_tfcrop`.
+        """
+        self._run_autofit(params, rflag_plane, _rflag_block, "flag_rflag")
+
+    def flag_tfcrop(self, params):
+        """Flag outliers on the 2-D time-frequency plane (a CASA ``tfcrop``).
+
+        See :mod:`skarabina.tfcrop` for the algorithm and its deviations from
+        the published one.  Shares its chunking with :meth:`flag_rflag`, which
+        needs the same time-chunked, whole-band blocks; the chunk is the fit
+        unit, so its length *is* CASA's ``ntime``.
+        """
+        self._run_autofit(params, tfcrop_plane, _tfcrop_block, "flag_tfcrop")
 
     def flag_spectral_window(self, yaml_file):
         """

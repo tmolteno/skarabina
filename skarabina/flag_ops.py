@@ -23,6 +23,7 @@ from typing import List, Optional, Tuple
 import click
 import yaml
 
+from skarabina.rflag import RFlagParams
 from skarabina.tfcrop import TFCropParams
 
 # Canonical order used by the 0.8.x flagger, kept as the migration reference in
@@ -34,6 +35,7 @@ CANONICAL_ORDER: Tuple[str, ...] = (
     "nan",
     "clip",
     "tfcrop",
+    "rflag",
     "spectral-window",
 )
 
@@ -51,6 +53,7 @@ VERB_ALIASES = {
     "spectral_window": "spectral-window",
     "spectralwindow": "spectral-window",
     "tfcrop": "tfcrop",
+    "rflag": "rflag",
 }
 
 # Markers take a name rather than a value, hence the colon form.
@@ -269,7 +272,14 @@ def parse_entry(entry: str) -> FlagOp:
         return FlagOp(verb, rest, entry)
 
     if verb == "tfcrop":
-        return FlagOp(verb, _parse_tfcrop_args(rest, entry), entry)
+        return FlagOp(
+            verb, _parse_autofit_args(rest, entry, TFCropParams), entry
+        )
+
+    if verb == "rflag":
+        return FlagOp(
+            verb, _parse_autofit_args(rest, entry, RFlagParams), entry
+        )
 
     if verb == "spectral-window":
         if len(rest) != 1:
@@ -282,8 +292,8 @@ def parse_entry(entry: str) -> FlagOp:
     raise FlagOrderError(f"entry {entry!r}: unhandled verb '{verb}'")
 
 
-def _parse_tfcrop_args(rest, entry) -> Tuple[str, ...]:
-    """Parameters for ``tfcrop``, as ``key=value`` pairs.
+def _parse_autofit_args(rest, entry, params_class) -> Tuple[str, ...]:
+    """Parameters for an auto-flagging verb, as ``key=value`` pairs.
 
     Written after the verb, in brackets, or with colons, all equivalent::
 
@@ -294,7 +304,7 @@ def _parse_tfcrop_args(rest, entry) -> Tuple[str, ...]:
     Keyword form rather than positional because the verb has nine parameters
     whose names are the ones CASA's ``flagdata`` uses, so a recipe reads the
     same way it would there and only the parameters being changed need naming.
-    ``TFCropParams`` validates them, so a typo is an error rather than a
+    The parameter class validates them, so a typo is an error rather than a
     silently ignored setting.
 
     The colon form exists because the parameters usually arrive inside a YAML
@@ -330,7 +340,7 @@ def _parse_tfcrop_args(rest, entry) -> Tuple[str, ...]:
         head, sep, tail = piece.partition("=")
         if not sep:
             colon_head, colon_sep, colon_tail = piece.partition(":")
-            if colon_sep and colon_head.strip() in TFCropParams.DEFAULTS:
+            if colon_sep and colon_head.strip() in params_class.DEFAULTS:
                 head, sep, tail = colon_head, colon_sep, colon_tail
         if not sep:
             raise FlagOrderError(
@@ -355,7 +365,7 @@ def _parse_tfcrop_args(rest, entry) -> Tuple[str, ...]:
     try:
         # Constructed for its validation side effect; the values are parsed
         # again at run time, so the parsed form stays a plain tuple of strings.
-        TFCropParams(**dict(_coerce_tfcrop(named)))
+        params_class(**dict(_coerce_parameters(named)))
     except ValueError as exc:
         raise FlagOrderError(f"entry {entry!r}: {exc}") from None
     return tuple(named)
@@ -382,8 +392,8 @@ def _unescape_brackets(text: str) -> str:
     return "".join(out)
 
 
-def _coerce_tfcrop(named):
-    """``key=value`` strings to typed keyword arguments for :class:`TFCropParams`."""
+def _coerce_parameters(named):
+    """``key=value`` strings to typed keyword arguments for a parameter class."""
     coerced = {}
     for token in named:
         key, _, value = token.partition("=")
@@ -396,7 +406,7 @@ def _literal(text: str):
 
     Only the types CASA's tfcrop parameters actually take: numbers, one of a
     few names, and booleans.  Anything else stays a string, which
-    :class:`TFCropParams` then rejects by name.
+    the parameter class then rejects by name.
     """
     lowered = text.lower()
     if lowered in ("true", "false"):
@@ -500,7 +510,9 @@ def run(ms, ops, log=print):
                 {"CLIP": (float(op.args[0]), float(op.args[1]))}, defer=defer
             )
         elif op.verb == "tfcrop":
-            ms.flag_tfcrop(TFCropParams(**_coerce_tfcrop(op.args)))
+            ms.flag_tfcrop(TFCropParams(**_coerce_parameters(op.args)))
+        elif op.verb == "rflag":
+            ms.flag_rflag(RFlagParams(**_coerce_parameters(op.args)))
         elif op.verb == "spectral-window":
             ms.flag_spectral_window(op.args[0])
         else:  # pragma: no cover - parse() rejects anything else

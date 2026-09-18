@@ -82,10 +82,10 @@ logger = logging.getLogger(__name__)
     help="A flagging operation, or a comma-separated run of them, in the"
     " order they should run. Repeatable; occurrences are concatenated."
     " Verbs: autos, uv-above <metres>, nan, clip <lo> <hi>, tfcrop"
-    " [key=value ...], spectral-window <file.yml>, and the markers"
-    " save:<name> / restore:<name>. tfcrop takes CASA's flagdata(mode=tfcrop)"
-    " parameters, e.g. 'tfcrop [timecutoff=4, freqcutoff=3, maxnpieces=7]'."
-    " See doc/NEW_FLAGGING.md.",
+    " [key=value ...], rflag [key=value ...], spectral-window <file.yml>, and"
+    " the markers save:<name> / restore:<name>. tfcrop and rflag take CASA's"
+    " flagdata parameters, e.g. 'tfcrop [timecutoff=4, maxnpieces=7]' or"
+    " 'rflag [winsize=5, timedevscale=4]'. See doc/NEW_FLAGGING.md.",
 )
 @click.option(
     "--flag-file",
