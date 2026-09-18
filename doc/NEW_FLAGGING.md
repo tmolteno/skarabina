@@ -81,15 +81,17 @@ Quoting is honoured, so paths containing spaces work:
 | `clip` | `lo hi` | `--flag-clip lo hi` |
 | `uv-above` | `metres` | `--flag-uv-above metres` |
 | `tfcrop` | `[key=value ...]` | — (new) |
+| `rflag` | `[key=value ...]` | — (new) |
 | `spectral-window` | `file.yml` | `--flag-spectral-window file.yml` |
 | `autos` | — | `--flag-autos` |
 | `save:NAME` | — | `--flag-save-before NAME` |
 | `restore:NAME` | — | `--flag-restore-before NAME` |
 
 `save:` and `restore:` keep the colon form because they take a bare name.  Every
-other verb but `tfcrop` takes space-separated positional values; `tfcrop` takes
-`key=value` pairs, because it has nine parameters and positional order for nine
-values would be a trap.  See §9.
+other verb but the two auto-flaggers takes space-separated positional values;
+`tfcrop` and `rflag` take `key=value` pairs, because they have nine and seven
+parameters and positional order for that many values would be a trap.  See §9
+and §10.
 
 Accepted spellings for the hyphenated verb: `uv-above`, `uvabove`, `uv_above`.
 `uv-above` is the documented form; the others are accepted so that a shell
@@ -713,3 +715,138 @@ paired with a false-positive bound.  The properties pinned are:
   each block a plane of two channels rather than the whole band, and *every*
   visibility in the MS came back flagged -- 100%, from a change that looked like
   tidying.
+
+
+## 10. The `rflag` verb
+
+A reimplementation of CASA's `flagdata(mode='rflag')`, which Eric Greisen
+developed in AIPS.  The implementation is `skarabina/rflag.py` and, like
+`tfcrop`, is free of dask: it works on one `(time, chan)` plane of complex
+visibilities.
+
+### 10.1 What it does that tfcrop does not
+
+TFCrop fits the bandpass and flags what does not follow it.  RFlag asks a
+different question -- is the *scatter* here unusual? -- and needs no model of the
+band at all:
+
+1. **Time analysis, per channel.**  Slide a window of `winsize` integrations
+   along time and measure the local scatter.  Take the median of those, and the
+   median absolute deviation from it, then flag where the local scatter sits
+   more than `timedevscale` deviations above.
+2. **Spectral analysis, per sample.**  Compare each sample with the median of
+   its neighbouring *channels*, and flag where it departs by more than
+   `freqdevscale` times the typical such departure.
+
+Both steps are medians, which is the point: a mean would be dragged around by
+the very RFI being looked for, and the algorithm would then miss it.
+
+The two steps are complementary, and the split falls out of the data:
+
+| RFI | found by |
+|---|---|
+| a burst in a few integrations | the time step -- a channel bright in 5 rows of 200 is invisible in any average |
+| a narrow-band feature present throughout | the spectral step |
+| a broadband burst | the time step |
+
+### 10.2 Grammar
+
+The same as `tfcrop` (§9.2): `key=value` pairs, `:` also accepted, brackets
+optional, validated at parse time so a typo is an error naming the real
+parameter.  Delivered from a recipe, the entry must be one quoted string, for
+the reason given in §9.2.
+
+### 10.3 Parameters
+
+| Name | Default | Meaning |
+|---|---|---|
+| `winsize` | 3 | integrations in the sliding time window |
+| `timedev` | unset | time-series noise estimate; measured from the data when unset |
+| `freqdev` | unset | spectral noise estimate; measured when unset |
+| `timedevscale` | 5.0 | threshold multiplier for the time step |
+| `freqdevscale` | 5.0 | threshold multiplier for the spectral step |
+| `spectralmax` | 1e6 | flag the whole spectrum if the measured deviation exceeds this |
+| `spectralmin` | 0.0 | flag the whole spectrum if it falls below this |
+
+`ntime` and `combinescans` are absent for the same reason as in `tfcrop`: the
+chunk the statistics are gathered over is the dask chunk, so `ntime` is the
+chunk length and there is no separate control to contradict it.
+
+Supplying `timedev`/`freqdev` is what makes the two-pass workflow work -- CASA's
+`action='calculate'` writes the measured thresholds out, a user reviews them,
+and a second pass supplies them.  A supplied value is used as-is rather than
+mixed with anything measured.
+
+### 10.4 Deliberate deviations and hard-won details
+
+1. **The local statistic is the scatter about the window's own mean**, not the
+   r.m.s. about zero.  The distinction is what makes a supplied `timedev`
+   meaningful at all: the r.m.s. about zero of a 10 Jy source in a 0.05 Jy noise
+   floor is 10, so a threshold of `timedevscale * 0.05` would flag everything.
+   Measured about the window mean, the same data gives 0.05.  Getting this
+   wrong flagged 91 % of a clean plane.
+2. **The robust scale is `median(|x|)`, not the MAD about the median.**  They
+   agree for centred data, but the MAD is measured about the median and so is
+   inflated by the outliers themselves once they are more than a small fraction
+   of the sample -- which is exactly the case for a residual whose typical value
+   is zero.  Measured on a time burst three channels wide, `median(|x|)` is
+   0.0011 against a burst of 0.72 where the MAD about the median gives 0.0021;
+   scaled by five, the first flags the burst and the second flags nothing.
+3. **The spectral step compares each sample with its neighbouring channels**
+   rather than with a smoothed band.  A running median was tried first and is
+   degenerate on this data: it sits *exactly* on a smooth band, so most
+   residuals are identically zero, every quantile-based scale for them is zero,
+   and the threshold collapses -- which flagged the four channels at the band
+   ends, where the clipped kernel does leave a blip.  A neighbour difference
+   always carries the channel-to-channel noise, so its scale is well defined.
+   It is also what keeps a burst confined to its own rows: a channel bright for
+   five integrations of two hundred is invisible in the time average.
+4. **A deviation of exactly zero is left alone rather than given an invented
+   threshold.**  An earlier version fell back to a fraction of the signal level,
+   which on a clean plane put the threshold *between* the noise and the
+   numerical blip at the band ends and flagged exactly those channels.
+5. **`spectralmin`/`spectralmax` are compared with the measured deviation** and
+   flag the whole spectrum on an excursion, as described.  Below `spectralmin`
+   the band is smoother than it should be -- a correlator or a model gone flat
+   -- and above `spectralmax` it is too rough for any channel to be trusted.
+
+### 10.5 The spectral step's characteristic, which is worth knowing
+
+Because each channel is compared with its neighbours, the band's own slope
+enters the scale and a smooth band passes untouched -- the test suite runs clean
+planes at 64 % peak-to-peak with zero flags.  What the step cannot distinguish
+from RFI is a *step* in the band: a channel standing above its neighbours by
+more than a few times the channel-to-channel noise is flagged, and nothing in
+the data separates that from a genuine narrow feature.  Measured, a 5 % step is
+flagged at every channel count tried, 64 to 4096.
+
+This is why CASA says the spectral step "depends on having a relatively-flat
+bandshape", and it has a practical consequence: on a coarse channel grid with a
+steep band shape, the adjacent-channel difference of the band itself is large
+compared with the noise, and a user should supply `freqdev` rather than let it
+be measured.  On a fine grid -- thousands of channels, where the band changes
+little from channel to channel -- measuring it is well behaved.
+
+### 10.6 Tests
+
+`tests/test_rflag.py`, with the same structure as the tfcrop tests: recall and
+false-positive rate both measured, and a recall assertion never left without a
+false-positive bound.
+
+- the local scatter recovers the **noise**, not the signal, for a 10 Jy source in
+  a 0.05 Jy floor -- the property a supplied `timedev` depends on;
+- the robust scale is not inflated by a few large outliers, and is not the MAD
+  about the median;
+- a smooth band registers no neighbour deviation, and the deviation is never
+  identically zero -- the degenerate case above;
+- **five clean seeds** flag nothing, because a threshold slightly too tight
+  flags a handful of pixels and one seed can miss it;
+- a time burst is flagged in its own rows and nowhere else;
+- a narrow-band spike is flagged across time, together with exactly its two
+  neighbouring channels and no more;
+- spikes down to 1.2x, which a plain amplitude clip cannot see without also
+  flagging the bright end of a band that spans 64 %;
+- a supplied noise estimate flags nothing on a clean plane and still finds a
+  spike;
+- pre-existing flags are preserved, counted, and excluded from the statistics;
+- the band and time axes are not transposed, on a cube spanning several blocks.

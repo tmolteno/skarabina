@@ -3,6 +3,66 @@
 
 ## [Unreleased]
 
+## [1.0.4]
+
+### Added
+
+- **An ``rflag`` flagging verb**, a reimplementation of CASA's
+  ``flagdata(mode='rflag')``, the algorithm Eric Greisen developed in AIPS.
+  Where ``tfcrop`` fits the bandpass and flags what does not follow it,
+  ``rflag`` asks whether the local *scatter* is unusual, so it models nothing.
+  Two steps run over each chunk -- a sliding-window scatter along time for every
+  channel, and a per-sample comparison with the neighbouring channels -- and
+  they catch different RFI: a burst lasting a few integrations is invisible in
+  any average and only the time step finds it, while a narrow feature present
+  throughout is the spectral step's.
+
+  ```
+  skarabina --ms obs.ms --flag "autos, uv-above 4000, rflag, clip 0 100"
+  ```
+
+  Parameters are CASA's names -- ``winsize``, ``timedev``, ``freqdev``,
+  ``timedevscale``, ``freqdevscale``, ``spectralmax``, ``spectralmin`` -- so a
+  ``flagdata(mode='rflag')`` recipe transfers unchanged, and supplying
+  ``timedev``/``freqdev`` gives the two-pass workflow CASA supports: measure the
+  thresholds on one pass, review them, apply them on the next.
+
+  Three details were each worth more than the rest of the implementation:
+
+  - the local statistic is the scatter about the window's own mean, not the
+    r.m.s. about zero.  The r.m.s. about zero of a 10 Jy source in a 0.05 Jy
+    noise floor is 10, so a threshold of ``timedevscale * 0.05`` would flag
+    everything; measured about the window mean it is 0.05.  Getting this wrong
+    flagged 91 % of a clean plane;
+  - the robust scale is ``median(|x|)``, not the MAD about the median.  The MAD
+    is measured about the median and so is inflated by the outliers themselves;
+    on a three-channel-wide burst the two differ by a factor of two, and scaled
+    by five one flags the burst and the other flags nothing;
+  - the spectral step compares each sample with its neighbouring channels rather
+    than with a smoothed band.  A running median sits exactly on a smooth band,
+    so its residuals are all zero, every quantile-based scale for them is zero,
+    and the threshold collapses.
+
+  ``doc/NEW_FLAGGING.md`` §10 records these and the rest, including the step's
+  characteristic that a channel with merely higher gain is flagged as a narrow
+  feature -- which is why CASA warns the step wants a nearly-flat bandshape, and
+  when to supply ``freqdev`` rather than let it be measured.
+
+  On the real MT0 MS (2000 rows x 4096 channels, 0.01 % pre-flagged) it flags
+  20 % of the data, with a per-channel rate from 0 % to 100 % and a median of
+  6 % -- the algorithm is discriminating between channels, not flagging
+  uniformly.  On the 340k-row averaged MS it takes 292 s.
+
+  Two performance defects were found by running it rather than by reading it,
+  both of which had left the implementation about 40x slower than it needed to
+  be.  ``local_rms`` built two small arrays per window -- 25 000 of them per
+  block -- and was 71 s of the 71 s a plane took; computed from prefix sums it
+  is 0.3 s.  ``_time_step`` rebuilt the window bounds *inside* the loop over
+  suspect samples, so a real block allocated 142 000 x 25 641 tuples and took
+  390 s against 5.3 s once the bounds were hoisted.  A third defect doubled the
+  runtime outright: counting the pre-existing flags forced every block to be
+  computed twice, for a number already in hand.
+
 ## [1.0.3]
 
 ### Added

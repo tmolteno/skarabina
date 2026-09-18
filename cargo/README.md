@@ -253,6 +253,37 @@ unknown verb.  With no parameters `tfcrop` uses CASA's defaults; the full list i
 in [`doc/usage.md`](../doc/usage.md), and the algorithm and its deviations from
 the published one are in [`doc/NEW_FLAGGING.md`](../doc/NEW_FLAGGING.md) §9.
 
+#### Sliding-window flagging with `rflag`
+
+`rflag` is the second CASA auto-flagger, and complements `tfcrop`: where
+`tfcrop` fits the bandpass and flags what does not follow it, `rflag` asks
+whether the local *scatter* is unusual, so it needs no model of the band.  Its
+two steps catch different RFI -- a short burst is found in the time direction, a
+persistent narrow-band feature in the spectral one -- so one pass looks for
+both.  It takes CASA's parameter names the same way `tfcrop` does:
+
+```yaml
+steps:
+  flag:
+    cab: skarabina
+    params:
+      ms: =recipe.ms
+      flag:
+        - autos
+        - uv-above 4000
+        - "tfcrop [timecutoff=5, maxnpieces=3]"
+        - "rflag [winsize=5, timedevscale=4.0, freqdevscale=4.0]"
+        - clip 0 100
+      msout: cleaned.ms
+      clobber: true
+```
+
+Supplying `timedev` and `freqdev` replaces the measured thresholds with your own
+noise estimates, which is the two-pass workflow: measure on one pass, then apply
+with the numbers you chose.  See [`doc/usage.md`](../doc/usage.md) for the
+parameters and [`doc/NEW_FLAGGING.md`](../doc/NEW_FLAGGING.md) §10 for the
+algorithm, including why a channel with merely higher gain is flagged.
+
 #### Flag versions (backups)
 
 `save:` and `restore:` entries in the `flag` list back up and restore flags,

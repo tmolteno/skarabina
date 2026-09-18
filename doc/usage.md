@@ -130,6 +130,45 @@ after `uv-above`, and before `clip`:
         --flag "autos, uv-above 4000, tfcrop, clip 0 100" \
         --msout cleaned.ms --clobber --write-changed-only
 
+### RFlag (sliding-window statistics)
+
+`rflag` is the other CASA auto-flagger. Where `tfcrop` fits the bandpass and
+flags what does not follow it, `rflag` asks whether the *scatter* is unusual,
+and needs no model of the band. It catches a short burst and a persistent
+narrow-band feature by different steps, so one pass finds both:
+
+    skarabina --ms test.ms --flag "rflag" --apply --clobber
+
+Parameters are `key=value` or `key: value`, named after CASA's:
+
+    skarabina --ms test.ms --flag "rflag [winsize=5, timedevscale=4.0]" --apply
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `winsize` | 3 | integrations in the sliding time window |
+| `timedev` | unset | time-series noise estimate (measured if unset) |
+| `freqdev` | unset | spectral noise estimate (measured if unset) |
+| `timedevscale` | 5.0 | threshold multiplier, time step |
+| `freqdevscale` | 5.0 | threshold multiplier, spectral step |
+| `spectralmax` | 1e6 | flag the whole spectrum above this deviation |
+| `spectralmin` | 0.0 | flag the whole spectrum below this deviation |
+
+Supplying `timedev` and `freqdev` replaces the measured thresholds with your
+own, which is the two-pass workflow CASA supports: measure on one pass, review,
+then apply with the numbers you chose. A good starting point for a MeerKAT
+L-band MS is the noise per visibility.
+
+Note that the spectral step compares each channel with its neighbours, so a
+channel that merely has *higher gain* looks like a narrow feature and will be
+flagged. On a fine channel grid this is harmless; on a coarse grid with a steep
+band shape, supply `freqdev` instead of letting it be measured.
+
+Typical use is `rflag` after the cheap selection-based flags and before a clip:
+
+    skarabina --ms test.ms \
+        --flag "autos, uv-above 4000, tfcrop, rflag, clip 0 100" \
+        --msout cleaned.ms --clobber --write-changed-only
+
 ### Spectral-window flagging
 
 Flag known RFI frequency ranges from a YAML file:
