@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.2]
+
 ### Added
 
 - **A ``tfcrop`` flagging verb**, a reimplementation of CASA's
