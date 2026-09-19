@@ -13,7 +13,7 @@ dependencies = [
     # The tmolteno/dask-ms fork: supports the casacure backend
     # (DASK_MS_BACKEND=casacure), selected automatically by skarabina's
     # __init__ when casacure is installed.
-    "dask-ms[xarray,zarr] @ git+https://github.com/tmolteno/dask-ms.git",
+    "dask-ms[xarray,zarr,casacure] @ git+https://github.com/tmolteno/dask-ms.git",
     "zarr>=2.0",
     "angle-parser>=0.1.0",
 ]
