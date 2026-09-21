@@ -3,6 +3,18 @@
 
 ## [Unreleased]
 
+## [1.0.5]
+
+### Fixed
+
+- **The ``tfcrop``/``rflag`` write no longer runs the flagging algorithm
+  twice.**  The report counts were reductions of the same lazy blocks that the
+  write's ``compute`` then evaluated again -- ``delayed`` results are not
+  cached between ``compute`` calls, so every block ran twice per run, for a
+  number already in hand.  The flags are now ``persist``-ed once, so the report
+  and the write (and any downstream computation fused into the same dask graph)
+  share a single evaluation.
+
 ## [1.0.4]
 
 ### Added
