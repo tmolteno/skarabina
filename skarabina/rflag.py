@@ -78,18 +78,52 @@ def robust_scale(values):
     return float(np.median(np.abs(values)))
 
 
+def _window_bounds(n_samples, winsize):
+    """(starts, stops) index arrays for a sliding centred window of
+    ``winsize`` over ``n_samples``.
+
+    The window is centred on each sample, so there is one position per sample
+    and the flagged positions line up with the data.  At the ends it is
+    clipped rather than wrapped or shrunk, so the first and last integration
+    are judged with as much data as exists rather than with a window that has
+    been allowed to run off the edge.
+
+    Computed as one vectorised ``arange`` (no Python list) and cached per
+    ``(n_samples, winsize)``: a run reuses the same block length and window
+    sizes over and over, and the original rebuilt a list of ``n_samples``
+    tuples on every call -- tens of milliseconds per call, tens of seconds
+    per block -- for indices that never change.
+    """
+    key = (n_samples, winsize)
+    cached = _WINDOW_CACHE.get(key)
+    if cached is not None:
+        return cached
+    half = winsize // 2
+    i = np.arange(n_samples)
+    starts = np.maximum(i - half, 0)
+    stops = np.minimum(i - half + winsize, n_samples)
+    # A single run works over a handful of (length, winsize) pairs; cap the
+    # cache so a long-lived process cannot grow it without bound.
+    if len(_WINDOW_CACHE) > 32:
+        _WINDOW_CACHE.clear()
+    _WINDOW_CACHE[key] = (starts, stops)
+    return starts, stops
+
+
+#: Cache of ``(n_samples, winsize) -> (starts, stops)`` window-index arrays.
+#: Shared between ``_window_sums`` and the time-step scan, so the bounds for a
+#: given block length and window size are computed once per run, not per call.
+_WINDOW_CACHE: dict = {}
+
+
 def _window_starts(n_samples, winsize):
     """Start indices for a sliding window of ``winsize`` over ``n_samples``.
 
-    The window is centred on each sample, so there is one position per sample and
-    the flagged positions line up with the data.  At the ends it is clipped rather
-    than wrapped or shrunk, so the first and last integration are judged with as
-    much data as exists rather than with a window that has been allowed to run
-    off the edge.
+    Retained as a thin wrapper over :func:`_window_bounds` for callers that
+    iterate ``(start, stop)`` pairs.
     """
-    half = winsize // 2
-    return [(max(0, i - half), min(n_samples, i - half + winsize))
-            for i in range(n_samples)]
+    starts, stops = _window_bounds(n_samples, winsize)
+    return list(zip(starts.tolist(), stops.tolist()))
 
 
 def local_rms(values, winsize):
@@ -159,8 +193,7 @@ def _window_sums(values, winsize):
     edge.  A NaN counts as absent from both, which is what lets a caller pass
     data with flagged samples masked out.
     """
-    starts = np.array([s for s, _ in _window_starts(values.shape[0], winsize)])
-    stops = np.array([e for _, e in _window_starts(values.shape[0], winsize)])
+    starts, stops = _window_bounds(values.shape[0], winsize)
     padded = np.zeros((values.shape[0] + 1,) + values.shape[1:], dtype=float)
     np.cumsum(values, axis=0, out=padded[1:])
     total = padded[stops] - padded[starts]
@@ -196,20 +229,31 @@ def neighbour_residual(level, span=1):
         unresolved = ~np.isfinite(out)
         if not unresolved.any():
             break
-        for index in range(nchan):
-            low, high = index - width, index + width
-            if low < 0 or high >= nchan:
-                continue
-            neighbours = np.delete(level[:, low:high + 1], width, axis=-1)
-            # A neighbour column that is entirely flagged is normal on real
-            # data; the median is then NaN and the sample is simply left
-            # unflagged, so the warning that numpy raises for it is noise.
-            with warnings.catch_warnings(), np.errstate(invalid="ignore"):
-                warnings.simplefilter("ignore", RuntimeWarning)
-                reference = np.nanmedian(neighbours, axis=-1)
-            usable = unresolved[:, index] & np.isfinite(reference) \
-                & np.isfinite(level[:, index])
-            out[usable, index] = level[usable, index] - reference[usable]
+        # Gather the 2*width neighbours (centre excluded) of every channel in
+        # ONE indexed view, and take the per-timestep median in one
+        # ``nanmedian`` call over the whole (time, chan, 2*w) window instead
+        # of one call per channel (thousands of masked-array medians per
+        # spectral step on a real block).
+        offsets = np.concatenate(
+            [np.arange(-width, 0), np.arange(1, width + 1)]
+        )
+        idx = np.arange(nchan)[:, None] + offsets[None, :]  # (nchan, 2w)
+        in_range = (idx >= 0) & (idx < nchan)
+        keep = in_range.all(axis=1)
+        # Channels at the band edges have no full window at any width, so they
+        # stay NaN by design (the original ``continue`` for ``low<0``/
+        # ``high>=nchan`` has the same effect).
+        gathered = level[:, np.where(in_range, idx, 0)[keep]]  # (time, nw, 2w)
+        # A neighbour column that is entirely flagged is normal on real data;
+        # the median is then NaN and the sample is simply left unflagged, so
+        # the warning that numpy raises for it is noise.
+        with warnings.catch_warnings(), np.errstate(invalid="ignore"):
+            warnings.simplefilter("ignore", RuntimeWarning)
+            reference_keep = np.nanmedian(gathered, axis=-1)  # (time, nw)
+        reference = np.full((level.shape[0], nchan), np.nan)
+        reference[:, keep] = reference_keep
+        usable = unresolved & np.isfinite(reference) & np.isfinite(level)
+        out[usable] = level[usable] - reference[usable]
     return out[0] if was_1d else out
 
 
@@ -315,8 +359,7 @@ def _time_step(plane, flagged, params, floor):
     # -- rebuilds a list of every window for every flagged sample, and on a real
     # block that was 142 000 suspects x 25 641 tuples: measured, 390 s against
     # 5.3 s for the same arithmetic.
-    starts = np.array([s for s, _ in _window_starts(values.shape[0], params.winsize)])
-    stops = np.array([e for _, e in _window_starts(values.shape[0], params.winsize)])
+    starts, stops = _window_bounds(values.shape[0], params.winsize)
     for chan in range(values.shape[1]):
         local = local_rms(values[:, chan], params.winsize)
         threshold, _, _ = _time_thresholds(
