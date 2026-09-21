@@ -722,11 +722,15 @@ class DaskMS:
         payload = cube(self.ds.DATA.data)
         existing = cube(self.ds.FLAG.data)
 
-        # One ``delayed`` call per block, and the per-block flag count is taken
-        # from that same call.  Summing a dask array built from the blocks would
-        # evaluate every block a second time, because nothing is persisted --
-        # measurable here, and pure waste: the blocks are the expensive part.
-        blocks, counts, prior = [], [], []
+        # One ``delayed`` call per block.  The blocks are the expensive part,
+        # and they must run exactly once: ``delayed`` results are not cached
+        # between ``compute`` calls, so forcing the flag counts here and then
+        # letting the write's ``compute`` touch the same blocks runs the whole
+        # algorithm again.  ``persist`` materialises them once and keeps the
+        # results in memory, so the report counts AND the later write (and any
+        # downstream computation combined into the same dask graph) share that
+        # single evaluation.
+        blocks = []
         for time_index in range(payload.numblocks[0]):
             # TFCrop works on amplitudes and RFlag on the complex visibilities,
             # so each block converts its own; the conversion is deferred with
@@ -739,19 +743,14 @@ class DaskMS:
                     block[0], shape=payload.blocks[time_index].shape, dtype=bool
                 )
             )
-            counts.append(block[1])
-            prior.append(block[2])
-        new_flags = _da.concatenate(blocks, axis=0)
+        new_flags = _da.concatenate(blocks, axis=0).persist()
 
-        # Both counts come out of the same call as the flags.  Counting the
-        # pre-existing flags separately would be a second traversal of the same
-        # dask array, and since nothing is persisted that re-runs every block --
-        # which doubled the runtime of the whole operation when it was done that
-        # way, for a number that was already in hand.
-        new_count, already = dask.compute(
-            delayed(sum)(counts), delayed(sum)(prior)
-        )
-        new_count, already = int(new_count), int(already)
+        # The counts are reductions of materialised data now: the newly
+        # flagged count comes from the persisted flags, and the pre-existing
+        # count from the input FLAG column (a plain dask read, not the
+        # algorithm).
+        new_count = int(new_flags.sum().compute())
+        already = int(_da.sum(existing).compute())
         total = int(np.prod(shape))
 
         self.ds["FLAG"] = (self.ds.FLAG.dims, new_flags)
