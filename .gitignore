@@ -197,3 +197,6 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 cargo/uv.lock
+
+# Local benchmark outputs (see bench/flag_timing.py)
+bench/results/
