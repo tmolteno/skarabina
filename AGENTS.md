@@ -75,14 +75,15 @@ python bench/flag_timing.py --backend casacore --rflag-args "winsize=5"
   unchanged blocks) and deletes its output MS afterwards.  A list containing
   `save:imported` rotates the input's saved flag version and leaves the old one
   in `<ms>.flagversions` (~18 MB for bpcal.ms); `--drop-save-imported` skips it.
-- `--write-changed-only` has a sharp edge the bench works around: hard-linking
-  a block and chmod'ing it read-only also makes the *input's* `table.fN`
-  read-only (same inode), and the next run copies such a block with
-  `shutil.copy2` — which preserves the mode — so it dies with `storage error:
-  Permission denied` on the first column it writes.  The bench restores
-  owner-write on the input's blocks before every run (`--repair-input-perms`,
-  the default; `--no-repair-input-perms` reproduces the failure).  This is a
-  bug in the write path, reproduced in BENCHMARKS.md, not a bench quirk.
+- `--write-changed-only` had a sharp edge, fixed after 1.0.5 (issue #3,
+  `_ensure_writable` in `dask_ms.py`): hard-linking a block and chmod'ing it
+  read-only also made the *input's* `table.fN` read-only (same inode), and the
+  next run copied such a block with `shutil.copy2` — which preserves the mode —
+  so it died with `storage error: Permission denied` on the first column it
+  wrote.  The bench still restores owner-write on the input's blocks before
+  every run (`--repair-input-perms`, the default), which is what an MS left
+  read-only by 1.0.5 or earlier needs; `--no-repair-input-perms` leaves the
+  modes alone, and is how the failure was — and can still be — reproduced.
 - Results land in `bench/results/` (gitignored) as JSON + Markdown.  The
   numbers worth quoting by hand go into `BENCHMARKS.md` at the repo root, with
   the host, date, backend and workload they were measured on.

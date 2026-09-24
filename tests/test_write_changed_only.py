@@ -18,6 +18,7 @@ machine without that checkout every sharing test silently *skipped* instead of
 failing -- the tests for the feature disappeared exactly when they could not be
 checked.
 """
+import errno
 import os
 
 import numpy as np
@@ -273,6 +274,86 @@ def test_the_rewritten_column_is_still_writable(ms, tmp_path):
     finally:
         t.close()
     assert _read(out, "FLAG").all()
+
+
+def test_a_block_left_read_only_by_an_earlier_run_can_still_be_rewritten(ms, tmp_path):
+    """A run must survive an input that an earlier run made read-only (#3).
+
+    Sharing makes the shared blocks read-only, and a hard link is one inode, so
+    a run that changes nothing leaves the *input's* blocks read-only too -- by
+    design, see ``test_shared_blocks_are_read_only_...`` above.  The next run
+    that has to change one of those columns copies the block into its output,
+    and ``shutil.copy2`` preserves the mode: the copy arrived read-only, and the
+    write that followed died with ``storage error: Permission denied``.  The
+    input is only usable once if that happens, which is what this pins down.
+    """
+    first = str(tmp_path / "first.ms")
+    DaskMS(ms).write_new_ms(first, clobber=True, changed_only=True)
+
+    blocks = _flag_blocks(ms, DaskMS(ms))
+    assert blocks, "expected FLAG in its own storage manager"
+    read_only = [b for b in blocks
+                 if not os.stat(os.path.join(ms, b)).st_mode & 0o200]
+    assert read_only, (
+        "the first run changed no column, so it should have left FLAG's blocks"
+        " read-only"
+    )
+
+    second = str(tmp_path / "second.ms")
+    ds = DaskMS(ms)
+    ds.flag_data({"NAN": True})
+    ds.write_new_ms(second, clobber=True, changed_only=True)
+
+    # The rewritten column is the output's own block, and it is usable.
+    assert _read(second, "FLAG").shape == _read(ms, "FLAG").shape
+    t = table(second, readonly=False)
+    try:
+        flags = t.getcol("FLAG")
+        flags[...] = True
+        t.putcol("FLAG", flags)
+    finally:
+        t.close()
+
+
+def test_a_copied_shared_block_is_left_writable(ms, tmp_path, monkeypatch):
+    """Across filesystems the block is copied, not shared, so nothing protects it.
+
+    The read-only mode exists to keep a write to the *output* from reaching the
+    *input* through a shared inode.  A copy has no such link: the output owns it
+    outright, so carrying the input's read-only mode onto it only invents a
+    failure -- and the input here is read-only already, because the first run
+    shared its blocks.
+    """
+    first = str(tmp_path / "first.ms")
+    DaskMS(ms).write_new_ms(first, clobber=True, changed_only=True)
+
+    ds = DaskMS(ms)
+    blocks = _shareable_blocks(ms, ds) | _flag_blocks(ms, ds)
+    assert blocks, "expected columns in storage managers of their own"
+    assert all(not os.stat(os.path.join(ms, b)).st_mode & 0o200 for b in blocks)
+
+    def no_link(*_args, **_kwargs):
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr(os, "link", no_link)
+    out = str(tmp_path / "out.ms")
+    DaskMS(ms).write_new_ms(out, clobber=True, changed_only=True)
+
+    for member in blocks:
+        target = os.path.join(out, member)
+        assert os.path.exists(target), f"{member} was not copied into the output"
+        assert (os.stat(target).st_ino
+                != os.stat(os.path.join(ms, member)).st_ino), (
+            f"{member} was linked, so this test did not exercise the copy path"
+        )
+        assert os.stat(target).st_mode & 0o200, (
+            f"{member} was copied into the output read-only"
+        )
+    # Nothing was shared, so the input keeps the modes the first run gave it.
+    for member in blocks:
+        assert not os.stat(os.path.join(ms, member)).st_mode & 0o200, (
+            f"{member} was made writable in the input, but nothing was shared"
+        )
 
 
 def test_frequency_averaging_falls_back_to_a_full_write(tmp_path, capsys):
