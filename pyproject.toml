@@ -19,6 +19,15 @@ dependencies = [
 skarabina = "skarabina.main:main"
 skarabina-analyze = "skarabina.analyze:main"
 
+[project.optional-dependencies]
+# The pure-Rust drop-in replacement for casacore, used as dask-ms's I/O backend
+# when it is installed -- dask-ms's own `casacure` extra is requested above, but
+# that extra only exists in the tmolteno/dask-ms fork, so this is the explicit
+# way to ask for the Rust backend: pip install skarabina[casacure].  Runs select
+# it with DASK_MS_BACKEND=casacure; without casacure installed, dask-ms falls
+# back to real python-casacore.
+casacure = ["casacure"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.4.0",

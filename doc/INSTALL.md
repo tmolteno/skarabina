@@ -5,6 +5,19 @@
 
     pip install skarabina
 
+### The Rust I/O backend (optional)
+
+casacore is the C++ table library skarabina reads measurement sets through.
+[casacure](https://github.com/tmolteno/casacure) is a pure-Rust drop-in for it
+that dask-ms can use instead, and skarabina is happy with either:
+
+    pip install skarabina[casacure]
+
+Runs then select it with `DASK_MS_BACKEND=casacure` (the
+[`bench/flag_timing.py`](../bench/flag_timing.py) harness does this for its
+`casacure` backend).  Without it, python-casacore is used, which is also what
+the container images ship.
+
 ## Docker (any architecture)
 
 Pre-built multi-arch Docker images are published to the GitHub Container

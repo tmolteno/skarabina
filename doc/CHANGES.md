@@ -3,6 +3,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A ``casacure`` extra: ``pip install skarabina[casacure]``.**  casacure is
+  the pure-Rust drop-in replacement for casacore that dask-ms can use as its I/O
+  backend.  The dependency list already asks for dask-ms's own ``casacure``
+  extra, but that extra exists only in the tmolteno/dask-ms fork, so this extra
+  installs casacure itself and is the reliable way to get the Rust backend from
+  PyPI.  Runs select it with ``DASK_MS_BACKEND=casacure``; without casacure
+  installed, dask-ms falls back to real python-casacore.
+
 ### Fixed
 
 - **A second ``--write-changed-only`` run over the same input no longer fails
