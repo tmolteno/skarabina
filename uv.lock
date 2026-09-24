@@ -1082,6 +1082,11 @@ dependencies = [
     { name = "zarr", version = "2.18.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
+[package.optional-dependencies]
+casacure = [
+    { name = "casacure" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "flake8" },
@@ -1092,9 +1097,11 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "angle-parser", specifier = ">=0.1.0" },
+    { name = "casacure", marker = "extra == 'casacure'" },
     { name = "dask-ms", extras = ["casacure", "xarray", "zarr"], git = "https://github.com/tmolteno/dask-ms.git" },
     { name = "zarr", specifier = ">=2.0" },
 ]
+provides-extras = ["casacure"]
 
 [package.metadata.requires-dev]
 dev = [
