@@ -1,0 +1,37 @@
+# The flag sequence the timing bench runs, as set by ../meerkat_imaging.
+#
+# Provenance (meerkat_imaging main, white-belt-0-flagging.yml):
+#
+#   * entries 1-6 are the `flag:` list of the `flag-average` step -- the single
+#     skarabina pass that flags, averages and cleans the master MS.  In the
+#     recipe they are spelled
+#
+#         save:imported, autos, uv-above {root.ms-uvmax}, nan, clip 0 100,
+#         spectral-window spectral-flags-{root.band}.yml
+#
+#     with ms-uvmax = 8000 and band = L.  The spectral-window file is
+#     white-belt-0's spectral-flags-L.yml, copied into this directory.
+#
+#   * `rflag` is the autoflag step white-belt-0 still delegates to CASA
+#     (`recipe-loop-autocal` -> casa.flagdata `mode: rflag` over the
+#     calibrator fields).  It is timed here because skarabina now has the verb:
+#     the number prices moving that loop into stage 0.  No parameters are
+#     given, which is exactly what the recipe's `mode: rflag` call uses -- both
+#     sides default to CASA's winsize=3, timedevscale=5, freqdevscale=5.
+#
+# Deviations from the recipe, both deliberate:
+#
+#   * the recipe runs rflag as a separate pass over the averaged MS and only
+#     over the calibrator fields; here every operation runs on the same input
+#     MS in one list, which is what makes a per-operation timing attributable.
+#   * {uv-max} and {spectral-flags} are placeholders substituted by
+#     flag_timing.py, so the uv limit and the rules file can be overridden from
+#     the command line.
+ops:
+  - save:imported
+  - autos
+  - uv-above {uv-max}
+  - nan
+  - clip 0 100
+  - spectral-window {spectral-flags}
+  - rflag

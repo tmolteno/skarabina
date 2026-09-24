@@ -1,0 +1,39 @@
+# Spectral-window flagging rules for the L band, for skarabina's flag list:
+#   --flag "..., spectral-window spectral-flags-L.yml, ..."
+#
+# Consumed by the `flag-average` step of white-belt-0-flagging.yml, which
+# passes this file to the `spectral-window` verb of `skarabina --flag`.  Each entry is a list
+# of [fmin, fmax] ranges in MHz, optionally restricted to baselines shorter
+# than `uv_below` or longer than `uv_above` (metres).
+#
+# These are the rules that used to live in white-belt-config.yml under
+# `band.L.cal-1gc.flag-all-baselines` / `flag-short-baselines` (CASA `spw`
+# selections) and they match skarabina's own
+# `example/spectral-flags.example.yml`.
+
+# --- Flag all baselines ---
+# Lower band edge, upper bandpass edge, Galactic HI
+- spw:
+    - [850, 900]
+    - [1658, 1800]
+    - [1419.8, 1421.3]
+
+# --- Flag short baselines ---
+# RFI that dominates on short spacings (uvrange < 600 m)
+- spw:
+    - [900, 915]
+    - [925, 960]
+    - [1080, 1095]
+    - [1565, 1585]
+    - [1217, 1237]
+    - [1375, 1387]
+    - [1166, 1186]
+    - [1592, 1610]
+    - [1242, 1249]
+    - [1191, 1217]
+    - [1260, 1300]
+    - [1453, 1490]
+    - [1616, 1626]
+    - [1526, 1554]
+    - [1600, 1600]   # single-frequency spike
+  uv_below: 600
