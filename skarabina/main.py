@@ -113,6 +113,25 @@ logger = logging.getLogger(__name__)
     help="When writing (--msout), keep only this field's rows"
     " (field name or numeric FIELD_ID)",
 )
+@click.option(
+    "--row-chunk",
+    type=int,
+    default=dask_ms.ROW_CHUNK_ROWS,
+    show_default=True,
+    help="Number of rows read/written per dask array chunk. Each DATA chunk"
+    " holds row_chunk x nchan x ncorr x 8 bytes, so lowering it (and"
+    " --workers) bounds peak memory on large MSes at the cost of a larger"
+    " task graph. Mirrors tricolour's --row-chunks.",
+)
+@click.option(
+    "--workers",
+    type=int,
+    default=0,
+    help="Number of dask threads (0 = dask default, all CPU cores). Running"
+    " flagging with many workers materialises one chunk per thread at once,"
+    " so capping this (e.g. --workers 4) is the main lever for bounding peak"
+    " RAM on a large MS. Mirrors tricolour's --nworkers.",
+)
 @click.version_option(
     version=get_version("skarabina"),
     prog_name="skarabina",
@@ -127,6 +146,19 @@ def main(**kw):
     root = logging.getLogger()
     root.setLevel(level)
 
+    # Bound dask's thread pool (and with it the number of chunks materialised
+    # concurrently). dask's default is one thread per CPU core; on a large MS
+    # that means dozens of concurrent chunk reads, each holding a numpy buffer
+    # plus (via the I/O layer) a decoded cell copy — the dominant source of
+    # peak RSS. An explicit, capped pool keeps memory predictable.
+    # See tricolour.apps.tricolour.app.main (ThreadPool(nworkers)).
+    if opts.workers is not None and opts.workers > 0:
+        from multiprocessing.pool import ThreadPool
+        import dask
+
+        dask.config.set(pool=ThreadPool(opts.workers))
+        logger.debug("dask thread pool set to %d workers", opts.workers)
+
     # dask-ms emits noisy warnings/tracebacks for unpopulated MS columns
     # (MODEL_DATA shape guessing, FLAG_CATEGORY with no rows). These are
     # harmless — the columns exist in schema but were never written to.
@@ -139,7 +171,7 @@ def main(**kw):
         root.addHandler(fh)
         root.debug(f"options: {vars(opts)}")
 
-    ms = dask_ms.DaskMS(opts.ms)
+    ms = dask_ms.DaskMS(opts.ms, row_chunk=opts.row_chunk)
     fov_str = opts.field_of_view if opts.field_of_view is not None else "1.0 deg"
     # Full width, in radians; summary() halves it to get the distance from the
     # phase centre to the edge of the field.

@@ -26,7 +26,12 @@ import os
 import shutil
 
 import numpy as np
-from casacore.tables import makecoldesc, maketabdesc, table
+
+# Import dask-ms before casacore.tables so that, when the casacure backend is
+# selected (DASK_MS_BACKEND=casacure), daskms's casacore->casacure aliasing is
+# installed before the `casacore` import resolves (see skarabina/dask_ms.py).
+import daskms  # noqa: F401,E402
+from casacore.tables import makecoldesc, maketabdesc, table  # noqa: E402
 
 # Suffix of the directory holding all versions, matching CASA's flagmanager.
 FLAGVERSIONS_SUFFIX = ".flagversions"
@@ -163,6 +168,68 @@ def read_ms_flags(ms_path):
     finally:
         t.close()
     return flag, flag_row
+
+
+def save_version_streaming(ms_path, versionname, comment=""):
+    """Back up the MS's FLAG/FLAG_ROW as a CASA flag version, streaming.
+
+    Reads the source MS's FLAG column row-chunk by row-chunk and writes each
+    chunk straight into the new flag-version table, so a save never holds the
+    whole flag cube in RAM.  On a large MeerKAT MS the full FLAG cube is
+    >8 GB (nrow x nchan x ncorr booleans); the previous read-then-write path
+    (``read_ms_flags`` + ``save_version``) materialised it twice and peaked at
+    ~16 GB RSS.  CASA's flagmanager semantics are unchanged: the saved version
+    covers the whole MS regardless of any in-memory row selection.
+
+    Returns the path of the written version.
+    """
+    _rename_existing(ms_path, versionname)
+
+    path = version_path(ms_path, versionname)
+    shutil.rmtree(path, ignore_errors=True)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    src = table(ms_path, ack=False, readonly=True)
+    try:
+        nrow = src.nrows()
+        # Channel count of the FLAG cube (1 row read just to learn the shape).
+        nchan = int(src.getcol("FLAG", startrow=0, nrow=1).shape[1]) if nrow else 1
+        flag_desc = _flag_column_description((nchan, 0))
+        flag_row = np.asarray(src.getcol("FLAG_ROW")) if nrow else np.zeros(0, bool)
+    finally:
+        src.close()
+
+    tabdesc = maketabdesc(
+        [
+            makecoldesc("FLAG", flag_desc),
+            makecoldesc("FLAG_ROW", {"valueType": "boolean"}),
+        ]
+    )
+    t = table(path, tabdesc, nrow=0, readonly=False, dminfo=_dminfo(nchan))
+    try:
+        t.addrows(nrow)
+        t.putcol("FLAG_ROW", flag_row)
+        src = table(ms_path, ack=False, readonly=True)
+        try:
+            for start in range(0, nrow, CHUNK_ROWS):
+                n = min(CHUNK_ROWS, nrow - start)
+                chunk = np.asarray(
+                    src.getcol("FLAG", startrow=start, nrow=n), dtype=bool
+                )
+                t.putcol("FLAG", chunk, startrow=start, nrow=n)
+        finally:
+            src.close()
+    finally:
+        t.close()
+
+    entries = [(n, c) for n, c in read_version_list(ms_path) if n != versionname]
+    if not comment:
+        comment = "Saved by skarabina on %s" % datetime.datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+    entries.append((versionname, comment))
+    write_version_list(ms_path, entries)
+    return path
 
 
 def save_version(ms_path, versionname, flag, flag_row, comment=""):
