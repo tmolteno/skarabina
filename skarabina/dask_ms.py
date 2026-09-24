@@ -10,17 +10,31 @@ import dask
 import dask.array as da
 import numpy as np
 import yaml
-from casacore.tables import table
+
+# Import dask-ms before casacore.tables so that, when the casacure backend is
+# selected (DASK_MS_BACKEND=casacure), daskms's casacore->casacure aliasing
+# (daskms.activate_casacure_backend) is set up before the `casacore` import
+# below resolves.
+import daskms  # noqa: F401
+from casacore.tables import table  # noqa: E402
 from dask.array import coarsen as da_coarsen
 from dask import delayed
 from dask.diagnostics import ProgressBar
-from daskms import xds_from_ms, xds_to_table
+from daskms import xds_from_ms, xds_to_table  # noqa: E402
 
 from skarabina import flag_versions
 from skarabina.rflag import rflag_plane
 from skarabina.tfcrop import tfcrop_plane
 
 logger = logging.getLogger(__name__)
+
+# Number of rows per dask chunk when reading/writing MS columns.  Row-chunking
+# the time axis bounds peak memory: each DATA chunk holds
+# ROW_CHUNK_ROWS * nchan * ncorr * 8 bytes, and the I/O layer decodes it into
+# the numpy buffer plus an intermediate cell copy, so the working set is a few
+# chunks at a time (one per worker).  Mirrors tricolour's `--row-chunks`
+# (default 10000).  Lower it (with --workers) to shrink peak RSS on large MSes.
+ROW_CHUNK_ROWS = 10000
 
 
 def _autofit_block(plane_function, data, existing, params):
@@ -443,9 +457,11 @@ class DaskMS:
             self.chan_axis_hz = {}
         self.chan_axis_hz["RESOLUTION"] = value
 
-    def __init__(self, ms_name):
+    def __init__(self, ms_name, row_chunk=ROW_CHUNK_ROWS):
         self.name = ms_name
+        self.row_chunk = max(1, int(row_chunk))
         print(f"Getting Data from MS file: {self.name}")
+        print(f"Row chunk: {self.row_chunk} rows")
 
         if not os.path.exists(ms_name):
             raise RuntimeError(f"Measurement set {self.name} not found")
@@ -464,7 +480,13 @@ class DaskMS:
         # of calibrators plus targets would otherwise be silently reduced to
         # its first field.  Group by DATA_DESC_ID only, so all fields (with a
         # per-row FIELD_ID) travel together.
-        self.datasets = xds_from_ms(self.name, group_cols=("DATA_DESC_ID",))
+        self.datasets = xds_from_ms(
+            self.name,
+            group_cols=("DATA_DESC_ID",),
+            # Row-chunk the read like tricolour (--row-chunks) so a pass over
+            # a large MS only ever materialises a bounded window per worker.
+            chunks={"row": self.row_chunk},
+        )
         logger.debug(self.datasets)
 
         # Everything below operates on a single dataset, so silently processing
@@ -1550,11 +1572,12 @@ class DaskMS:
         a version holding only the rows left by a row selection would fail the
         row-count check on restore, and CASA's flagmanager likewise backs up
         the whole MS.
+
+        The read+write is streamed row-chunk by row-chunk
+        (``flag_versions.save_version_streaming``), so saving a version of a
+        large MS does not materialise the whole (multi-GB) flag cube in RAM.
         """
-        flag, flag_row = flag_versions.read_ms_flags(self.name)
-        path = flag_versions.save_version(
-            self.name, versionname, flag, flag_row, comment=comment
-        )
+        path = flag_versions.save_version_streaming(self.name, versionname, comment=comment)
         print(f"flag version '{versionname}' saved to {path}")
 
     def restore_flag_version(self, versionname):

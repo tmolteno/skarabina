@@ -90,3 +90,109 @@ python bench/flag_timing.py --backend casacore --rflag-args "winsize=5"
 - Re-run the bench and refresh `BENCHMARKS.md` whenever a change claims to make
   flagging faster, and keep `bench/meerkat-flags.yml` in step with the
   `flag-average` step of `../meerkat_imaging/white-belt-0-flagging.yml`.
+
+## Benchmarking
+
+The canonical end-to-end benchmark is a flag-and-frequency-average run over a
+real MeerKAT MS, run from `../meerkat_imaging` because the input MS and the
+spectral-flags file live there (`ms-orig` is in `../meerkat_imaging`):
+
+```sh
+cd ../meerkat_imaging
+DASK_MS_BACKEND=casacure \
+  /home/tim/github/skarabina/.venv/bin/skarabina \
+    --ms ms-orig/mergA_tim.ms \
+    --scan 1,12,14,19,21,28,29,33,41,43,53,54,56,58,63 \
+    --summary --time-average-factor 1 --frequency-average-factor 32 \
+    --clobber \
+    --flag save:imported --flag autos --flag "uv-above 2500" --flag nan \
+    --flag "clip 0 100" --flag "spectral-window spectral-flags-L.yml" \
+    --field-of-view 3.3deg \
+    --msout bench_ave.ms
+```
+
+Notes on this command:
+
+- **`DASK_MS_BACKEND=casacure` is required** — dask-ms only aliases
+  `casacore` -> `casacure` when this is set (see `daskms.casacure_backend`).
+  Without it skarabina cannot import (there is no python-casacore in the
+  benchmark venv, and `from casacore.tables import table` must resolve to
+  casacure).
+- **Quote the multi-token `--flag` entries.** `--flag "uv-above 2500"` etc.
+  are each a single argument; unquoted, click sees the trailing tokens
+  (`2500 0 100 ...`) as stray positional arguments and exits with
+  `Got unexpected extra arguments`.
+- The benchmark writes **`bench_ave.ms` in the run directory** (here
+  `../meerkat_imaging`). It is a multi-GB output; **remove it after
+  benchmarking** (`rm -rf ../meerkat_imaging/bench_ave.ms`). Do not commit
+  it, and check it is cleaned up before sharing the results.
+- The machine is usually busy (DDFacet imaging runs saturate all cores); a
+  run `uptime` at start/end, and the note that timings are load-dependent,
+  should accompany any reported numbers.
+
+### Memory-bounding levers
+
+The dask/task phases (flagging, averaging, writing the reduced MS) are row
+chunked, so one row-chunk is materialised per dask worker at a time.  Two
+options control the concurrent-chunk working set (mirroring tricolour's
+`--row-chunks` / `--nworkers`):
+
+- `--row-chunk N` (default `10000` rows) — bytes per chunk are roughly
+  `N * nchan * ncorr * 8` for DATA; lower it to shrink each chunk.
+- `--workers N` (default 0 = all cores) — the number of dask threads, i.e. the
+  number of chunks materialised concurrently.
+
+The row chunk is applied at read time in `DaskMS.__init__`
+(`xds_from_ms(..., chunks={"row": row_chunk})`) and the pool is set in
+`main()` (`dask.config.set(pool=ThreadPool(workers))`).
+
+Caveat (measured 2026-09-25): on the benchmark MS, *neither* lever moves the
+overall peak RSS, because peak is set by `--flag save:imported` — writing the
+CASA backup of the 8 GB flag cube through casacure's buffered write store
+peaks at ~18-19 GB regardless of chunking/workers.  The levers are still the
+right tool for a flagging/averaging run without `save:`, and for the per-chunk
+working set in general.
+
+### Performance work (2026-09-25)
+
+The benchmark originally could not finish under the casacure backend.  Fixes
+landed in this repo and in `../casacure`:
+
+- `skarabina/dask_ms.py` (+ `analyze.py`, `flag_versions.py`): import `daskms`
+  **before** `casacore.tables` so the `DASK_MS_BACKEND=casacure` aliasing is
+  installed by the time casacure is imported (previously
+  `ModuleNotFoundError: casacore`).
+- `casacure …/tsm.rs` `parse_header`: the TSM file length is read with the
+  TSM-file object version (u64 when the tile file is >= 2 GiB), not the outer
+  TiledStMan header version — the old code misaligned the header and allocated
+  ~104 GB (307 bytes under `memory allocation of 103994205696 bytes failed`).
+- `casacure …/helpers.rs` + `table.rs` `patch_copy_nrow`: `tablecopy` now
+  rewrites the copied `table.dat` row count, so subtable copies no longer open
+  as 0-row tables when the source carried its row count only in the lock
+  file's sync record (broke the SPECTRAL_WINDOW rewrite at the end of the run).
+- `casacure` performance (merged with `origin/main`, now 3.8.7): GIL released
+  around reads, reads no longer serialise on the handle mutex, batched
+  lock-once `putcol`, bulk array-cell encode, plus upstream's typed ISM/TSM
+  reads and in-place tiled/SSM flush patches / sparse write buffer.
+- `skarabina/flag_versions.py`: `save:imported` streams the source FLAG
+  read in row chunks instead of materialising the whole cube up front.
+
+### Results (scan 1 = 143 716 rows of `mergA_tim.ms`, single 12-core box)
+
+| build | wall | user | sys | peak RSS |
+|---|---|---|---|---|
+| correctness fixes only | 128.6 s | 199.9 s | 88.2 s | ~27 GB |
+| + GIL / batch / bulk encode | 113.9 s | 160.8 s | 53.9 s | ~27 GB |
+| + upstream 3.8.7 typed reads & sparse flush (merged) | **74.4 s** | 119.8 s | 56.7 s | **21.7 GB** |
+
+Memory notes:
+
+- On this MS, `--flag save:imported` is the dominant RAM consumer: it writes
+  a CASA-compatible backup of the whole flag cube (1.6M x 2511 x 2 booleans ~
+  8 GB) through casacure's buffered write store plus a final full flush,
+  peaking around 18-19 GB.  The read side is streamed in chunks; the write
+  buffer is a casacure flush limitation (per-chunk flush would regrow the
+  single-column flag-version table on every flush), noted as future work.
+- The dask/task phases (flagging, averaging, writing the reduced MS) are all
+  row-chunked (10k rows) and now run well under 2-3 GB; `--workers` and
+  `--row-chunk` bound the concurrent-chunk working set further if needed.
