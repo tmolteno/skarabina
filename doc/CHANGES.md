@@ -3,6 +3,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A second ``--write-changed-only`` run over the same input no longer fails
+  with ``storage error: Permission denied``.**  Sharing the unchanged columns
+  makes their blocks read-only, and since a hard link is one inode that lands on
+  the *input's* blocks as well; the next run had to rewrite one of those
+  columns, copied it into its output with ``shutil.copy2`` -- which preserves
+  the mode -- and then could not write the copy.  Blocks copied into the output
+  are now left writable (they belong to the output alone, only the linked ones
+  are shared), so flagging the same measurement set twice works, while the
+  read-only protection on the shared blocks is unchanged.  Found while timing
+  the flagging bench; reported as issue #3.
+
 ## [1.0.5]
 
 ### Fixed

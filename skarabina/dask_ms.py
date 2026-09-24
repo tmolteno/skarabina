@@ -117,6 +117,25 @@ def _maybe_quiet_stderr():
                 sys.stderr = old_stderr
 
 
+def _ensure_writable(path):
+    """Give the owner write permission on ``path``, changing no other bit.
+
+    Every block ``_write_changed_only`` copies into its output is the output's
+    own file -- only the *linked* ones are shared with the input -- so it has to
+    be writable, or the column write that follows is refused by the filesystem.
+    ``shutil.copy2`` preserves the mode, and an input whose blocks an earlier
+    sharing run made read-only is exactly the case that produced
+    ``storage error: Permission denied`` (issue #3): the first flagging run
+    worked, the second one could not.
+    """
+    try:
+        mode = os.stat(path).st_mode
+        if not mode & 0o200:
+            os.chmod(path, mode | 0o200)
+    except OSError:
+        pass
+
+
 # Single source of truth for time-average smearing: both the flagger's summary
 # and skarabina-analyze quote the same limit, so the constant and the loss
 # criterion live here and nowhere else.
@@ -2015,6 +2034,12 @@ class DaskMS:
         silently altering the input MS.  Change the changed columns as often as
         you like; the changed columns always get fresh blocks.  ``--apply``
         remains the better option when the input itself may be modified.
+
+        The fresh blocks belong to the output alone, so they are left writable
+        even when the input's own block carries a read-only mode -- which is
+        what an earlier sharing run leaves behind, a hard link being one inode.
+        Without that the second run over the same input would die on the first
+        column it had to write (issue #3).
         """
         if os.path.exists(name):
             if not clobber:
@@ -2061,12 +2086,20 @@ class DaskMS:
                         protected.append(target)
                     except OSError:
                         shutil.copy2(source, target)
+                        # A copy is not shared, so nothing protects it: leave it
+                        # writable, whatever mode the input's block carries.
+                        _ensure_writable(target)
                         copied += 1
             for base, members, _ in rewritten:
                 for member in members:
                     source = os.path.join(self.name, member)
                     if os.path.exists(source):
-                        shutil.copy2(source, os.path.join(name, member))
+                        target = os.path.join(name, member)
+                        shutil.copy2(source, target)
+                        # copy2 keeps the mode, and this block is about to be
+                        # written: an input left read-only by an earlier run
+                        # must not make the output unwritable (issue #3).
+                        _ensure_writable(target)
                         copied += 1
 
             # Everything that is not a column block: table.dat, table.info,

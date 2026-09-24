@@ -98,8 +98,14 @@ python bench/flag_timing.py --mode per-op --tag bpcal-perop-casacure-repaired
 
 ## Issue: `--write-changed-only` leaves the input read-only, then fails on it
 
-Found while building this bench (2026-09-24, skarabina 1.0.5).  It is a bug in
-the write path, not in the bench.
+Found while building this bench (2026-09-24, skarabina 1.0.5), reported as
+[issue #3](https://github.com/tmolteno/skarabina/issues/3), and **fixed** after
+1.0.5: blocks *copied* into the output — every rewritten column, and every
+block of a cross-filesystem write — are now left writable, so a run no longer
+dies on an input that an earlier run made read-only.  The reproduction below
+therefore applies to 1.0.5 and earlier; on a fixed build the second command
+succeeds.  The analysis is kept because the shape of the bug is worth
+recognising: a mode-preserving copy of a file that is about to be written.
 
 **Symptom.**  A `--write-changed-only` run that has to write a flag column dies
 with

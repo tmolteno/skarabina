@@ -448,6 +448,16 @@ stay writable, so the output is a normal MS for the columns that actually
 changed. `tests/test_write_changed_only.py` asserts each of these properties
 separately, including that the input's `FLAG` is untouched by the output write.
 
+Blocks **copied** into the output — everything that could not be linked, which
+is the whole of a cross-filesystem write, plus every rewritten column — are
+left writable, whatever mode the input's block carries. That matters because
+sharing makes the *input's* blocks read-only too, and a rewritten column is
+copied from exactly such a block: without this the second flagging run over the
+same input died at its first write with `storage error: Permission denied`
+(issue #3). The protection above is unchanged — only the linked blocks are
+read-only, and they are read-only on both paths, which is what makes the
+sharing safe.
+
 One consequence worth stating: the output is not independent of the input. The
 shared blocks are the input's blocks, so deleting or editing the input's
 *unchanged* columns later will damage the output. The flagged column is
