@@ -7,7 +7,7 @@ test:
 summary:
 	skarabina --ms ${MS} --summary
 uvw:
-	skarabina --ms foo.ms --flag-nan --flag-clip [0,10] --apply --clobber --debug --flag-uv-above 250
+	uv run skarabina --ms ~/astro/cyg2052.ms --flag "nan, clip 0 10, uv-above 250" --apply --clobber --debug
 
 barber:
 	skarabina --ms ${MS} --barber
