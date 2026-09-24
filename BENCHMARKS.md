@@ -33,8 +33,9 @@ spectral-window (spectral-flags-L.yml), rflag
 ```
 
 **Host** — `echo`: Intel Core i5-8365U @ 1.60 GHz, 8 cores, 15.4 GiB RAM, SATA
-SSD; skarabina 1.0.5 (git `be38252`), Python 3.14.7, dask-ms `casacure`
-backend.  Single measurement, no repetition.
+SSD; skarabina 1.0.5 (git `be38252`), Python 3.14.7, dask-ms 0.2.32 with a
+locally built casacure (its version string said 3.8.3; PyPI's 3.8.3 cannot even
+open this MS, see the next section).  Single measurement, no repetition.
 
 **Commands**
 
@@ -93,6 +94,76 @@ python bench/flag_timing.py --mode per-op --tag bpcal-perop-casacure-repaired
   pass, so although they appear before `spectral-window` and `rflag` in the
   list, their work is reported after them in the log (`flag_data (NaN)`, then
   `flag_data (clip [0.0, 100.0])`).
+
+---
+
+## casacure 3.8.6 vs 3.8.7, 2026-09-25
+
+**Why** — casacure 3.8.7 reads ISM and tiled columns straight into the numpy
+buffer, patches tiled and StandardStMan cells in place on flush, and keeps only
+the written rows in its write buffer.  Same workload and flag list as the
+section above, measured twice **in one sitting on the same machine**, so the
+I/O gain and the CPU-bound flagging can be told apart.
+
+**Setup** — `.bench/data/bpcal.ms` and the meerkat stage-0 list as above;
+casacure 3.8.6 and 3.8.7 (PyPI wheels), Python 3.14.7, numpy 2.5.3, dask-ms
+0.2.32, skarabina 1.0.5 (git `cca9ea4`).  Both versions were swapped in and out
+of the bench venv between runs; 3.8.7 ran first, 3.8.6 second, which is what
+the `rflag` control below measures.
+
+**Commands**
+
+```
+uv pip install --python .venv-bench/bin/python "casacure==3.8.6"
+python bench/flag_timing.py --mode seq    --tag ab-386-seq
+python bench/flag_timing.py --mode per-op --tag ab-386-perop
+# …then the same two with casacure==3.8.7 (tags ab-387-seq / ab-387-perop)
+```
+
+### Results
+
+| mode | operation | 3.8.6 wall (s) | 3.8.7 wall (s) | ratio | 3.8.6 RSS (MiB) | 3.8.7 RSS (MiB) |
+|---|---|---|---|---|---|---|
+| seq | all 7, one process | 1154.9 | 1087.0 | **1.06×** | 1761 | 1985 |
+| per-op | `save:imported` | 21.0 | 13.0 | 1.62× | 596 | 671 |
+| per-op | `autos` | 25.6 | 15.6 | 1.64× | 362 | 363 |
+| per-op | `uv-above 8000` | 20.6 | 10.8 | 1.91× | 352 | 352 |
+| per-op | `nan` | 35.5 | 19.4 | 1.83× | 557 | 529 |
+| per-op | `clip 0 100` | 37.4 | 17.8 | 2.10× | 562 | 581 |
+| per-op | `spectral-window` | 25.2 | 13.0 | 1.94× | 452 | 452 |
+| per-op | `rflag` (CASA defaults) | 1058.0 | 1096.8 | 0.96× | 1694 | 1844 |
+
+### Reading the result
+
+- **The I/O the release targets is 1.6–2.1× faster.**  Every operation whose
+  cost is dominated by reading the MS and writing the flag columns gained:
+  `clip` 2.1×, `spectral-window` 1.9×, `uv-above` 1.9×, `nan` 1.8×, `autos`
+  1.6×, and the I/O floor `save:imported` 1.6× (21.0 s → 13.0 s).
+- **`rflag` is the control, and it did not move**: 1058.0 s vs 1096.8 s — the
+  baseline ran 3.7 % *quicker*, on the version that ran second.  It is
+  numpy-bound, casacure never enters its hot path, so that difference is machine
+  drift between the two blocks rather than an effect of the release.  Read the
+  I/O ratios as ±4 %, and note which way the drift ran: 3.8.6 was measured
+  second, when the machine was quicker, so the gains above are if anything
+  understated.
+- **End to end the pass gains only 6 %** (1154.9 s → 1087.0 s), because `rflag`
+  is the whole run: 1096.8 s of the 1087.0 s single-process total, the other six
+  operations 90 s together.  A faster casacure cannot help a workload that
+  spends 90 %+ of its time in the sliding-window median.
+- **Peak RSS is not better on this workload** (seq 1761 → 1985 MiB, per-op
+  `rflag` 1694 → 1844).  The sparse write buffer should show on a large table
+  with many columns; here the flag columns are the only ones written and the
+  read side dominates the footprint.
+- **Do not compare this table with the 2026-09-24 one without a factor.**
+  `rflag` alone took 828.9 s then and ~1058–1097 s now — the same code, ~1.3×
+  slower on today's machine (thermal/load).  That factor is larger than the
+  improvement being measured, which is exactly why the A/B above was run as one
+  sitting rather than against yesterday's numbers.
+- The 2026-09-24 runs used a **locally built** casacure (its version string read
+  3.8.3).  PyPI's 3.8.3 wheel cannot open this MS at all — it dies with
+  `RuntimeError: storage error: unsupported data-manager type TiledShapeStMan`
+  — so that local build was newer code than its version string admits, and
+  3.8.6 is the correct "before" for the 3.8.7 comparison.
 
 ---
 
