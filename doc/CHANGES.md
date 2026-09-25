@@ -3,7 +3,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- **``--memory-limit-GB``: the row chunk is sized from memory.**  Without
+  ``--row-chunk``, skarabina now picks the largest row chunk whose chunked
+  phases fit the limit -- by default the RAM available now (MemAvailable,
+  capped by a container's cgroup limit) -- from the worker count and the MS's
+  channels x correlations, at a measured ~36 bytes per visibility per worker
+  plus a 3.5 GB base, and never so large that a worker goes idle.  An explicit
+  ``--row-chunk`` is used as given (with a warning if it plans past an
+  explicit limit).  ``save:<name>`` is not governed by it.  The stimela cab
+  gains ``memory-limit-GB``, ``row-chunk`` and ``workers``.
+
 ### Changed
+
+- **rflag's spectral step needs 40 % less memory**: it held the real and
+  imaginary residuals, a stacked copy and their absolute values at once
+  (4.9x the chunk's DATA per worker, now 3.0x).  Results unchanged.
 
 - **``tfcrop`` and ``rflag`` separate the baselines of a row chunk.**  An MS is
   written time-major, so a dask row chunk is ~1900 baselines per integration,

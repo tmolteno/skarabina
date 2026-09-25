@@ -251,6 +251,45 @@ same branch); rflag as released in 1.0.6 was not measured here.
   less well than one averaged over the chunk.  They are flagged by the
   `spectral-window` step of the pipeline in any case.
 
+### 7.3 Memory against the chunk size
+
+Both flaggers work one row chunk at a time per dask worker, and every
+full-plane temporary is the size of the chunk, so memory follows the chunk.
+Per block, single-threaded, peak working memory beyond the block's inputs
+(`tracemalloc`; rows of scan 1, 2511 channels x 2 correlations):
+
+| rows per chunk | 2 500 | 5 000 | 10 000 | 20 000 |
+|---|---|---|---|---|
+| rflag, baseline-aware | 307 MB | 589 MB | 1152 MB | 2278 MB |
+| tfcrop, baseline-aware | 502 MB | 648 MB | 1069 MB | 1955 MB |
+
+Linear: 114-123 MB per 1000 rows for rflag, and 98 MB per 1000 rows for
+tfcrop on top of ~250 MB of work capped by `GROUP_VALUES`.  rflag was 186 MB
+per 1000 rows, 4.9x the chunk's DATA, until its spectral step combined its
+parts in place (commit `154f144`); it is now 3.0x.
+
+End to end, peak RSS of a whole flagging pass (autos, nan, clip, then the
+flagger) over scan 1 with 12 workers, against the rows in flight (row chunk x
+the workers that get one -- at 20 000 rows the scan is only 8 chunks):
+
+| flagger | row chunk x workers | rows in flight | peak RSS |
+|---|---|---|---|
+| tfcrop | 5 000 x 12 | 60 000 | 10.5 GB |
+| tfcrop | 10 000 x 6 | 60 000 | 9.6 GB |
+| tfcrop | 10 000 x 12 | 120 000 | 17.9 GB |
+| tfcrop | 20 000 x 12 (8 chunks) | 143 716 | 20.0 GB |
+| rflag | 5 000 x 12 | 60 000 | 11.3 GB |
+| rflag | 10 000 x 6 | 60 000 | 11.0 GB |
+| rflag | 10 000 x 12 | 120 000 | 20.6 GB |
+| rflag | 20 000 x 12 (8 chunks) | 143 716 | 23.7 GB |
+
+That is `base + rows in flight x nchan x ncorr x b`, with b = 26 bytes per
+visibility and a 3.2 GB base for tfcrop, 33 bytes and 2.0 GB for rflag: the
+same rows in flight cost the same whether they come from more workers or
+larger chunks, and the table's length does not enter.  `skarabina.memory`
+uses 36 bytes and 3.5 GB to size the chunk from `--memory-limit-GB` (default:
+the RAM available) when `--row-chunk` is not given.
+
 ## 8. Bugs found on the way
 
 Both were in the single-baseline algorithm and are fixed for it too:

@@ -116,6 +116,25 @@ cabs:
           phase centre to the edge is half of it. Only affects the
           fringe-rotation integration-time limit reported by summary.
         default: "1.0 deg"
+      memory-limit-GB:
+        dtype: float
+        info: >-
+          Memory the chunked phases (reading, flagging, averaging, writing)
+          may plan for, in GB; sets the row chunk when row-chunk is not given.
+          0 = the RAM available now (MemAvailable, capped by a container
+          limit). save:<name> is not governed by it.
+        default: 0
+      row-chunk:
+        dtype: Union[int, None]
+        info: >-
+          Rows per dask chunk. Default: the largest chunk that fits
+          memory-limit-GB with the given workers.
+      workers:
+        dtype: int
+        info: >-
+          Number of dask threads (0 = all CPU cores). Each holds about one
+          row chunk at a time.
+        default: 0
     outputs:
       msout:
         dtype: MS
