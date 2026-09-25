@@ -282,6 +282,32 @@ def main(**kw):
     if ops and reads_flags_early:
         ms.materialise_flags()
 
+    # --- Row removal / averaging (MUST be last before writing) ---
+    #
+    # Lazy: the write's pass computes them with the flags.  (760e0ee dropped
+    # these calls with the old pass logic, so 1.0.8 silently ignored
+    # --frequency-average-factor, --time-average-factor and --optimize;
+    # tests/test_cli_transforms.py now runs them through the CLI.)
+
+    if opts.frequency_average_factor is not None and opts.frequency_average_factor > 1:
+        ms.frequency_average(opts.frequency_average_factor)
+
+    if opts.time_average_factor is not None and opts.time_average_factor > 1:
+        ms.time_average(opts.time_average_factor)
+
+    if opts.optimize:
+        if opts.msout is None and not opts.apply:
+            raise RuntimeError(
+                "--optimize has no effect without --msout or --apply:"
+                " it only removes fully-flagged rows and channels in"
+                " memory, so the result is discarded unless written."
+                " Add --msout PATH to write a new MS or --apply to"
+                " update the input MS in place."
+            )
+        ms.optimize(keep_fully_flagged_channels=opts.keep_fully_flagged_channels)
+
+    # --- Read-only reports (after all processing) ---
+
     if opts.summary:
         ms.summary()
 
