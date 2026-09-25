@@ -699,3 +699,102 @@ def test_tfcrop_copes_with_a_column_that_is_entirely_flagged():
         f" {flag[:, 61:].mean():.3f} flagged"
     )
     assert stats["pre_existing"] == plane.shape[0]
+
+
+# --- vectorised paths must match the loops they replace ----------------------
+
+
+def _lanes_plane(seed):
+    rng = np.random.default_rng(seed)
+    flat = 1.0 + rng.normal(0, 0.05, (400, 37))
+    flat[rng.random(flat.shape) < 0.02] += 2.0
+    flat[5] = 1.0            # a noiseless lane
+    flat[7, :36] = np.nan    # a lane with one survivor
+    return flat
+
+
+@pytest.mark.parametrize("axis", [0, 1])
+def test_flag_lanes_matches_flag_1d_lane_by_lane(axis):
+    from skarabina.tfcrop import flag_lanes
+
+    flat = _lanes_plane(50)
+    lanes = flat if axis == 1 else flat.T
+    expected = np.stack([flag_1d(lane, 3.0)[0] for lane in lanes])
+    got = flag_lanes(flat, 3.0, axis=axis)
+    np.testing.assert_array_equal(got if axis == 1 else got.T, expected)
+
+
+def _window_pass_loop(flat, flagged, mode, halfwin, cutoff):
+    """The per-point reference the vectorised window pass replaced."""
+    deviating = np.where(flagged, np.abs(flat - 1.0), 0.0)
+    ny, nx = flat.shape
+    extra = np.zeros_like(flagged)
+    for y in range(ny):
+        y0, y1 = max(0, y - halfwin), min(ny, y + halfwin + 1)
+        for x in range(nx):
+            if flagged[y, x]:
+                continue
+            window = deviating[y0:y1, max(0, x - halfwin):min(nx, x + halfwin + 1)]
+            if mode in ("sum", "both") \
+                    and window.sum() > cutoff * np.sqrt(window.size):
+                extra[y, x] = True
+                continue
+            if mode in ("std", "both"):
+                spread = float(window.std())
+                if spread > cutoff and abs(flat[y, x] - 1.0) > spread:
+                    extra[y, x] = True
+    return extra
+
+
+@pytest.mark.parametrize("mode", ["sum", "std", "both"])
+@pytest.mark.parametrize("halfwin", [1, 2, 3])
+@pytest.mark.parametrize("shape", [(60, 40), (4, 5), (1, 9)])
+def test_window_pass_matches_the_per_point_loop(mode, halfwin, shape):
+    from skarabina.tfcrop import _window_pass
+
+    rng = np.random.default_rng(51)
+    flat = 1.0 + rng.normal(0, 1.0, shape)
+    flagged = rng.random(shape) < 0.3
+    np.testing.assert_array_equal(
+        _window_pass(flat, flagged, mode, halfwin, 1.0),
+        _window_pass_loop(flat, flagged, mode, halfwin, 1.0),
+    )
+
+
+def test_tfcrop_grouping_does_not_change_the_result(monkeypatch):
+    import skarabina.tfcrop as tfcrop
+
+    plane = make_plane(ntime=200, nchan=64, seed=52)
+    plane[50:53, 10] *= 5.0
+    flagged = np.random.default_rng(52).random(plane.shape) < 0.2
+    params = TFCropParams(usewindowstats="both")
+    reference, stats = tfcrop_plane(plane, params, flagged)
+    monkeypatch.setattr(tfcrop, "GROUP_VALUES", 300)
+    grouped, grouped_stats = tfcrop_plane(plane, params, flagged)
+    np.testing.assert_array_equal(grouped, reference)
+    assert grouped_stats == stats
+
+
+@pytest.mark.parametrize("degree", [1, 3])
+def test_robust_fit_columns_agrees_with_robust_fit(degree):
+    """The batched fit solves each piece through its normal equations rather
+    than an SVD, so it must agree with robust_fit to rounding, column by column
+    -- including columns with gaps, spikes and only a few usable points."""
+    from skarabina.tfcrop import robust_fit_columns
+
+    rng = np.random.default_rng(53)
+    n, ncol = 500, 12
+    x = np.arange(n, dtype=float)
+    y = 5.0 + 0.01 * x[:, None] + rng.normal(0, 0.1, (n, ncol))
+    y[rng.random(y.shape) < 0.4] = np.nan
+    y[100:110, 3] = 50.0          # a burst the fit must reject
+    y[:, 5] = np.nan
+    y[[10, 200, 490], 5] = 5.0    # three usable points
+    y[:, 6] = np.nan
+    y[250:260, 6] = 5.0           # a cluster in one piece only
+
+    fitted, keep = robust_fit_columns(x, y, 7, degree)
+    for col in range(ncol):
+        expected, expected_keep = robust_fit(x, y[:, col], 7, degree)
+        np.testing.assert_allclose(fitted[:, col], expected, rtol=1e-9, atol=1e-9)
+        np.testing.assert_array_equal(keep[:, col], expected_keep)

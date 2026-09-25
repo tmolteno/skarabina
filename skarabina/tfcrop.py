@@ -31,6 +31,9 @@ Steps 1-4 run per baseline and per correlation, over chunks of time.
 """
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
+
+from skarabina.nanstats import nanmedian
 
 #: Fitting directions, in CASA's spelling.
 FLAG_DIMENSIONS = ("freqtime", "timefreq", "freq", "time")
@@ -67,6 +70,12 @@ FIT_FLOOR_FRACTION = 1.0e-3
 #: Number of robust-fit and flagging iterations, per the published algorithm.
 N_FIT_ITERATIONS = 5
 N_FLAG_ITERATIONS = 5
+
+#: Rough cap on the float64 values a temporary may hold while one plane is
+#: processed.  The per-row and per-column flagging and the window statistics
+#: are vectorised over groups of lanes sized from this, so their temporaries
+#: stay bounded however long the dask chunk or wide the band.
+GROUP_VALUES = 1 << 20
 
 #: Threshold, in robust sigmas, used to reject outliers *while fitting*.  This
 #: is deliberately tighter than the flagging cutoffs: it exists to keep RFI out
@@ -198,7 +207,8 @@ def robust_fit(x, y, npieces, degree, n_iterations=N_FIT_ITERATIONS,
     threshold_floor = FIT_FLOOR_FRACTION * float(mad_sigma(np.abs(y[finite])))
     attempts = max(1, n_iterations)
     max_pieces = max(1, min(npieces, x.size))
-    fitted = _fit_pieces(x, y, keep, _piece_edges(x.size, 1), degree)
+    # The first attempt always fits (at one piece unless max_pieces is 1), so
+    # there is no need for a fit before the loop: it would be overwritten.
     for attempt in range(attempts):
         pieces = max_pieces if max_pieces == 1 else 1 + round(
             (max_pieces - 1) * attempt / max(1, attempts - 1)
@@ -244,10 +254,7 @@ def _fit_pieces(x, y, keep, edges, degree):
     model = np.full(x.size, np.nan)
     supported = np.zeros(x.size, dtype=bool)
     for start, stop in zip(edges[:-1], edges[1:]):
-        sel = np.zeros(x.size, dtype=bool)
-        sel[start:stop] = True
-        inside = sel & keep
-        chosen = np.flatnonzero(inside)
+        chosen = start + np.flatnonzero(keep[start:stop])
         if chosen.size < 2:
             continue
         model[start:stop] = _poly_fit(
@@ -338,6 +345,58 @@ def flag_1d(values, cutoff, n_iterations=N_FLAG_ITERATIONS):
     return flagged, sigma
 
 
+def flag_lanes(values, cutoff, axis, n_iterations=N_FLAG_ITERATIONS):
+    """:func:`flag_1d` of every lane of a 2-D array along ``axis``, at once.
+
+    Identical, lane for lane and bit for bit, to calling :func:`flag_1d` on
+    each row (``axis=1``) or column (``axis=0``): the same surviving values, the
+    same two medians taken the same way (:func:`skarabina.nanstats.nanmedian`),
+    and a lane stops iterating exactly when :func:`flag_1d` would -- when too
+    few values survive, or when an iteration changes nothing.  Lanes are taken
+    a group at a time so the working set stays bounded.
+
+    The loop this replaces was one :func:`flag_1d` call per row of the plane,
+    each doing two ``np.median`` calls per iteration: on a 10 000-row,
+    79-channel block, 10 000 calls and two thirds of the time TFCrop took.
+    """
+    values = np.asarray(values, dtype=float)
+    lanes_first = values if axis == 1 else values.T
+    flags = np.empty(lanes_first.shape, dtype=bool)
+    group = max(1, GROUP_VALUES // max(1, lanes_first.shape[1]))
+    for start in range(0, lanes_first.shape[0], group):
+        stop = start + group
+        flags[start:stop] = _flag_lane_group(
+            lanes_first[start:stop], cutoff, n_iterations
+        )
+    return flags if axis == 1 else flags.T
+
+
+def _flag_lane_group(values, cutoff, n_iterations):
+    """:func:`flag_lanes` for a ``(lane, sample)`` group."""
+    non_finite = ~np.isfinite(values)
+    flagged = non_finite.copy()
+    deviation = np.abs(values - 1.0)
+    active = np.ones(values.shape[0], dtype=bool)
+    for _ in range(max(1, n_iterations)):
+        # A lane with fewer than two survivors stops, as flag_1d breaks.
+        active &= np.count_nonzero(~flagged, axis=1) >= 2
+        if not active.any():
+            break
+        surviving = np.where(flagged[active], np.nan, values[active])
+        centre = nanmedian(surviving, axis=1)
+        sigma = 1.4826 * nanmedian(np.abs(surviving - centre[:, None]), axis=1)
+        # A noiseless lane has nothing to scale by, so it falls back to
+        # flagging exact deviations from 1 -- a limit of zero.
+        noiseless = ~np.isfinite(sigma) | (sigma == 0.0)
+        limit = np.where(noiseless, 0.0, cutoff * sigma)
+        new = (deviation[active] > limit[:, None]) | non_finite[active]
+        changed = np.any(new != flagged[active], axis=1)
+        rows = np.flatnonzero(active)
+        flagged[rows[changed]] = new[changed]
+        active[rows[~changed]] = False
+    return flagged
+
+
 def _window_pass(flat, flagged, mode, halfwin, cutoff):
     """Extra flags from sliding-window statistics around each point.
 
@@ -352,26 +411,62 @@ def _window_pass(flat, flagged, mode, halfwin, cutoff):
     patch accumulates a large one.  Windows are clipped at the edges of the
     plane rather than wrapped or shrunk, so a spike at the band edge is judged
     with the same window size as one in the middle.
+
+    Vectorised: the plane is cut into blocks whose points all have the same
+    window shape (the interior, and each row/column within ``halfwin`` of an
+    edge), and each block's windows are reduced at once through a strided view.
+    That reduction adds the window's values in a different order from a sum of
+    each window on its own, so a statistic can differ from the per-point loop
+    this replaces in the last bit -- enough to change a flag only for a value
+    within rounding of its threshold.  The loop took ~5 s per 10 000 x 79 plane
+    with ``usewindowstats='both'``.
     """
     deviating = np.where(flagged, np.abs(flat - 1.0), 0.0)
     ny, nx = flat.shape
     extra = np.zeros_like(flagged)
-    for y in range(ny):
-        y0, y1 = max(0, y - halfwin), min(ny, y + halfwin + 1)
-        for x in range(nx):
-            if flagged[y, x]:
-                continue
-            x0, x1 = max(0, x - halfwin), min(nx, x + halfwin + 1)
-            window = deviating[y0:y1, x0:x1]
-            if mode in ("sum", "both"):
-                if window.sum() > cutoff * np.sqrt(window.size):
-                    extra[y, x] = True
-                    continue
-            if mode in ("std", "both"):
-                spread = float(window.std())
-                if spread > cutoff and abs(flat[y, x] - 1.0) > spread:
-                    extra[y, x] = True
+    for rows, top, height in _window_classes(ny, halfwin):
+        for cols, left, width in _window_classes(nx, halfwin):
+            # A block of points sharing one window shape; within it, bound the
+            # (points x window) temporaries by taking the rows in groups.
+            group = max(1, GROUP_VALUES // max(1, (cols.stop - cols.start)
+                                               * height * width))
+            for first in range(rows.start, rows.stop, group):
+                last = min(first + group, rows.stop)
+                source = deviating[first + top:last - 1 + top + height,
+                                   cols.start + left:cols.stop - 1 + left + width]
+                windows = sliding_window_view(source, (height, width))
+                block = (slice(first, last), cols)
+                candidate = ~flagged[block]
+                hit = np.zeros(candidate.shape, dtype=bool)
+                if mode in ("sum", "both"):
+                    total = windows.sum(axis=(-2, -1))
+                    hit |= total > cutoff * np.sqrt(height * width)
+                if mode in ("std", "both"):
+                    spread = windows.std(axis=(-2, -1))
+                    hit |= (spread > cutoff) & (np.abs(flat[block] - 1.0) > spread)
+                extra[block] = candidate & hit
     return extra
+
+
+def _window_classes(n, halfwin):
+    """Runs of positions along one axis that share a clipped window.
+
+    Yields ``(positions, offset, length)``: the window of every position ``p``
+    in the ``positions`` slice is ``[p + offset, p + offset + length)``.  Away
+    from the edges that is one run with ``offset = -halfwin``; within
+    ``halfwin`` of an edge the clipping makes each position its own run.
+    """
+    start = 0
+    while start < n:
+        low, high = max(0, start - halfwin), min(n, start + halfwin + 1)
+        offset, length = low - start, high - low
+        stop = start + 1
+        while stop < n and (max(0, stop - halfwin) - stop,
+                            min(n, stop + halfwin + 1) - max(0, stop - halfwin)) \
+                == (offset, length):
+            stop += 1
+        yield slice(start, stop), offset, length
+        start = stop
 
 
 def _baseline_along_rows(plane, flagged, npieces, degree):
@@ -384,17 +479,162 @@ def _baseline_along_rows(plane, flagged, npieces, degree):
     (rather than taken as a median) so that real time structure -- a source
     rising, gain drifts -- is followed and only deviations from it are flagged.
     """
-    baseline = np.empty(plane.shape[1], dtype=float)
+    baseline = np.full(plane.shape[1], np.nan)
     x = np.arange(plane.shape[0], dtype=float)
-    for column in range(plane.shape[1]):
-        series = np.where(flagged[:, column], np.nan, plane[:, column])
-        finite = np.isfinite(series)
-        if finite.sum() < 2:
-            baseline[column] = np.nan
-            continue
-        fitted, _ = robust_fit(x, series, npieces, degree)
-        baseline[column] = np.nanmedian(fitted)
+    series = np.where(flagged, np.nan, plane)
+    fittable = np.count_nonzero(np.isfinite(series), axis=0) >= 2
+    columns = np.flatnonzero(fittable)
+    # Columns are fitted together, a bounded group at a time; see
+    # robust_fit_columns for why this is not a loop of robust_fit calls.
+    group = max(1, GROUP_VALUES // max(1, 4 * plane.shape[0]))
+    for first in range(0, columns.size, group):
+        chosen = columns[first:first + group]
+        fitted, _ = robust_fit_columns(x, series[:, chosen], npieces, degree)
+        baseline[chosen] = nanmedian(fitted, axis=0)
     return baseline
+
+
+def robust_fit_columns(x, y, npieces, degree, n_iterations=N_FIT_ITERATIONS,
+                       reject_sigma=FIT_REJECT_SIGMA):
+    """:func:`robust_fit` of every column of ``y`` against the same ``x``, at once.
+
+    The same algorithm, step for step -- growing piece count, rejection at
+    ``reject_sigma`` robust sigmas above the data-scaled floor, the same
+    tapered, degree-limited polynomial per piece and the same guard against
+    extrapolation -- with each column stopping exactly where
+    :func:`robust_fit` would stop.  Every column needs at least two finite
+    values (the caller skips the rest).
+
+    What differs is only how each piece's weighted least-squares problem is
+    solved: all columns' problems at once, through their normal equations,
+    rather than one SVD-based ``lstsq`` per column and piece.  The fitted
+    values agree to rounding, not to the bit, so a point sitting within
+    rounding of a rejection threshold can come out differently.  The loop it
+    replaces was ~20 small fits per column per plane, two thirds of TFCrop's
+    remaining time -- and pure interpreter work, which serialises dask's
+    threads on the GIL, so the run got *slower* with more workers.
+
+    Returns ``(fitted, keep)``, both shaped like ``y``.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    finite = np.isfinite(y)
+    keep = finite.copy()
+    threshold_floor = FIT_FLOOR_FRACTION * 1.4826 * _column_mad(
+        np.abs(np.where(finite, y, np.nan))
+    )
+    attempts = max(1, n_iterations)
+    max_pieces = max(1, min(npieces, x.size))
+    fitted = np.full(y.shape, np.nan)
+    active = np.ones(y.shape[1], dtype=bool)
+    for attempt in range(attempts):
+        if not active.any():
+            break
+        pieces = max_pieces if max_pieces == 1 else 1 + round(
+            (max_pieces - 1) * attempt / max(1, attempts - 1)
+        )
+        cols = np.flatnonzero(active)
+        model = _fit_pieces_columns(
+            x, y[:, cols], keep[:, cols], _piece_edges(x.size, pieces), degree
+        )
+        fitted[:, cols] = model
+        residuals = y[:, cols] - model
+        sigma = 1.4826 * _column_mad(np.where(keep[:, cols], residuals, np.nan))
+        with np.errstate(invalid="ignore"):
+            limit = np.maximum(reject_sigma * sigma, threshold_floor[cols])
+            new_keep = finite[:, cols] & (np.abs(residuals) <= limit)
+        # A column stops, keeping this attempt's fit and its previous mask,
+        # where robust_fit breaks: no usable scatter, or too few survivors.
+        proceed = np.isfinite(sigma) & (np.count_nonzero(new_keep, axis=0) >= 2)
+        keep[:, cols[proceed]] = new_keep[:, proceed]
+        active[cols[~proceed]] = False
+    return fitted, keep
+
+
+def _column_mad(values):
+    """Median absolute deviation of each column, NaN left out (unscaled)."""
+    centre = nanmedian(values, axis=0)
+    return nanmedian(np.abs(values - centre), axis=0)
+
+
+def _fit_pieces_columns(x, y, keep, edges, degree):
+    """:func:`_fit_pieces` for every column of ``y`` at once."""
+    n, ncol = y.shape
+    model = np.full((n, ncol), np.nan)
+    supported = np.zeros((n, ncol), dtype=bool)
+    for start, stop in zip(edges[:-1], edges[1:]):
+        kept = keep[start:stop]
+        count = np.count_nonzero(kept, axis=0)
+        xs = x[start:stop, None]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            low = np.where(kept, xs, np.inf).min(axis=0)
+            high = np.where(kept, xs, -np.inf).max(axis=0)
+            centre = np.where(kept, xs, 0.0).sum(axis=0) / count
+        span = high - low
+        degenerate = span <= 0
+        span = np.where(degenerate, 1.0, span)
+        centre = np.where(degenerate, 0.0, centre)
+        # _edge_taper weights by each point's rank among the kept points.  It
+        # only departs from 1 over the first ``ramp`` ranks, so the cosine is
+        # taken there alone.
+        rank = np.cumsum(kept, axis=0) - 1
+        ramp = np.maximum(1.0, POLY_EDGE_TAPER * count)
+        position = rank / ramp
+        weight = np.ones(kept.shape)
+        rising = kept & (position < 1.0) & (count >= 3)
+        weight[rising] = np.maximum(
+            0.5 * (1.0 - np.cos(np.pi * position[rising])), TAPER_FLOOR
+        )
+        weight[~kept] = 0.0
+        scaled = (xs - centre) / span
+        # Weighted least squares through its normal equations, built from the
+        # power moments sum(w^2 s^k) and sum(w^2 y s^k) -- (2*deg + 1) passes
+        # over the piece rather than a (points x columns x terms) design.
+        weight *= weight
+        weighted_y = np.where(kept, y[start:stop], 0.0) * weight
+        piece_degree = np.maximum(1, np.minimum(degree, count - 2))
+        fittable = count >= 2
+        top = int(piece_degree[fittable].max()) if fittable.any() else 0
+        moments, targets = [], []
+        power_w, power_y = weight, weighted_y
+        for k in range(2 * top + 1):
+            moments.append(power_w.sum(axis=0))
+            if k <= top:
+                targets.append(power_y.sum(axis=0))
+                power_y = power_y * scaled
+            power_w = power_w * scaled
+        for deg in np.unique(piece_degree[fittable]):
+            cols = np.flatnonzero(fittable & (piece_degree == deg))
+            terms = np.arange(deg + 1)
+            normal = np.stack(
+                [moments[k][cols] for k in (terms[:, None] + terms).ravel()],
+                axis=-1,
+            ).reshape(cols.size, deg + 1, deg + 1)
+            rhs = np.stack([targets[k][cols] for k in terms], axis=-1)
+            coeffs = np.linalg.solve(normal, rhs[..., None])[..., 0]
+            # Horner's rule across the whole piece.
+            value = np.broadcast_to(coeffs[:, deg], (stop - start, cols.size))
+            for k in range(deg - 1, -1, -1):
+                value = value * scaled[:, cols] + coeffs[:, k]
+            model[start:stop, cols] = value
+        margin = EXTRAPOLATION_MARGIN * (high - low) * max(1, degree) / 3.0
+        with np.errstate(invalid="ignore"):
+            supported[start:stop] = (
+                (count >= 2) & (xs >= low - margin) & (xs <= high + margin)
+            )
+
+    gaps = ~supported
+    for col in np.flatnonzero(gaps.any(axis=0)):
+        gap = gaps[:, col]
+        if gap.all():
+            kept = keep[:, col]
+            model[:, col] = np.nanmean(y[kept, col]) if kept.any() else 0.0
+        else:
+            known = np.flatnonzero(supported[:, col] & np.isfinite(model[:, col]))
+            model[gap, col] = np.interp(
+                np.flatnonzero(gap), known, model[known, col]
+            )
+    return model
 
 
 def bandpass_template(plane, flagged, params):
@@ -425,10 +665,7 @@ def _fit_and_flag_freq(plane, flagged, params):
     """Bandpass direction: fit the time-average, flatten, flag across frequency."""
     template = bandpass_template(plane, flagged, params)
     flat = _flatten(plane, template)
-    flags = np.zeros_like(flagged)
-    for row in range(flat.shape[0]):
-        flags[row], _ = flag_1d(flat[row], params.freqcutoff)
-    return flags, flat
+    return flag_lanes(flat, params.freqcutoff, axis=1), flat
 
 
 def _fit_and_flag_time(plane, flagged, params):
@@ -438,10 +675,7 @@ def _fit_and_flag_time(plane, flagged, params):
     )
     safe = _safe_template(baseline, np.ones_like(baseline))
     flat = _flatten(plane, safe[None, :])
-    flags = np.zeros_like(flagged)
-    for column in range(flat.shape[1]):
-        flags[:, column], _ = flag_1d(flat[:, column], params.timecutoff)
-    return flags, flat
+    return flag_lanes(flat, params.timecutoff, axis=0), flat
 
 
 def _fit_for(fit_type):

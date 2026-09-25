@@ -226,6 +226,57 @@ the box), so the wall times are load-dependent.
 
 ---
 
+## tfcrop: vectorised flagging, batched time fits, 2026-09-25
+
+**Why** — with the dask side already shared with `rflag` (spilled per-block
+flags, one pass), tfcrop's own arithmetic was the cost: 0.78 s per
+10 000-row × 79-channel plane, two thirds of it `flag_1d` called once per row
+(two `np.median` calls per iteration), and most of the rest ~20 small `lstsq`
+fits per column in the time direction.  That work is interpreter-bound, so
+dask's threads fought over the GIL: 16 planes took 3.7 s on one thread and
+6.1 s on eight.
+
+**Change** — `flag_lanes` flags every row (or column) at once with the
+sort-based median now in `skarabina/nanstats.py` (bit-identical to the
+`flag_1d` loop); `robust_fit_columns` fits all columns' time series together,
+solving each piece's weighted least squares through its normal equations; the
+optional `usewindowstats` pass reduces strided window views instead of looping
+per point; `tfcrop.GROUP_VALUES` bounds the temporaries.
+
+**Workload / host** — as the rflag section above: the `bench/make_synthetic_ms.py`
+MS (79 chan × 2 corr, ~69 % pre-flagged), `--flag tfcrop` with CASA defaults,
+`--write-changed-only`; `moist`, python-casacore 3.8.1, load average 0.5–2.5.
+"1.0.5"/"1.0.6" are those tags run from worktrees; single measurements.
+
+| rows | build | wall (s) | user (s) | sys (s) | peak RSS (MiB) |
+|---|---|---|---|---|---|
+| 430k | 1.0.5 | 83.9 | 102.0 | 40.0 | 571 |
+| 430k | 1.0.6 | 82.0 | 100.1 | 39.7 | 529 |
+| 430k | new | **8.41** | 36.5 | 2.6 | 718 |
+| 860k | 1.0.6 | 163.1 | 200.4 | 77.9 | 582 |
+| 860k | new | **15.6** | 73.0 | 4.3 | 761–803 |
+| 1.72M | new | **31.0** | 144.9 | 8.2 | 778 |
+
+- The written `FLAG` is identical to 1.0.6's: **0 of 67 940 000** flags differ
+  at 430k (168 182 new flags in both).  1.0.5 and 1.0.6 also agree with each
+  other.
+- The per-plane pieces are bit-identical to the loops they replace except the
+  batched time fit, which agrees to rounding (`test_robust_fit_columns_agrees_with_robust_fit`).
+  The one difference found in the old-vs-new sweep is a degenerate plane of
+  exact constants: `lstsq` fitted a column's baseline as 0.9999999999999998,
+  and the noiseless fallback (flag any deviation from 1) then flagged the whole
+  column; the normal equations give exactly 1 and flag nothing.
+- The single-thread cost per plane fell from 0.78 s to 0.29 s; the rest of the
+  gain is that the work is now GIL-free numpy and runs on all eight workers
+  (16 planes: 1.24 s on eight threads).  The 1.0.x `sys` time was lock
+  contention between those threads.
+- Peak RSS is higher than 1.0.6's by ~200 MiB because eight workers now really
+  run concurrently, each with bounded temporaries; it does not grow with the
+  table (718 → ~780 → 778 MiB over a 4× longer MS; repeated 860k runs spread by
+  40 MiB).  For comparison `rflag` at 1.72M rows peaked at 903 MiB (882 at 430k).
+
+---
+
 ## Issue: `--write-changed-only` leaves the input read-only, then fails on it
 
 Found while building this bench (2026-09-24, skarabina 1.0.5), reported as

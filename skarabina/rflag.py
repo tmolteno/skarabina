@@ -28,6 +28,8 @@ around by the very RFI being looked for, and the algorithm would then miss it.
 
 import numpy as np
 
+from skarabina.nanstats import nanmedian as _nanmedian
+
 #: Defaults, all from CASA's ``flagdata`` so a recipe transfers unchanged.
 DEFAULTS = {
     "winsize": 3,
@@ -66,31 +68,6 @@ _MISSING = complex(np.nan, np.nan)
 #: temporaries per step -- stays a bounded multiple of this, however wide the
 #: band or long the dask chunk.  1M values is 8 MB per temporary.
 GROUP_VALUES = 1 << 20
-
-
-def _nanmedian(values, axis=-1):
-    """``np.nanmedian`` along ``axis``, from one sort.
-
-    NaN sorts after every number, so after sorting the usable samples of each
-    lane are its first ``n`` entries and the median is read off at ``(n-1)//2``
-    and ``n//2`` -- the same two middle values, averaged the same way, as numpy's
-    own median.  A lane with no usable sample comes out NaN, silently.
-
-    This replaces ``np.nanmedian``, whose small-axis path goes through masked
-    arrays: on a 10 000-row, 79-channel block it was 1.9 s of the 2.2 s the
-    whole RFlag plane took, and it warns (not thread-safely) on every all-NaN
-    lane, which on real, heavily flagged data is most of them.
-    """
-    ordered = np.moveaxis(np.sort(values, axis=axis), axis, -1)
-    if ordered.shape[-1] == 0:
-        return np.full(ordered.shape[:-1], np.nan)
-    count = np.count_nonzero(~np.isnan(ordered), axis=-1)
-    low = np.take_along_axis(
-        ordered, np.maximum((count - 1) // 2, 0)[..., None], axis=-1
-    )[..., 0]
-    high = np.take_along_axis(ordered, (count // 2)[..., None], axis=-1)[..., 0]
-    # Where the count is odd the two are the same sample, and (x + x) / 2 is x.
-    return np.where(count > 0, (low + high) / 2, np.nan)
 
 
 def robust_scale(values):
