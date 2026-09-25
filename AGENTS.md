@@ -139,11 +139,14 @@ options control the concurrent-chunk working set (mirroring tricolour's
 `--row-chunks` / `--nworkers`):
 
 - `--row-chunk N` — bytes per chunk are roughly `N * nchan * ncorr * 8` for
-  DATA; lower it to shrink each chunk.  When not given it is sized by
-  `skarabina/memory.py` from `--memory-limit-GB` (default 0 = the RAM
-  available): `3.5 GB + workers * N * nchan * ncorr * 36 B` must fit 80 % of
-  the limit.  The constants are measured (doc/RFLAG.md §7.3); re-measure them
-  if a change alters the flaggers' working set.
+  DATA; lower it to shrink each chunk.  When not given it is chosen by
+  `skarabina.memory.plan` from the `--flag` list and `--memory-limit-GB`
+  (default 0 = the RAM available): the largest chunk keeping every verb's
+  `fixed + workers * N * nchan * ncorr * bytes_per_vis` within 80 % of the
+  limit.  The per-verb constants (`CHUNK_COST`, `TABLE_COST`) are measured
+  (doc/RFLAG.md §7.3-7.4); re-measure them when a change alters a verb's
+  working set.  `save:` and a full `--msout` write are whole-table steps
+  (casacure buffers the written table) and are only warned about.
 - `--workers N` (default 0 = all cores) — the number of dask threads, i.e. the
   number of chunks materialised concurrently.
 

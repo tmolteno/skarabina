@@ -286,9 +286,50 @@ the workers that get one -- at 20 000 rows the scan is only 8 chunks):
 That is `base + rows in flight x nchan x ncorr x b`, with b = 26 bytes per
 visibility and a 3.2 GB base for tfcrop, 33 bytes and 2.0 GB for rflag: the
 same rows in flight cost the same whether they come from more workers or
-larger chunks, and the table's length does not enter.  `skarabina.memory`
-uses 36 bytes and 3.5 GB to size the chunk from `--memory-limit-GB` (default:
-the RAM available) when `--row-chunk` is not given.
+larger chunks, and the table's length does not enter.
+
+### 7.4 Memory of the other steps, and the plan
+
+The other verbs, each alone on `.bench/scan1.ms` (a written copy of scan 1),
+12 workers, followed by one chunked pass over FLAG (what the summary or the
+write would do):
+
+| step | 5 000 rows | 10 000 rows | kind |
+|---|---|---|---|
+| no verb (the pass alone) | 0.4 GB | 0.2 GB | per chunk, ~1 B/vis |
+| `autos` | 0.6 GB | 0.7 GB | per chunk |
+| `uv-above 8000` | 0.4 GB | 0.2 GB | per chunk |
+| `nan` | 1.3 GB | 1.8 GB | per chunk |
+| `clip 0 100` | 1.9 GB | 2.2 GB | per chunk |
+| `spectral-window` | 1.8 GB | 2.6 GB | per chunk |
+| `restore:` | 0.8 GB | 1.2 GB | per chunk (read lazily since `d1e1190`; it held the whole cube before) |
+| `save:` | 1.9 GB | 1.8 GB | **whole table**: 2.2 B per MS visibility (19.7 GB predicted for the full MS, 18-19 GB measured) |
+| stage-0 list + rflag | -- | 21.1 GB | = rflag alone (20.6 GB) + 0.5 |
+| stage-0 list + tfcrop | -- | 18.1 GB | = tfcrop alone (17.9 GB) + 0.2 |
+| write: `--write-changed-only`, `--apply` | -- | 1.8 GB | flag columns only |
+| write: full `--msout` | 38.3 GB | 40.7 GB | **whole table**: ~56 B per output visibility |
+
+A run peaks at its most expensive step, not at the sum of its steps.  Two
+steps hold a whole table whatever the chunk, because casacure buffers what it
+writes until the table is flushed: `save:` (the flag cube) and a full
+`--msout` write, which needed 40.7 GB to write the 11 GB copy -- about 450 GB
+for the whole 124 GB MS, so a full write of a large MS is only possible
+averaged or as flags alone.
+
+`skarabina.memory.plan` turns this into the run's plan: per-chunk costs
+(bytes per visibility per worker: read and `uv-above` 1, `autos` 2, `nan` and
+`clip` 4, `spectral-window` 5, `restore:` 3, tfcrop 30 + 3.5 GB, rflag
+36 + 2.5 GB), per-table costs (`save:` 2.5 B per MS visibility, full write
+56 B and flags-only write 1.5 B per output visibility), and the largest row
+chunk keeping every per-chunk step of the `--flag` list within 80 % of
+`--memory-limit-GB` (default: the RAM available).  The run prints the plan
+and warns about a whole-table step that does not fit.  Checked on the scan-1
+copy with the stage-0 list and rflag:
+
+| limit | chosen chunk (set by) | planned rflag peak | measured peak |
+|---|---|---|---|
+| available RAM, 46.9 GB | 11 977 (12 workers over 143 716 rows) | 27.2 GB | 26.5 GB |
+| `--memory-limit-GB 16` | 4 850 (rflag) | 12.8 GB | 11.6 GB |
 
 ## 8. Bugs found on the way
 
