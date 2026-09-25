@@ -849,3 +849,75 @@ def test_tfcrop_does_not_judge_against_already_flagged_data():
     flag, stats = tfcrop_plane(plane, TFCropParams(), flagged)
     assert flag[flagged].all()
     assert stats["pre_existing"] == int(flagged.sum())
+
+
+def _tiles(counts, target):
+    tile = np.minimum((np.cumsum(counts) - counts) // target,
+                      max(0, counts.sum() // target - 1))
+    return np.unique(tile, return_inverse=True)[1]
+
+
+@pytest.mark.parametrize("shape, target", [((60, 20), 37), ((40, 300), 1000)])
+def test_local_pool_sigma_is_flag_1d_of_each_tile(monkeypatch, shape, target):
+    """Each tile's sigma is flag_1d's of the tile's live values, whatever the
+    group size the tiles are measured in."""
+    import skarabina.tfcrop as tfcrop
+
+    rng = np.random.default_rng(56)
+    values = 1.0 + rng.normal(0, 0.1, shape)
+    excluded = rng.random(shape) < 0.6
+    excluded[::7] = True
+    counts = np.count_nonzero(~excluded, axis=1)
+    short = np.ones(shape[0], dtype=bool)
+    monkeypatch.setattr(tfcrop, "LANE_POOL", "local")
+    monkeypatch.setattr(tfcrop, "POOL_SAMPLES", target)
+    sigma = tfcrop._pooled_sigma(values, excluded, counts, short, 3.0, 5)
+    tile = _tiles(counts, target)
+    for t in np.unique(tile):
+        lanes = tile == t
+        expected = flag_1d(values[lanes][~excluded[lanes]], 3.0)[1]
+        assert np.all(sigma[lanes] == expected)
+    monkeypatch.setattr(tfcrop, "GROUP_VALUES", 300)
+    np.testing.assert_array_equal(
+        tfcrop._pooled_sigma(values, excluded, counts, short, 3.0, 5), sigma
+    )
+
+
+def test_local_pool_skips_groups_without_short_lanes(monkeypatch):
+    import skarabina.tfcrop as tfcrop
+
+    monkeypatch.setattr(tfcrop, "LANE_POOL", "local")
+    monkeypatch.setattr(tfcrop, "POOL_SAMPLES", 20)
+    monkeypatch.setattr(tfcrop, "GROUP_VALUES", 25)  # one tile per group
+    values = 1.0 + np.random.default_rng(57).normal(0, 0.1, (40, 10))
+    excluded = np.zeros(values.shape, dtype=bool)
+    counts = np.full(40, 10)
+    short = np.zeros(40, dtype=bool)
+    short[5] = True
+    sigma = tfcrop._pooled_sigma(values, excluded, counts, short, 3.0, 5)
+    assert np.isfinite(sigma[4:6]).all()           # lane 5's tile: lanes 4-5
+    assert np.isnan(np.delete(sigma, [4, 5])).all()
+
+
+def test_short_lane_fallback_lowers_false_positives_on_sparse_rows(monkeypatch):
+    """Rows with ~12 live samples judged on their own scatter flag several
+    percent of clean noise; judged on a local pool they flag far less, and
+    strong RFI is still found."""
+    import skarabina.tfcrop as tfcrop
+    from skarabina.tfcrop import flag_lanes
+
+    rng = np.random.default_rng(58)
+    flat = 1.0 + rng.normal(0, 0.1, (3000, 79))
+    flagged = rng.random(flat.shape) < 0.85
+    rfi = rng.random(flat.shape) < 0.005
+    flat[rfi] += 1.0                                # 10 sigma
+    clean_live = ~flagged & ~rfi
+
+    own = flag_lanes(flat, 3.0, axis=1, flagged=flagged)
+    monkeypatch.setattr(tfcrop, "LANE_POOL", "local")
+    monkeypatch.setattr(tfcrop, "POOL_SAMPLES", 1000)
+    pooled = flag_lanes(flat, 3.0, axis=1, flagged=flagged, min_samples=1000)
+    own_fp = own[clean_live].mean()
+    pooled_fp = pooled[clean_live].mean()
+    assert pooled_fp < 0.5 * own_fp, (own_fp, pooled_fp)
+    assert pooled[rfi & ~flagged].all()

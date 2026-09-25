@@ -407,7 +407,7 @@ def flag_lanes(values, cutoff, axis, n_iterations=N_FLAG_ITERATIONS,
     fallback_sigma = None
     if short.any():
         fallback_sigma = _pooled_sigma(
-            lanes_first, excluded, counts, cutoff, n_iterations
+            lanes_first, excluded, counts, short, cutoff, n_iterations
         )
     group = max(1, GROUP_VALUES // max(1, lanes_first.shape[1]))
     for start in range(0, lanes_first.shape[0], group):
@@ -425,39 +425,58 @@ def flag_lanes(values, cutoff, axis, n_iterations=N_FLAG_ITERATIONS,
     return flags if axis == 1 else flags.T
 
 
-def _pooled_sigma(values, excluded, counts, cutoff, n_iterations):
+def _pooled_sigma(values, excluded, counts, short, cutoff, n_iterations):
     """The fallback scatter for each lane of a ``(lane, sample)`` array.
 
     ``"block"``: :func:`flag_1d`'s adaptive sigma of every live value.
     ``"local"``: the lanes are cut, in order, into consecutive tiles of about
     :data:`POOL_SAMPLES` live values (a short final tile joins the one before),
-    and each lane gets its tile's adaptive sigma -- computed for all tiles at
-    once by laying each tile's live values out as one padded lane.  A tile of
-    rows is a few neighbouring timesteps, so the scatter follows a noise level
-    that drifts through the chunk, which one block-wide value cannot.
+    and each lane gets its tile's adaptive sigma.  A tile of rows is a few
+    neighbouring rows, so the scatter follows a noise level that drifts through
+    the chunk, which one block-wide value cannot.
+
+    Tiles are measured a group at a time, each group's tiles laid out as
+    padded lanes of one array whose size stays within :data:`GROUP_VALUES`, and
+    a group with no ``short`` lane is skipped (its lanes come back NaN; only the
+    short lanes' values are used).  Laying out a whole 10 000 x 2511 plane at
+    once, as the first version did, took 12 dask workers past 59 GB.
     """
     if LANE_POOL == "block":
         _, sigma = flag_1d(values[~excluded], cutoff, n_iterations)
         return np.full(values.shape[0], sigma)
+    sigma = np.full(values.shape[0], np.nan)
     total = int(counts.sum())
     if total < 2:
-        return np.full(values.shape[0], np.nan)
+        return sigma
     target = max(2, POOL_SAMPLES)
-    before = np.cumsum(counts) - counts
-    tile = before // target
-    tile = np.minimum(tile, max(0, total // target - 1))
+    tile = np.minimum((np.cumsum(counts) - counts) // target,
+                      max(0, total // target - 1))
+    # A long lane can jump a tile number; renumber so tiles are 0..n-1.
+    _, tile = np.unique(tile, return_inverse=True)
     ntiles = int(tile[-1]) + 1
-    # Every live value, in lane order, placed in its tile's padded lane.
-    live_lane = np.repeat(np.arange(values.shape[0]), counts)
-    live_tile = tile[live_lane]
-    tile_start = np.searchsorted(live_tile, np.arange(ntiles))
-    position = np.arange(total) - tile_start[live_tile]
-    width = int(position.max()) + 1
-    padded = np.full((ntiles, width), np.nan)
-    padded[live_tile, position] = values[~excluded]
-    _, tile_sigma = _flag_lane_group(
-        padded, np.isnan(padded), cutoff, n_iterations
-    )
+    first_lane = np.searchsorted(tile, np.arange(ntiles))
+    end_lane = np.append(first_lane[1:], values.shape[0])
+    tile_live = np.add.reduceat(counts, first_lane)
+    needed = np.zeros(ntiles, dtype=bool)
+    needed[tile[short]] = True
+    tile_sigma = np.full(ntiles, np.nan)
+    t0 = 0
+    while t0 < ntiles:
+        t1, width = t0 + 1, max(2, int(tile_live[t0]))
+        while t1 < ntiles and max(width, tile_live[t1]) * (t1 - t0 + 1) <= GROUP_VALUES:
+            width = max(width, int(tile_live[t1]))
+            t1 += 1
+        if needed[t0:t1].any():
+            lo, hi = first_lane[t0], end_lane[t1 - 1]
+            lane, sample = np.nonzero(~excluded[lo:hi])
+            owner = tile[lo + lane] - t0
+            position = np.arange(lane.size) - np.searchsorted(owner, owner)
+            padded = np.full((t1 - t0, width), np.nan)
+            padded[owner, position] = values[lo:hi][lane, sample]
+            _, tile_sigma[t0:t1] = _flag_lane_group(
+                padded, np.isnan(padded), cutoff, n_iterations
+            )
+        t0 = t1
     return tile_sigma[tile]
 
 
