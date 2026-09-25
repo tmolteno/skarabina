@@ -89,6 +89,19 @@ def test_a_full_write_and_averaging_share_the_pass(tmp_path, column_reads, flags
     assert column_reads["DATA"] == data_bytes, "DATA was read more than once"
 
 
+@pytest.mark.parametrize("flags", ["nan, clip 0 100, autos, uv-above 1000",
+                                   "nan, clip 0 100, autos, rflag"])
+@pytest.mark.parametrize("write", [["--write-changed-only"], ["--apply"]])
+def test_flags_only_writes_share_the_pass(tmp_path, column_reads, flags, write):
+    """--write-changed-only and --apply write FLAG and FLAG_ROW in the run's
+    one pass, with the summary and the verbs' reports."""
+    path, data_bytes = _ms(tmp_path)
+    target = [] if write == ["--apply"] else ["--msout", str(tmp_path / "out.ms")]
+    _run(["--ms", path, "--row-chunk", "300", "--flag", flags, "--summary", "--clobber"]
+         + target + write)
+    assert column_reads["DATA"] == data_bytes, "DATA was read more than once"
+
+
 def test_a_flag_list_with_nothing_after_it_reads_data_once(tmp_path, column_reads):
     path, data_bytes = _ms(tmp_path)
     _run(["--ms", path, "--row-chunk", "300", "--flag", "nan, rflag, clip 0 100"])

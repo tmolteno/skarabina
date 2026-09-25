@@ -2412,18 +2412,13 @@ class DaskMS:
                 if self.spw_chan_count != nchan_in_ds:
                     self._rewrite_spw_channels(name, nchan_in_ds)
 
-            for col in sorted(columns):
-                print(f"Updating table: {col} in {name}")
-                # Passing only ``col`` here does *not* avoid reading the other
-                # columns: dask-ms attaches the MS's whole read graph to the
-                # table handle it opens for the write, so the DATA read tasks
-                # run either way (measured: a one-column dataset executes the
-                # same 75 ``read~DATA`` tasks as the full one).  Narrowing the
-                # dataset is therefore not worth doing, and the read cost is
-                # not avoidable on this path.
-                writes = xds_to_table(ds_to_write, name, col)
-                with ProgressBar():
-                    dask.compute(writes)
+            if columns:
+                print(f"Updating table: {', '.join(sorted(columns))} in {name}")
+                # Every changed column in one write, and in the same compute as
+                # the run's queued reports: FLAG is still the lazy graph over
+                # what the verbs read (DATA, for nan and clip), so this is the
+                # run's one pass.  A write per column was a pass per column.
+                self._write_columns(ds_to_write, name, sorted(columns))
 
             # Make the shared blocks read-only, so that rewriting an unchanged
             # column in the output fails loudly rather than altering the input.
@@ -2437,6 +2432,19 @@ class DaskMS:
             f"  {linked} block(s) shared with the input ({n_shared} column"
             f" group(s), left read-only), {copied} copied or written"
         )
+
+    def _write_columns(self, ds, name, columns):
+        """Write ``columns`` of ``ds`` to ``name``, with the queued reports.
+
+        One ``dask.compute`` for the write and every report the run has
+        queued, so what they share -- the reads of DATA and FLAG behind the
+        lazy flags -- is read once.
+        """
+        writes = xds_to_table(ds, name, columns)
+        pending, report = self._take_pending()
+        with ProgressBar():
+            _, *values = dask.compute(writes, *pending)
+        report(values)
 
     def _copy_missing_keywords(self, name):
         """Copy main-table keywords the written MS is missing.
@@ -2545,12 +2553,13 @@ class DaskMS:
             )
         logger.warning(f"Updating {name}")
 
-        for to_update in self.changed.keys():
-            if self.changed[to_update]:
-                print(f"Updating table: {to_update} in {name}")
-                logger.debug(f"    ds={self.ds[to_update]}")
-                writes = xds_to_table(self.ds, f"{name}", to_update)
-                with ProgressBar():
-                    dask.compute(writes)
-
-                self.changed[to_update] = False
+        columns = [c for c, changed in self.changed.items() if changed]
+        if columns:
+            print(f"Updating table: {', '.join(columns)} in {name}")
+            # One compute for every changed column and the run's queued
+            # reports -- the run's one pass (see _write_columns).  Each chunk's
+            # write depends on that chunk's read, so the table is read before it
+            # is overwritten, row chunk by row chunk.
+            self._write_columns(self.ds, f"{name}", columns)
+        for column in columns:
+            self.changed[column] = False
