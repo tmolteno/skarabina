@@ -1092,25 +1092,28 @@ class DaskMS:
 
         nchan = len(self.chan_freq_hz)
         ncorr = self.ds.FLAG.shape[2]
-        # Materialize uv_distance once (numpy) so every UV-constrained
-        # entry does a cheap numpy comparison on the cached array rather
-        # than re-evaluating the sqrt(u^2+v^2) dask graph per entry.
+        # uv distance per row, lazy and chunked like the flags.  It used to be
+        # computed eagerly (a pass over UVW of its own), and the row gates
+        # built from it were numpy arrays: combined with the numpy channel
+        # mask, da.logical_and of two numpy operands returned a NUMPY
+        # (nrow, nchan, 1) array -- materialised whole, ~4 GB per YAML entry on
+        # a 1.6M-row x 2511-channel MS, and embedded in the graph.  Everything
+        # per row now stays a dask array, so an entry costs a chunk at a time.
         # UVW comes from the live dataset (self.u_arr/self.v_arr are the
         # __init__ snapshots and go stale after row selection).
         uvw = self.ds["UVW"].data
-        uv_dist = da.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).compute()
+        uv_dist = da.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2)
+        row_chunks = self.ds.FLAG.data.chunks[0]
         # Read FLAG fresh from the live dataset so we OR onto the current
         # flags (including NaN/clip flags from flag_data), not the stale
         # __init__ snapshot.
         old_flags = self.ds.FLAG.data
         new_flags = old_flags
 
-        # Collect per-entry stats and build the combined flag update lazily,
-        # so the whole YAML triggers a SINGLE dask pass (rather than one
-        # scheduler round-trip per entry).  Per-entry visibility counts
-        # factor to (channels x rows x corr) from 1D gates, avoiding a
-        # materialized (nrow, nchan, ncorr) sum just to count.
-        entry_stats = []  # (idx, n_chan, n_ranges, n_vis, uv_info)
+        # The combined flag update is built lazily, so the whole YAML costs no
+        # pass of its own; the per-entry counts factor to channels x rows x
+        # corr from the two 1-D gates and are queued with the run's reports.
+        entry_stats = []  # (idx, n_chan, n_ranges, row count, uv_info)
         for idx, entry in enumerate(entries):
             spw_ranges = entry.get("spw", [])
             uv_below = entry.get("uv_below")
@@ -1128,9 +1131,8 @@ class DaskMS:
                 )
             n_chan_flagged = int(np.sum(chan_mask))
 
-            # Per-row gate: which rows this entry applies to (numpy
-            # comparisons on the cached uv_dist).
-            row_gate = np.ones(self.ds.FLAG.shape[0], dtype=bool)
+            # Per-row gate: which rows this entry applies to (lazy).
+            row_gate = da.ones(self.ds.FLAG.shape[0], dtype=bool, chunks=(row_chunks,))
             uv_info = ""
             if uv_below is not None:
                 row_gate = row_gate & (uv_dist < float(uv_below))
@@ -1138,27 +1140,24 @@ class DaskMS:
             if uv_above is not None:
                 row_gate = row_gate & (uv_dist > float(uv_above))
                 uv_info += f", UV > {uv_above} m"
-            n_row_flagged = int(np.sum(row_gate))
-
             entry_stats.append(
-                (idx, n_chan_flagged, len(spw_ranges),
-                 n_chan_flagged * n_row_flagged * ncorr, uv_info)
+                (idx, n_chan_flagged, len(spw_ranges), da.sum(row_gate), uv_info)
             )
 
-            # Build the (nrow, nchan, ncorr) flag contribution from the
-            # two 1D gates and OR it into the running combined flag.
-            spw_flag = da.logical_and(
-                chan_mask[np.newaxis, :, np.newaxis],  # broadcast over row, corr
-                row_gate[:, np.newaxis, np.newaxis],   # broadcast over chan, corr
-            )
+            # The (nrow, nchan, ncorr) contribution from the two 1-D gates,
+            # ORed into the running flags: the dask gate on the left keeps the
+            # product a dask array.
+            spw_flag = row_gate[:, np.newaxis, np.newaxis] & chan_mask[np.newaxis, :, np.newaxis]
             new_flags = da.logical_or(new_flags, spw_flag)
 
-        for idx, n_chan, n_ranges, n_vis, uv_info in entry_stats:
-            print(
-                "flag_spectral_window[%d]: %d channels in %d range(s),"
-                " flagged %d visibilities%s"
-                % (idx, n_chan, n_ranges, n_vis, uv_info)
-            )
+        def report(*row_counts):
+            for (idx, n_chan, n_ranges, _, uv_info), n_rows in zip(entry_stats, row_counts):
+                print(
+                    "flag_spectral_window[%d]: %d channels in %d range(s),"
+                    " flagged %d visibilities%s"
+                    % (idx, n_chan, n_ranges, n_chan * int(n_rows) * ncorr, uv_info)
+                )
+        self._report([rows for _, _, _, rows, _ in entry_stats], report)
 
         # Keep FLAG as a lazy dask array — downstream methods and writers
         # expect self.ds["FLAG"].data to stay lazy (they call .compute()).

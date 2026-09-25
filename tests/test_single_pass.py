@@ -134,3 +134,26 @@ def test_the_single_pass_writes_the_same_flags(tmp_path):
     np.testing.assert_array_equal(np.asarray(once.ds.FLAG.data), expected[0])
     np.testing.assert_array_equal(np.asarray(once.ds.FLAG_ROW.data), expected[1])
     assert once.ds.FLAG.data.chunks == lazy.ds.FLAG.data.chunks
+
+
+def test_spectral_window_stays_lazy_and_reads_uvw_once(tmp_path, column_reads):
+    """Its row gates were numpy arrays, and da.logical_and of two numpy
+    operands returned a numpy (nrow, nchan, 1) array -- the whole table's
+    worth, embedded in the graph -- plus an eager pass over UVW."""
+    from skarabina import flag_ops
+    from skarabina.dask_ms import DaskMS
+
+    path, data_bytes = _ms(tmp_path)
+    rules = tmp_path / "spw.yml"
+    rules.write_text("- spw: [[1000, 1100]]\n- spw: [[1200, 1300]]\n  uv_below: 600\n")
+    ms = DaskMS(path, row_chunk=300)
+    flag_ops.run(ms, flag_ops.parse([f"nan, spectral-window {rules}"]),
+                 log=lambda *_: None, flush=False)
+    nrow, nchan = ms.ds.FLAG.shape[:2]
+    constants = [v for v in dict(ms.ds.FLAG.data.__dask_graph__()).values()
+                 if isinstance(v, np.ndarray) and v.size >= nrow * nchan // 2]
+    assert not constants, "a table-sized numpy array is embedded in the flag graph"
+    assert column_reads["UVW"] == 0, "UVW was read before the run's pass"
+    ms.flush_reports()
+    assert column_reads["DATA"] == data_bytes
+    assert column_reads["UVW"] == nrow * 3 * 8

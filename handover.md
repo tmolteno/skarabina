@@ -219,8 +219,12 @@ Roughly by expected value:
    measures per chunk.  A two-pass mode would cost a second DATA pass; an
    alternative is to pool per-chunk statistics in the single pass and apply
    them in the write pass (needs the flags to be decided after the pool).
-6. **`flag_spectral_window`** computes `uv_dist` eagerly (a small UVW pass per
-   run); make the row gates lazy.
+6. ~~`flag_spectral_window` computes `uv_dist` eagerly~~ -- done after the
+   handover: the gates are lazy, and this also fixed a table-sized numpy
+   array per YAML entry (see `doc/CHANGES.md` Unreleased).  Its
+   `memory.CHUNK_COST["spectral-window"]` (5 B/vis) was measured with that
+   array in place and is probably now an over-estimate; re-measure with
+   `bench/mem_run.py`.
 7. **Graph size**: `materialise_flags` and `_run_autofit` compute with
    `optimize_graph=False`, because they mix delayed and array collections and
    dask optimises those separately, renaming the shared read tasks (DATA was

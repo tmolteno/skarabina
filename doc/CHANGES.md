@@ -16,6 +16,16 @@
   4.98 s against 1.0.7's 5.82 s, both one DATA pass, same 3.2 GB peak; the
   rflag list is not yet measured (``handover.md`` §3.1).
 
+### Fixed
+
+- **``spectral-window`` no longer holds a table-sized array per rule.**  Its
+  row gates were numpy arrays, and ``da.logical_and`` of two numpy operands
+  returned a numpy ``(nrow, nchan, 1)`` array -- materialised whole (~4 GB
+  per YAML entry on a 1.6M-row, 2511-channel MS) and embedded in the graph --
+  and it read UVW in a pass of its own.  The gates are lazy, chunked like the
+  flags, and the per-entry counts are queued with the run's reports.  Output
+  and report lines unchanged.
+
 ## [1.0.7]
 
 ### Added
