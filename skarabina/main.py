@@ -49,6 +49,8 @@ def _row_chunk(opts, ops):
     result = memory.plan(
         [op.verb for op in ops], limit, workers, nrow, nchan, ncorr,
         write=_write_mode(opts), out_visibilities=out, row_chunk=opts.row_chunk or None,
+        # A full write shares the flagging pass unless --optimize splits it.
+        concurrent_write=not opts.optimize,
     )
     source = "--memory-limit-GB" if opts.memory_limit_gb > 0 else "available RAM"
     print(result.lines[0].replace("limit", f"limit ({source})", 1))

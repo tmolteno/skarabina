@@ -147,6 +147,12 @@ options control the concurrent-chunk working set (mirroring tricolour's
   (doc/RFLAG.md §7.3-7.4); re-measure them when a change alters a verb's
   working set.  `save:` and a full `--msout` write are whole-table steps
   (casacure buffers the written table) and are only warned about.
+- A run reads DATA once: every verb's statistics are queued (`DaskMS._report`)
+  and computed in the run's single pass -- the full write when there is one
+  (averaging and the summary included), else `materialise_flags`, else
+  `flush_reports`.  rflag/tfcrop stay lazy inside a run.  Keep new verbs on
+  `_report`; `tests/test_single_pass.py` counts DATA reads and fails on a
+  second pass.
 - `--workers N` (default 0 = all cores) — the number of dask threads, i.e. the
   number of chunks materialised concurrently.
 

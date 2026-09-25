@@ -44,6 +44,14 @@ CHUNK_COST = {
     "rflag": (36, 2.5 * GB),
 }
 
+#: Added to every per-chunk step when a full ``--msout`` write shares the
+#: flagging pass (it does unless ``--optimize`` is given): the chunks the write
+#: and the averaging hold -- DATA, WEIGHT_SPECTRUM, SIGMA_SPECTRUM -- are in
+#: flight at the same time as the flaggers'.  Measured: the stage-0 list + rflag
+#: with a full write peaked 5.4 GB above the same run with a separate write
+#: pass, at 12 workers x 11 977 rows x 2511 x 2 -- 7.5 B per visibility.
+CONCURRENT_WRITE_COST = 8
+
 #: Per-table steps: bytes per visibility of the whole table they hold --
 #: ``save`` per visibility of the input MS, the writes per visibility of the
 #: output (after averaging).
@@ -114,10 +122,14 @@ def effective_workers(workers):
     return workers if workers and workers > 0 else (os.cpu_count() or 1)
 
 
-def chunk_bytes(step, row_chunk, workers, nchan, ncorr):
-    """Estimated peak of a per-chunk step, in bytes (base included)."""
+def chunk_bytes(step, row_chunk, workers, nchan, ncorr, extra=0):
+    """Estimated peak of a per-chunk step, in bytes (base included).
+
+    ``extra`` is added to the step's bytes per visibility and ``reserve`` --
+    see :func:`plan` -- is how a concurrent write enters.
+    """
     per_vis, fixed = CHUNK_COST[step]
-    return BASE_BYTES + fixed + workers * row_chunk * nchan * ncorr * per_vis
+    return BASE_BYTES + fixed + workers * row_chunk * nchan * ncorr * (per_vis + extra)
 
 
 def table_bytes(step, visibilities):
@@ -134,34 +146,42 @@ class Plan:
     warnings: list = field(default_factory=list)
 
 
-def _largest_chunk(steps, budget, workers, nchan, ncorr):
+def _largest_chunk(steps, budget, workers, nchan, ncorr, extra=0):
     """The largest row chunk keeping every per-chunk step within ``budget``."""
     chosen, limiting = MAX_ROW_CHUNK, "the maximum"
     for step in steps:
         per_vis, fixed = CHUNK_COST[step]
         room = budget - BASE_BYTES - fixed
-        rows = int(room // (workers * nchan * ncorr * per_vis)) if room > 0 else 0
+        rows = int(room // (workers * nchan * ncorr * (per_vis + extra))) if room > 0 else 0
         if rows < chosen:
             chosen, limiting = rows, step
     return chosen, limiting
 
 
 def plan(steps, memory_bytes, workers, nrow, nchan, ncorr,
-         write=None, out_visibilities=None, row_chunk=None):
+         write=None, out_visibilities=None, row_chunk=None, concurrent_write=False):
     """Plan a run: choose the row chunk (unless given) and estimate each step.
 
     ``steps`` are the flag verbs in order (``"save"``, ``"nan"``, ...).
     ``write`` is ``None``, ``"write"`` (a full ``--msout``) or
     ``"write-flags"`` (``--write-changed-only``/``--apply``);
     ``out_visibilities`` is the output's size after averaging (default: the
-    input's).
+    input's).  ``concurrent_write`` says the full write shares the flagging
+    pass (the CLI's single pass): its per-chunk cost is then added to every
+    step, and its whole-table buffer reserved out of the budget, because both
+    grow while the flaggers' chunks are in flight.
     """
     nchan, ncorr = max(1, nchan), max(1, ncorr)
     chunked = ["read"] + [s for s in dict.fromkeys(steps) if s in CHUNK_COST]
     whole = [s for s in dict.fromkeys(steps) if s in TABLE_COST]
-    budget = SAFETY * memory_bytes
+    nvis = nrow * nchan * ncorr
+    out = nvis if out_visibilities is None else out_visibilities
+    concurrent = concurrent_write and write == "write"
+    extra = CONCURRENT_WRITE_COST if concurrent else 0
+    reserve = TABLE_COST["write"] * out if concurrent else 0
+    budget = SAFETY * memory_bytes - reserve
     if row_chunk is None:
-        chosen, limiting = _largest_chunk(chunked, budget, workers, nchan, ncorr)
+        chosen, limiting = _largest_chunk(chunked, budget, workers, nchan, ncorr, extra)
         if nrow:
             idle_cap = max(MIN_ROW_CHUNK, math.ceil(nrow / workers))
             if idle_cap < chosen:
@@ -176,14 +196,12 @@ def plan(steps, memory_bytes, workers, nrow, nchan, ncorr,
         f"Memory plan: limit {memory_bytes / GB:.1f} GB, {workers} workers,"
         f" {nrow} rows x {nchan} chan x {ncorr} corr;"
         f" row chunk {chosen} rows, set by {limiting}")
+    suffix = "  per chunk, with the write in the same pass" if concurrent else "  per chunk"
     for step in chunked:
-        result.lines.append(
-            f"  {step:<16} {chunk_bytes(step, chosen, workers, nchan, ncorr) / GB:7.1f} GB"
-            "  per chunk")
-    nvis = nrow * nchan * ncorr
+        estimate = chunk_bytes(step, chosen, workers, nchan, ncorr, extra) + reserve
+        result.lines.append(f"  {step:<16} {estimate / GB:7.1f} GB{suffix}")
     tables = [(step, table_bytes(step, nvis)) for step in whole]
     if write is not None:
-        out = nvis if out_visibilities is None else out_visibilities
         tables.append((write, table_bytes(write, out)))
     for step, estimate in tables:
         result.lines.append(f"  {step:<16} {estimate / GB:7.1f} GB  whole table")
@@ -201,7 +219,7 @@ def plan(steps, memory_bytes, workers, nrow, nchan, ncorr,
             f" {MIN_ROW_CHUNK} rows; lower --workers")
     if row_chunk is not None:
         worst = max(chunked, key=lambda s: chunk_bytes(s, chosen, workers, nchan, ncorr))
-        estimate = chunk_bytes(worst, chosen, workers, nchan, ncorr)
+        estimate = chunk_bytes(worst, chosen, workers, nchan, ncorr, extra) + reserve
         if estimate > budget:
             result.warnings.append(
                 f"--row-chunk {chosen} with {workers} workers plans ~{estimate / GB:.1f} GB"

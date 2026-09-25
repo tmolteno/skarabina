@@ -66,6 +66,19 @@ def test_writing_only_the_flags_or_an_averaged_ms_fits():
     assert not flags_only.warnings and not averaged.warnings
 
 
+def test_a_write_in_the_same_pass_costs_the_flaggers_room():
+    """With the full write sharing the pass, its chunks and its buffered table
+    are in memory while rflag runs, so the chunk must be smaller."""
+    kw = dict(write="write", out_visibilities=1_639_497 * 2511 * 2 // 32, **MEERKAT)
+    apart = memory.plan(STAGE0 + ["rflag"], 62 * GB, 12, **kw)
+    together = memory.plan(STAGE0 + ["rflag"], 62 * GB, 12, concurrent_write=True, **kw)
+    assert together.row_chunk < apart.row_chunk
+    fits = memory.chunk_bytes("rflag", together.row_chunk, 12, 2511, 2,
+                              memory.CONCURRENT_WRITE_COST)
+    assert fits + memory.TABLE_COST["write"] * kw["out_visibilities"] \
+        <= memory.SAFETY * 62 * GB
+
+
 def test_an_explicit_chunk_is_kept_and_checked():
     result = memory.plan(["rflag"], 8 * GB, 12, row_chunk=50_000, **MEERKAT)
     assert result.row_chunk == 50_000
@@ -88,7 +101,7 @@ def test_effective_workers():
 
 def _opts(path, **kw):
     base = dict(ms=path, row_chunk=None, memory_limit_gb=0.0, workers=2, msout=None,
-                apply=False, write_changed_only=False,
+                apply=False, write_changed_only=False, optimize=False,
                 frequency_average_factor=None, time_average_factor=None)
     base.update(kw)
     return SimpleNamespace(**base)
