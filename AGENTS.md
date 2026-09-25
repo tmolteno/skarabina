@@ -138,8 +138,12 @@ chunked, so one row-chunk is materialised per dask worker at a time.  Two
 options control the concurrent-chunk working set (mirroring tricolour's
 `--row-chunks` / `--nworkers`):
 
-- `--row-chunk N` (default `10000` rows) — bytes per chunk are roughly
-  `N * nchan * ncorr * 8` for DATA; lower it to shrink each chunk.
+- `--row-chunk N` — bytes per chunk are roughly `N * nchan * ncorr * 8` for
+  DATA; lower it to shrink each chunk.  When not given it is sized by
+  `skarabina/memory.py` from `--memory-limit-GB` (default 0 = the RAM
+  available): `3.5 GB + workers * N * nchan * ncorr * 36 B` must fit 80 % of
+  the limit.  The constants are measured (doc/RFLAG.md §7.3); re-measure them
+  if a change alters the flaggers' working set.
 - `--workers N` (default 0 = all cores) — the number of dask threads, i.e. the
   number of chunks materialised concurrently.
 

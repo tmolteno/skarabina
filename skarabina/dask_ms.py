@@ -480,6 +480,26 @@ def spw_column_updates(nchan, chan_freq_hz, axis_hz=None):
     return updates
 
 
+def ms_shape(ms_name):
+    """``(nrow, nchan, ncorr)`` of a measurement set's main table, cheaply.
+
+    Read before the dask-ms dataset is built, because the row chunk it is
+    built with is chosen from these (see :mod:`skarabina.memory`).  The
+    channel and correlation counts come from the first row's DATA cell;
+    ``(nrow, 1, 1)`` when there is no row to look at.
+    """
+    t = table(ms_name, ack=False)
+    try:
+        nrow = t.nrows()
+        if nrow == 0:
+            return 0, 1, 1
+        shape = t.getcell("DATA", 0).shape
+    finally:
+        t.close()
+    nchan, ncorr = (tuple(shape) + (1, 1))[:2]
+    return nrow, int(nchan), int(ncorr)
+
+
 class DaskMS:
     # Channel bookkeeping, filled in by __init__ from the SPECTRAL_WINDOW
     # subtable.  Class-level defaults keep instances built via __new__ (and the

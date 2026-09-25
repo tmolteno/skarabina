@@ -7,9 +7,33 @@ from types import SimpleNamespace
 import click
 from angle_parser import parse_angle
 
-from skarabina import barber, dask_ms, flag_ops
+from skarabina import barber, dask_ms, flag_ops, memory
 
 logger = logging.getLogger(__name__)
+
+
+def _row_chunk(opts):
+    """The row chunk for this run: --row-chunk, or sized from memory."""
+    workers = memory.effective_workers(opts.workers)
+    limit = opts.memory_limit_gb * 2**30 if opts.memory_limit_gb > 0 \
+        else memory.available_memory()
+    nrow, nchan, ncorr = dask_ms.ms_shape(opts.ms)
+    if opts.row_chunk:
+        if limit is not None and opts.memory_limit_gb > 0:
+            planned = memory.planned_bytes(opts.row_chunk, workers, nchan, ncorr)
+            if planned > limit:
+                logger.warning(
+                    "--row-chunk %d with %d workers plans for %.1f GB, over"
+                    " --memory-limit-GB %.1f", opts.row_chunk, workers,
+                    planned / 2**30, opts.memory_limit_gb)
+        return opts.row_chunk
+    if limit is None:
+        print(f"Row chunk: {dask_ms.ROW_CHUNK_ROWS} rows (free memory unknown)")
+        return dask_ms.ROW_CHUNK_ROWS
+    row_chunk, reason = memory.row_chunk_for(limit, workers, nchan, ncorr, nrow)
+    source = "--memory-limit-GB" if opts.memory_limit_gb > 0 else "available RAM"
+    print(f"Row chunk from {source}: {reason} -> {row_chunk} rows")
+    return row_chunk
 
 
 @click.command("skarabina")
@@ -116,12 +140,23 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--row-chunk",
     type=int,
-    default=dask_ms.ROW_CHUNK_ROWS,
+    default=None,
+    help="Number of rows read/written per dask array chunk. Default: chosen"
+    " from --memory-limit-GB, --workers and the MS's channels x correlations"
+    " (the largest chunk that fits). Every chunked phase holds about one chunk"
+    " per worker, at ~36 bytes per visibility for tfcrop/rflag. Given"
+    " explicitly, it is used as is. Mirrors tricolour's --row-chunks.",
+)
+@click.option(
+    "--memory-limit-GB",
+    "memory_limit_gb",
+    type=float,
+    default=0.0,
     show_default=True,
-    help="Number of rows read/written per dask array chunk. Each DATA chunk"
-    " holds row_chunk x nchan x ncorr x 8 bytes, so lowering it (and"
-    " --workers) bounds peak memory on large MSes at the cost of a larger"
-    " task graph. Mirrors tricolour's --row-chunks.",
+    help="Memory the chunked phases (reading, flagging, averaging, writing)"
+    " may plan for, in GB; sets the row chunk when --row-chunk is not given."
+    " 0 = the RAM available now (MemAvailable, capped by a container limit)."
+    " Not governed: save:<name>, which holds the whole flag cube.",
 )
 @click.option(
     "--workers",
@@ -171,7 +206,7 @@ def main(**kw):
         root.addHandler(fh)
         root.debug(f"options: {vars(opts)}")
 
-    ms = dask_ms.DaskMS(opts.ms, row_chunk=opts.row_chunk)
+    ms = dask_ms.DaskMS(opts.ms, row_chunk=_row_chunk(opts))
     fov_str = opts.field_of_view if opts.field_of_view is not None else "1.0 deg"
     # Full width, in radians; summary() halves it to get the distance from the
     # phase centre to the edge of the field.
