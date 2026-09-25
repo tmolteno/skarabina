@@ -167,6 +167,65 @@ python bench/flag_timing.py --mode per-op --tag ab-386-perop
 
 ---
 
+## rflag: sort-based medians and a spilled result, 2026-09-25
+
+**Why** — `rflag` was 87 % of the bpcal run above (828.9 s of 956.7 s).
+Profiling one 10 000-row, 79-channel block put 1.9 s of its 2.2 s in
+`np.nanmedian`, whose small-axis path goes through masked arrays (the
+neighbour medians of the spectral step); the time step made ~10 numpy calls per
+channel.  Separately, `_run_autofit` `persist()`ed the whole flag cube (memory
+that grows with the table) and then ran a second pass over the incoming FLAG
+graph just to count the pre-existing flags.
+
+**Change** — a sort-based `_nanmedian` (same two middle values, same average,
+so bit-identical flags), the time step vectorised over groups of channels and
+the neighbour medians over groups of rows (`rflag.GROUP_VALUES` bounds the
+temporaries), and each block's flags written to a spill directory at one bit
+per visibility instead of persisted.  One `compute` now runs the algorithm,
+writes the spill and returns both counts; later passes read the flags back
+block by block.  The spill lives in `$TMPDIR` if set, else beside the input MS
+(not `/tmp`, which is often tmpfs), and is removed with the `DaskMS` instance.
+
+**Workload** — `bpcal.ms` is not on this host, so a synthetic MS of the same
+shape stands in: 430 000 rows (and 860 000 for the scaling check) × 79
+channels × 2 correlations, Gaussian noise about 10+0j, ~0.1 % of rows ×30,
+FLAG ~69 % set (37 % whole rows, the first 8 channels, 45 % random), built
+with `bench/make_synthetic_ms.py` (on `tests/ms_fixture.make_synthetic_ms`).  Each run:
+`skarabina --ms synth.ms --flag rflag --msout out.ms --clobber --write-changed-only`.
+"old" is git `351e8d6` run from a worktree; "new" is this change.
+
+**Host** — `moist`: Intel Core Ultra 7 258V, 8 cores, 30 GiB RAM; Python
+3.11, numpy 2.4.6, dask-ms 0.2.23, **python-casacore 3.8.1** (not casacure).
+Single measurement each; load average 1.4–3.3 during the runs (other work on
+the box), so the wall times are load-dependent.
+
+| rows | flag list | build | wall (s) | user (s) | peak RSS (MiB) |
+|---|---|---|---|---|---|
+| 430k | `rflag` | old | 65.1 | 139.0 | 1775 |
+| 430k | `rflag` | new | **7.95** | 40.7 | **882** |
+| 860k | `rflag` | old | 133.0 | 282.8 | 2027 |
+| 860k | `rflag` | new | **15.0** | 81.2 | **892** |
+| 430k | `rflag, autos, nan, clip 0 100, spectral-window` + `--summary` | old | 68.0 | 141.6 | 1821 |
+| 430k | same | new | **10.4** | 43.4 | **916** |
+
+- The written `FLAG` and `FLAG_ROW` are byte-identical between old and new in
+  both the 430k runs, and so are the reported counts (66 407 144 flagged,
+  19 600 219 newly).
+- Peak RSS no longer follows the table: doubling the rows moved the new build
+  by 10 MiB, the old one by 252 MiB.
+- The rows above were measured *before* the fix below, so old and new could
+  be compared flag for flag; both flag 97.7 % of the MS.  That is the same
+  collapse as the 100 % on bpcal.  Its cause: `np.where(flagged, np.nan,
+  plane)` on complex data gives `nan+0j`, so every flagged sample's imaginary
+  part entered the statistics as a zero, and on data this heavily pre-flagged
+  the spectral deviation came out 0.09 against a noise of 1.0.  With flagged
+  samples NaN in both parts (`rflag._MISSING`), the same 430k run flags
+  **43 540 new visibilities (0.06 %)** — the injected bursts — instead of
+  19.6 M, in 8.12 s and 886 MiB.  bpcal's own result needs re-measuring on
+  `echo`.
+
+---
+
 ## Issue: `--write-changed-only` leaves the input read-only, then fails on it
 
 Found while building this bench (2026-09-24, skarabina 1.0.5), reported as

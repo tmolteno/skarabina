@@ -26,8 +26,6 @@ Both steps are medians, which is the whole point: a mean would be dragged
 around by the very RFI being looked for, and the algorithm would then miss it.
 """
 
-import warnings
-
 import numpy as np
 
 #: Defaults, all from CASA's ``flagdata`` so a recipe transfers unchanged.
@@ -53,6 +51,46 @@ DEFAULTS = {
 #: fine structure the measured deviation is orders of magnitude larger and is
 #: used untouched.
 DEGENERACY_FLOOR = 1.0e-6
+
+#: What a flagged sample is replaced with before the statistics are taken.
+#: NaN in *both* parts: ``np.where(flagged, np.nan, plane)`` on complex data
+#: gives ``nan+0j``, so the imaginary part of every flagged sample was counted
+#: as a zero -- depressing the local scatter and, in the spectral step, pulling
+#: the measured deviation of heavily flagged data down by an order of
+#: magnitude, after which nearly every unflagged sample exceeded the threshold.
+_MISSING = complex(np.nan, np.nan)
+
+#: Rough cap on the float64 values a temporary may hold while one plane is
+#: processed.  The time step works on groups of channels and the spectral step
+#: on groups of rows so that the vectorised arithmetic -- several full-size
+#: temporaries per step -- stays a bounded multiple of this, however wide the
+#: band or long the dask chunk.  1M values is 8 MB per temporary.
+GROUP_VALUES = 1 << 20
+
+
+def _nanmedian(values, axis=-1):
+    """``np.nanmedian`` along ``axis``, from one sort.
+
+    NaN sorts after every number, so after sorting the usable samples of each
+    lane are its first ``n`` entries and the median is read off at ``(n-1)//2``
+    and ``n//2`` -- the same two middle values, averaged the same way, as numpy's
+    own median.  A lane with no usable sample comes out NaN, silently.
+
+    This replaces ``np.nanmedian``, whose small-axis path goes through masked
+    arrays: on a 10 000-row, 79-channel block it was 1.9 s of the 2.2 s the
+    whole RFlag plane took, and it warns (not thread-safely) on every all-NaN
+    lane, which on real, heavily flagged data is most of them.
+    """
+    ordered = np.moveaxis(np.sort(values, axis=axis), axis, -1)
+    if ordered.shape[-1] == 0:
+        return np.full(ordered.shape[:-1], np.nan)
+    count = np.count_nonzero(~np.isnan(ordered), axis=-1)
+    low = np.take_along_axis(
+        ordered, np.maximum((count - 1) // 2, 0)[..., None], axis=-1
+    )[..., 0]
+    high = np.take_along_axis(ordered, (count // 2)[..., None], axis=-1)[..., 0]
+    # Where the count is odd the two are the same sample, and (x + x) / 2 is x.
+    return np.where(count > 0, (low + high) / 2, np.nan)
 
 
 def robust_scale(values):
@@ -111,8 +149,8 @@ def _window_bounds(n_samples, winsize):
 
 
 #: Cache of ``(n_samples, winsize) -> (starts, stops)`` window-index arrays.
-#: Shared between ``_window_sums`` and the time-step scan, so the bounds for a
-#: given block length and window size are computed once per run, not per call.
+#: Used by ``_window_sums``, so the bounds for a given block length and window
+#: size are computed once per run, not per call.
 _WINDOW_CACHE: dict = {}
 
 
@@ -224,37 +262,46 @@ def neighbour_residual(level, span=1):
     if was_1d:
         level = level[None, :]
     out = np.full(level.shape, np.nan)
+    # Every timestep is independent, so the rows are taken a group at a time:
+    # the neighbour stack is six values per sample at the widest span, and on a
+    # whole dask chunk that would be the largest array in the run.
+    rows = max(1, GROUP_VALUES // max(1, 6 * level.shape[-1]))
+    for start in range(0, level.shape[0], rows):
+        stop = start + rows
+        out[start:stop] = _neighbour_residual_rows(level[start:stop], span)
+    return out[0] if was_1d else out
+
+
+def _neighbour_residual_rows(level, span):
+    """:func:`neighbour_residual` of a 2-D ``(time, chan)`` group of rows."""
+    out = np.full(level.shape, np.nan)
     nchan = level.shape[-1]
+    usable_level = np.isfinite(level)
     for width in range(span, 4):
         unresolved = ~np.isfinite(out)
         if not unresolved.any():
             break
-        # Gather the 2*width neighbours (centre excluded) of every channel in
-        # ONE indexed view, and take the per-timestep median in one
-        # ``nanmedian`` call over the whole (time, chan, 2*w) window instead
-        # of one call per channel (thousands of masked-array medians per
-        # spectral step on a real block).
-        offsets = np.concatenate(
-            [np.arange(-width, 0), np.arange(1, width + 1)]
+        # Channels at the band edges have no full window at this width, so they
+        # stay NaN; only channels width .. nchan-width-1 get a reference.
+        inner = nchan - 2 * width
+        if inner <= 0:
+            continue
+        # The 2*width neighbours (centre excluded) of every inner channel, as
+        # shifted views stacked on a new last axis, and their per-timestep
+        # median in one call over the whole (time, chan, 2*w) stack.
+        offsets = [*range(-width, 0), *range(1, width + 1)]
+        stacked = np.stack(
+            [level[:, width + offset:width + offset + inner]
+             for offset in offsets],
+            axis=-1,
         )
-        idx = np.arange(nchan)[:, None] + offsets[None, :]  # (nchan, 2w)
-        in_range = (idx >= 0) & (idx < nchan)
-        keep = in_range.all(axis=1)
-        # Channels at the band edges have no full window at any width, so they
-        # stay NaN by design (the original ``continue`` for ``low<0``/
-        # ``high>=nchan`` has the same effect).
-        gathered = level[:, np.where(in_range, idx, 0)[keep]]  # (time, nw, 2w)
         # A neighbour column that is entirely flagged is normal on real data;
-        # the median is then NaN and the sample is simply left unflagged, so
-        # the warning that numpy raises for it is noise.
-        with warnings.catch_warnings(), np.errstate(invalid="ignore"):
-            warnings.simplefilter("ignore", RuntimeWarning)
-            reference_keep = np.nanmedian(gathered, axis=-1)  # (time, nw)
-        reference = np.full((level.shape[0], nchan), np.nan)
-        reference[:, keep] = reference_keep
-        usable = unresolved & np.isfinite(reference) & np.isfinite(level)
+        # the median is then NaN and the sample is simply left unflagged.
+        reference = np.full(level.shape, np.nan)
+        reference[:, width:width + inner] = _nanmedian(stacked, axis=-1)
+        usable = unresolved & np.isfinite(reference) & usable_level
         out[usable] = level[usable] - reference[usable]
-    return out[0] if was_1d else out
+    return out
 
 
 def _time_thresholds(local, timedev, timedevscale, floor):
@@ -271,17 +318,21 @@ def _time_thresholds(local, timedev, timedevscale, floor):
       description says, and it makes the threshold an upper bound on the
       *typical* scatter rather than a multiple of it.
 
-    Returns ``(threshold, median, scale)`` so the caller can report the numbers
-    it derived.
+    Vectorised over channels: ``local`` is ``(time, chan)`` and the result is
+    one threshold per channel, NaN for a channel with no usable window.  The
+    scale is ``robust_scale`` of the channel's finite local r.m.s.; those are
+    never negative, so it is simply their median.
     """
-    finite = local[np.isfinite(local)]
-    if finite.size == 0:
-        return np.nan, np.nan, np.nan
-    median = float(np.median(finite))
-    scale = robust_scale(finite)
+    usable = np.isfinite(local).any(axis=0)
     if timedev is not None:
-        return max(float(timedevscale) * float(timedev), floor), median, scale
-    return max(float(timedevscale) * scale, floor), median, scale
+        threshold = np.full(
+            local.shape[1], max(float(timedevscale) * float(timedev), floor)
+        )
+    else:
+        threshold = np.maximum(
+            float(timedevscale) * _nanmedian(local, axis=0), floor
+        )
+    return np.where(usable, threshold, np.nan)
 
 
 def _spectral_step(plane, flagged, freqdev, freqdevscale, spectralmin,
@@ -316,7 +367,7 @@ def _spectral_step(plane, flagged, freqdev, freqdevscale, spectralmin,
 
     A pre-existing flag is excluded from the statistics, as for the time step.
     """
-    values = np.where(flagged, np.nan, plane)
+    values = np.where(flagged, _MISSING, plane)
     # Each sample against its spectral neighbours, in the real and imaginary
     # parts separately, so a sample cannot hide behind a neighbour that happens
     # to be clean in one part only.  Where neither part has a comparison -- the
@@ -324,12 +375,9 @@ def _spectral_step(plane, flagged, freqdev, freqdevscale, spectralmin,
     # left unflagged rather than treated as zero.
     parts = np.stack([np.abs(neighbour_residual(np.real(values))),
                       np.abs(neighbour_residual(np.imag(values)))])
-    with np.errstate(invalid="ignore"):
-        residual = np.where(
-            np.isfinite(parts).any(axis=0),
-            np.nanmax(np.where(np.isfinite(parts), parts, -np.inf), axis=0),
-            np.nan,
-        )
+    # fmax takes the larger of the two and ignores a NaN in either one, so a
+    # sample with no comparison in both parts stays NaN.
+    residual = np.fmax(parts[0], parts[1])
     flagged_out = flagged.copy()
     finite = residual[np.isfinite(residual)]
     if finite.size < 3:
@@ -350,36 +398,50 @@ def _spectral_step(plane, flagged, freqdev, freqdevscale, spectralmin,
 
 
 def _time_step(plane, flagged, params, floor):
-    """Time analysis: flag channels whose local scatter is anomalous."""
-    values = np.where(flagged, np.nan, plane)
+    """Time analysis: flag channels whose local scatter is anomalous.
+
+    Every channel is independent, so the channels are taken a group at a time
+    and each group is done in one vectorised pass (the per-channel loop this
+    replaces made ~10 numpy calls per channel per plane).  The group is sized
+    so that the handful of ``(time, group)`` float temporaries stays bounded
+    whatever the length of the dask chunk.
+    """
+    n_time, n_chan = plane.shape
     flagged_out = flagged.copy()
-    thresholds = []
-    # The window bounds depend only on the block length, so they are computed
-    # once.  Recomputing them per suspect -- which is what the first version did
-    # -- rebuilds a list of every window for every flagged sample, and on a real
-    # block that was 142 000 suspects x 25 641 tuples: measured, 390 s against
-    # 5.3 s for the same arithmetic.
-    starts, stops = _window_bounds(values.shape[0], params.winsize)
-    for chan in range(values.shape[1]):
-        local = local_rms(values[:, chan], params.winsize)
-        threshold, _, _ = _time_thresholds(
+    thresholds = np.full(n_chan, np.nan)
+    if n_time == 0:
+        return flagged_out, thresholds
+    # A suspect at s puts the window [s - half, s - half + winsize) under
+    # suspicion, clipped to the plane.  So timestep t is flagged when a suspect
+    # lies in [t - (winsize - 1 - half), t + half]: a running count of the
+    # suspects over that span, from one cumulative sum.  Windows overlap
+    # wherever suspects are adjacent; the count takes their union for free.
+    half = params.winsize // 2
+    t = np.arange(n_time)
+    span_start = np.clip(t - (params.winsize - 1 - half), 0, n_time)
+    span_stop = np.clip(t + half + 1, 0, n_time)
+
+    group = max(1, GROUP_VALUES // n_time)
+    for first in range(0, n_chan, group):
+        chans = slice(first, min(first + group, n_chan))
+        values = np.where(flagged[:, chans], _MISSING, plane[:, chans])
+        local = local_rms(values, params.winsize)
+        threshold = _time_thresholds(
             local, params.timedev, params.timedevscale, floor
         )
-        thresholds.append(threshold)
-        if not np.isfinite(threshold) or threshold <= 0:
-            continue
-        # Where the local r.m.s. exceeds the threshold the scatter there cannot
-        # be explained by the channel's typical noise, so every timestep in that
+        thresholds[chans] = threshold
+        # A channel with no usable threshold is left alone.  Elsewhere, where
+        # the local r.m.s. exceeds the threshold the scatter there cannot be
+        # explained by the channel's typical noise, so every timestep in that
         # window is suspect.
-        suspect = np.flatnonzero(np.isfinite(local) & (local > threshold))
-        if suspect.size == 0:
+        active = np.isfinite(threshold) & (threshold > 0)
+        with np.errstate(invalid="ignore"):
+            suspect = (local > threshold[None, :]) & active[None, :]
+        if not suspect.any():
             continue
-        # The windows overlap wherever suspects are adjacent, so the timesteps to
-        # flag are the union of the spans, marked in one vectorised pass.
-        covered = np.zeros(values.shape[0] + 1, dtype=np.int32)
-        np.add.at(covered, starts[suspect], 1)
-        np.add.at(covered, stops[suspect], -1)
-        flagged_out[np.cumsum(covered[:-1]) > 0, chan] = True
+        running = np.zeros((n_time + 1, suspect.shape[1]), dtype=np.int32)
+        np.cumsum(suspect, axis=0, out=running[1:])
+        flagged_out[:, chans] |= running[span_stop] > running[span_start]
     return flagged_out, thresholds
 
 
@@ -409,13 +471,14 @@ def rflag_plane(plane, params, flagged=None):
         params.spectralmin, params.spectralmax, floor,
     )
 
-    finite_thresholds = [t for t in time_thresholds if np.isfinite(t)]
+    finite_thresholds = time_thresholds[np.isfinite(time_thresholds)]
     stats = {
         "new": int(np.count_nonzero(flagged & ~pre_existing)),
         "total": int(flagged.size),
         "pre_existing": int(np.count_nonzero(pre_existing)),
         "time_threshold_median": (
-            float(np.median(finite_thresholds)) if finite_thresholds else np.nan
+            float(np.median(finite_thresholds)) if finite_thresholds.size
+            else np.nan
         ),
         "freq_deviation": float(freq_deviation),
     }
