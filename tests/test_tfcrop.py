@@ -795,10 +795,13 @@ def test_robust_fit_columns_agrees_with_robust_fit(degree):
     y = 5.0 + 0.01 * x[:, None] + rng.normal(0, 0.1, (n, ncol))
     y[rng.random(y.shape) < 0.4] = np.nan
     y[100:110, 3] = 50.0          # a burst the fit must reject
+    # Sparse columns carry noise too: exact constants make the robust sigma
+    # zero, and which points then pass a zero limit is decided by the last
+    # bit of rounding, which differs between numpy/BLAS builds.
     y[:, 5] = np.nan
-    y[[10, 200, 490], 5] = 5.0    # three usable points
+    y[[10, 200, 490], 5] = 5.0 + rng.normal(0, 0.1, 3)    # three usable points
     y[:, 6] = np.nan
-    y[250:260, 6] = 5.0           # a cluster in one piece only
+    y[250:260, 6] = 5.0 + rng.normal(0, 0.1, 10)          # a cluster in one piece
 
     fitted, keep = robust_fit_columns(x, y, 7, degree)
     for col in range(ncol):
