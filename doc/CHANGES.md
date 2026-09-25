@@ -13,8 +13,15 @@
   read the flags before the write, keep the materialising pass.  Output and
   reports identical to 1.0.7; DATA read once (``tests/test_single_pass.py``).
   On mergA_tim scan 1 (stage-0 list, ``--summary --write-changed-only``):
-  4.98 s against 1.0.7's 5.82 s, both one DATA pass, same 3.2 GB peak; the
-  rflag list is not yet measured (``handover.md`` §3.1).
+  4.98 s against 1.0.7's 5.82 s, both one DATA pass, same 3.2 GB peak; with
+  rflag added, 232.6 s against 233.1 s and 25.5 against 25.7 GB, both one
+  DATA pass (idle machine).
+- **rflag is ~2.5x faster.**  Its spectral step sorted every sample's 2, 4 and
+  6 neighbouring channels at every span, 80 % of its time; the span-1
+  reference is now the mean of the two neighbours, and the wider spans are
+  taken only for samples it left without one.  Bit-identical flags.  On
+  mergA_tim scan 1 (stage-0 list + rflag, ``--summary
+  --write-changed-only``, 12 workers): 232.2 s -> 94.9 s, 25.7 -> 25.0 GB peak.
 
 ### Fixed
 
