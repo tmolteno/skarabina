@@ -9,9 +9,8 @@ Everything below is committed and pushed to `origin/main`.
 
 | | |
 |---|---|
-| released | **1.0.8** (tag `v1.0.8`, PyPI `skarabina` + `skarabina-cargo`, Docker `1.0.8`): flags-only writes in the single pass (`760e0ee`), rflag ~2.5x faster (`7d1433a`), lazy `spectral-window` (`2cdcda2`, its memory constant re-measured at 4 B/vis) |
-| unreleased on `main` | `ca9264e` save flushes per chunk; **`21ea072` restores `--frequency-average-factor` / `--time-average-factor` / `--optimize`, which 1.0.8 silently ignored** (release-worthy on its own); `9dc8116` memory plan knows a streaming backend (see `doc/CHANGES.md` [Unreleased]) |
-| unreleased in `../casacure` (`main`, pushed) | `d016b8d` tables grow in place on write (§3.2), `db6aeec` ISM writer corruption fix, `2b30506` empty-cell panic fix; still versioned 3.8.7 -- **ask the user before releasing casacure** |
+| released | **1.0.9** (tag `v1.0.9`): `--frequency-average-factor` / `--time-average-factor` / `--optimize` applied again (1.0.8 silently ignored them), `save:` flushes per chunk, memory plan knows a streaming backend, requires **casacure >= 3.8.8** (released 2026-09-26: tables grow in place on write, ISM writer fix) |
+| unreleased on `main` | nothing |
 | branches | only `main`; `baseline-aware-flagging` and `tfcrop-local-scatter` were merged and deleted (local, `origin`, schmalzburg) |
 | test suite | all pass (458; the old `test_save_rejects_a_path_like_name` failure was a real bug, fixed in `ca9264e`).  Under casacure (`DASK_MS_BACKEND=casacure`, the casacure dev venv) 14 tests in `test_single_pass`, `test_write_changed_only`, `test_analyze_contract` fail identically before and after the casacure change: they assume python-casacore storage-manager layouts / read counting |
 
@@ -169,11 +168,9 @@ from 74.4 s / 21.7 GB to 17.2 s / 7.4 GB.  A full-resolution 11 GB write
 peaks at 4.1 GB.
 
 Remaining:
-1. **A casacure release (ask the user first).**  Bump casacure to 3.8.8 or
-   later, then bump skarabina's `casacure` pin in `pyproject.toml`.
-   `memory.writes_stream()` treats casacure > 3.8.7 as streaming.  The dev
-   build still reports 3.8.7, so the plan stays conservative (whole-table
-   reserve and warnings) until the release.
+1. ~~A casacure release~~ -- casacure 3.8.8 released and pinned
+   (`casacure>=3.8.8`) in skarabina 1.0.9; `memory.writes_stream()` is now
+   true for an installed release.
 2. Re-measure `CONCURRENT_WRITE_COST["write"]` (8 B/vis) now that the write is
    per-chunk.  The averaged run above peaked at 7.4 GB against a plan of
    9.7 GB, so the constant is not low.
@@ -181,6 +178,19 @@ Remaining:
    `~/github/casacure` (now `d016b8d`; it was `63556a5`, not the PyPI
    wheel).  Rebuild it with `PATH=$HOME/.cargo/bin:$PATH maturin develop
    --uv --release` in `~/github/casacure` with that venv active.
+
+### 3.2b casacure cannot read StandardStMan Direct arrays (found 2026-09-26)
+
+An MS built by python-casacore's `default_ms` (e.g. `bench/make_synthetic_ms.py`)
+keeps UVW in StandardStMan with option 5 (Direct | FixedShape): the cells are
+inline in the bucket.  casacure (3.8.7 and 3.8.8) reads them as array-file
+references ("array reference 4647503709213818880 falls outside the array index
+file" -- that number is 500.0's bit pattern), so `bench/flag_timing.py` on the
+synthetic MS fails under casacure.  Real MeerKAT MSes keep UVW tiled.  Fix in
+`../casacure/crates/casacure/src/ssm.rs` (read), `table.rs` `build_ssm_data`
+and `grow.rs` (write: casacure writes f0i references for such a column, which
+casacore would misread).  Recorded in casacure's CHANGELOG (3.8.8 Known issues)
+and ARE_WE_CURED.md.
 
 ### 3.3 Validate the memory model on other shapes
 
