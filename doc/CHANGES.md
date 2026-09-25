@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.8]
+
 ### Changed
 
 - **``--write-changed-only`` and ``--apply`` share the flagging pass.**  They
