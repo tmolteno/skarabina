@@ -33,6 +33,7 @@ Steps 1-4 run per baseline and per correlation, over chunks of time.
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
+from skarabina.baselines import antenna_noise_model, group_median, group_median_rows
 from skarabina.nanstats import nanmedian
 
 #: Fitting directions, in CASA's spelling.
@@ -206,7 +207,7 @@ def robust_fit(x, y, npieces, degree, n_iterations=N_FIT_ITERATIONS,
     # Scale of the data about zero, as a floor for the rejection threshold.
     threshold_floor = FIT_FLOOR_FRACTION * float(mad_sigma(np.abs(y[finite])))
     attempts = max(1, n_iterations)
-    max_pieces = max(1, min(npieces, x.size))
+    max_pieces = _max_pieces(npieces, x.size, degree)
     # The first attempt always fits (at one piece unless max_pieces is 1), so
     # there is no need for a fit before the loop: it would be overwritten.
     for attempt in range(attempts):
@@ -229,6 +230,19 @@ def robust_fit(x, y, npieces, degree, n_iterations=N_FIT_ITERATIONS,
             # iterations exist to add pieces, not to re-reject.
             continue
     return fitted, keep
+
+
+def _max_pieces(npieces, nsamples, degree):
+    """The most pieces ``nsamples`` can be split into for a ``degree`` fit.
+
+    A piece needs a few more points than coefficients or it cannot be fitted
+    at all: on an 8-channel band, seven pieces of one or two channels left
+    every piece unfittable and the "fit" was the interpolation between two of
+    them -- a step, 1.3 away from a band whose noise is 0.2.  At least
+    ``degree + 3`` points per piece, so a narrow band gets fewer pieces; a
+    band of more than ``npieces * (degree + 3)`` channels is unaffected.
+    """
+    return max(1, min(npieces, nsamples // (degree + 3), nsamples))
 
 
 def _fit_pieces(x, y, keep, edges, degree):
@@ -541,7 +555,7 @@ def robust_fit_columns(x, y, npieces, degree, n_iterations=N_FIT_ITERATIONS,
         np.abs(np.where(finite, y, np.nan))
     )
     attempts = max(1, n_iterations)
-    max_pieces = max(1, min(npieces, x.size))
+    max_pieces = _max_pieces(npieces, x.size, degree)
     fitted = np.full(y.shape, np.nan)
     active = np.ones(y.shape[1], dtype=bool)
     for attempt in range(attempts):
@@ -738,15 +752,21 @@ def _combine(freq_flags, time_flags, flagdimension):
     return np.logical_or(freq_flags, time_flags)
 
 
-def tfcrop_plane(plane, params, flagged=None):
+def tfcrop_plane(plane, params, flagged=None, baselines=None):
     """Run TFCrop on one ``(time, chan)`` plane.
 
-    ``plane`` is the visibility amplitude of one baseline and correlation;
-    ``flagged`` the flags already set on it.  Returns ``(flag, stats)``, where
-    ``flag`` is the complete flag plane -- pre-existing flags included, since
-    the caller needs to know what to write back -- and ``stats`` the counts the
-    caller reports.
+    ``plane`` is the visibility amplitude of one correlation; ``flagged`` the
+    flags already set on it.  Returns ``(flag, stats)``, where ``flag`` is the
+    complete flag plane -- pre-existing flags included, since the caller needs
+    to know what to write back -- and ``stats`` the counts the caller reports.
+
+    Without ``baselines`` the rows are taken to be one baseline's timesteps.
+    A measurement-set chunk is many baselines interleaved, and ``baselines``
+    (a :class:`skarabina.baselines.Baselines` for the rows) says which: see
+    :func:`_tfcrop_baselines`.
     """
+    if baselines is not None:
+        return _tfcrop_baselines(plane, params, flagged, baselines)
     plane = np.asarray(plane, dtype=float)
     if flagged is None:
         flagged = np.zeros(plane.shape, dtype=bool)
@@ -783,6 +803,120 @@ def tfcrop_plane(plane, params, flagged=None):
         "pre_existing": int(np.count_nonzero(pre_existing)),
     }
     return flag, stats
+
+
+#: Most channels a row contributes to its relative-scatter estimate in
+#: :func:`_tfcrop_baselines` (a median, so a strided few hundred suffice).
+SCATTER_SAMPLES_PER_ROW = 512
+
+
+def _tfcrop_baselines(plane, params, flagged, baselines):
+    """:func:`tfcrop_plane` over a chunk of interleaved baselines.
+
+    Dividing every row by one bandpass averaged over the whole chunk -- what
+    the single-baseline algorithm does -- leaves each baseline at its own
+    level (its source amplitude, its antennas' gains), and the test against 1
+    then flags whole rows of every baseline brighter or fainter than the
+    average.  Instead:
+
+    1. Each baseline's rows are averaged over time and that spectrum gets its
+       own robust piece-wise fit (all baselines in one batched fit,
+       :func:`robust_fit_columns`); every row is divided by its baseline's fit,
+       so a clean sample sits at 1 whatever the baseline.
+    2. The scatter of each baseline about its fit -- in data units, the robust
+       sigma of ``plane - fit`` -- is replaced by its per-antenna model
+       (:func:`skarabina.baselines.antenna_noise_model`), so a baseline whose
+       own scatter is inflated by RFI is still judged against the noise its
+       antennas predict.  Data units, not the flattened ratio: the noise
+       factorises by antenna (SEFD, gains) but the level it would be divided by
+       includes the source, which does not, except for a point source.
+    3. Frequency direction: a sample is flagged where it departs from its
+       baseline's fit by more than ``freqcutoff`` of the modelled scatter.
+    4. Time direction: each sample against its baseline's median in that
+       channel over the chunk's rows -- no fit, as the single-baseline
+       algorithm judges a channel against its own time baseline -- in units of
+       the modelled scatter of those residuals, every channel's samples (all
+       baselines, all times) flagged as :func:`flag_lanes` flags a column, at
+       ``timecutoff``.
+    """
+    plane = np.asarray(plane, dtype=float)
+    flagged = np.zeros(plane.shape, dtype=bool) if flagged is None \
+        else np.asarray(flagged, dtype=bool)
+    flagged = flagged | ~np.isfinite(plane)
+    pre_existing = flagged.copy()
+    nchan = plane.shape[1]
+
+    # 1. Per-baseline time-averaged spectrum, then its robust fit.
+    order = baselines.order
+    starts = np.cumsum(baselines.sizes) - baselines.sizes
+    live = ~flagged[order]
+    totals = np.add.reduceat(np.where(live, plane[order], 0.0), starts, axis=0)
+    counts = np.add.reduceat(live.astype(np.int64), starts, axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        spectra = np.where(counts > 0, totals / np.maximum(counts, 1), np.nan)
+    templates = np.full(spectra.shape, np.nan)
+    fittable = np.flatnonzero(np.count_nonzero(np.isfinite(spectra), axis=1) >= 2)
+    x = np.arange(nchan, dtype=float)
+    group = max(1, GROUP_VALUES // max(1, 4 * nchan))
+    for first in range(0, fittable.size, group):
+        chosen = fittable[first:first + group]
+        fitted, _ = robust_fit_columns(
+            x, spectra[chosen].T, params.maxnpieces, _fit_for(params.freqfit)
+        )
+        templates[chosen] = fitted.T
+    templates = _safe_template(templates, spectra)
+    templates = np.where(np.isfinite(templates) & (templates != 0.0), templates, 1.0)
+    row_template = templates[baselines.labels]
+    flat = _flatten(plane, row_template)
+    residual = plane - row_template
+
+    # 3 & 4.  Both directions report only their own new flags.
+    freq_flags = time_flags = np.zeros_like(flagged)
+    if params.flagdimension in ("freqtime", "freq"):
+        unit = _in_modelled_units(residual, flagged, baselines)
+        freq_flags = (np.abs(unit) > params.freqcutoff) & ~flagged
+    if params.flagdimension in ("freqtime", "timefreq", "time"):
+        reference = group_median_rows(np.where(flagged, np.nan, plane), baselines)
+        unit = _in_modelled_units(
+            plane - reference[baselines.labels], flagged, baselines
+        )
+        time_flags = _new_flags(1.0 + unit, flagged, params.timecutoff, axis=0)
+    combined = _combine(freq_flags, time_flags, params.flagdimension)
+
+    window_extra = np.zeros_like(combined)
+    if params.usewindowstats != "none":
+        window_extra = _window_pass(
+            flat, combined, params.usewindowstats, params.halfwin, params.timecutoff
+        )
+    flag = pre_existing | combined | window_extra
+    stats = {
+        "new": int(np.count_nonzero(flag & ~pre_existing)),
+        "total": int(flag.size),
+        "pre_existing": int(np.count_nonzero(pre_existing)),
+    }
+    return flag, stats
+
+
+def _in_modelled_units(residual, flagged, baselines):
+    """``residual`` divided by its baseline's modelled scatter (0 where flagged).
+
+    Each row's robust scatter (over a strided subset of its unflagged
+    channels) is pooled per baseline and replaced by the per-antenna model.
+    """
+    stride = max(1, residual.shape[1] // SCATTER_SAMPLES_PER_ROW)
+    sample = np.where(flagged[:, ::stride], np.nan, residual[:, ::stride])
+    centre = nanmedian(sample, axis=1)
+    row_scatter = 1.4826 * nanmedian(np.abs(sample - centre[:, None]), axis=1)
+    per_baseline = antenna_noise_model(
+        group_median(row_scatter, baselines), baselines.antenna1, baselines.antenna2
+    )
+    scatter = per_baseline[baselines.labels]
+    usable = np.isfinite(scatter) & (scatter > 0)
+    scatter = np.where(
+        usable, scatter, np.median(scatter[usable]) if usable.any() else 1.0
+    )
+    with np.errstate(invalid="ignore"):
+        return np.where(flagged, 0.0, residual / scatter[:, None])
 
 
 class TFCropParams:
