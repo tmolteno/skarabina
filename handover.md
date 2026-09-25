@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
-# Handover — skarabina performance work (2026-09-25)
+# Handover — skarabina performance work (2026-09-25, updated 2026-09-26)
 
 Read this, then `AGENTS.md` (repo conventions, release checklist, benchmark
 notes) and `doc/RFLAG.md` (the algorithms, every measurement and its method).
@@ -10,9 +10,10 @@ Everything below is committed and pushed to `origin/main`.
 | | |
 |---|---|
 | released | **1.0.8** (tag `v1.0.8`, PyPI `skarabina` + `skarabina-cargo`, Docker `1.0.8`): flags-only writes in the single pass (`760e0ee`), rflag ~2.5x faster (`7d1433a`), lazy `spectral-window` (`2cdcda2`, its memory constant re-measured at 4 B/vis) |
-| unreleased on `main` | nothing but documentation |
+| unreleased on `main` | `ca9264e` save flushes per chunk; **`21ea072` restores `--frequency-average-factor` / `--time-average-factor` / `--optimize`, which 1.0.8 silently ignored** (release-worthy on its own); `9dc8116` memory plan knows a streaming backend (see `doc/CHANGES.md` [Unreleased]) |
+| unreleased in `../casacure` (`main`, pushed) | `d016b8d` tables grow in place on write (§3.2), `db6aeec` ISM writer corruption fix, `2b30506` empty-cell panic fix; still versioned 3.8.7 -- **ask the user before releasing casacure** |
 | branches | only `main`; `baseline-aware-flagging` and `tfcrop-local-scatter` were merged and deleted (local, `origin`, schmalzburg) |
-| test suite | all pass except `tests/test_flag_versions.py::test_save_rejects_a_path_like_name`, which fails on 1.0.6 too (pre-existing, not investigated) |
+| test suite | all pass (458; the old `test_save_rejects_a_path_like_name` failure was a real bug, fixed in `ca9264e`).  Under casacure (`DASK_MS_BACKEND=casacure`, the casacure dev venv) 14 tests in `test_single_pass`, `test_write_changed_only`, `test_analyze_contract` fail identically before and after the casacure change: they assume python-casacore storage-manager layouts / read counting |
 
 **Working agreements** (as practised with the user in this work):
 
@@ -29,8 +30,7 @@ Everything below is committed and pushed to `origin/main`.
   not alter results.
 
 **Running the tests** (moist, local): `.venv/bin/python -m pytest -q` from the
-repo root — no environment variable needed (python-casacore); ~17 s; expect
-exactly the one failure above.  `.venv/bin/flake8 skarabina tests/test_*.py
+repo root — no environment variable needed (python-casacore); ~17 s; all pass.  `.venv/bin/flake8 skarabina tests/test_*.py
 bench` for lint (pre-existing warnings in `tests/test_frequency_average.py`).
 The cab schema: `cd cargo && .venv/bin/python -m pytest -q tests`.
 
@@ -152,32 +152,35 @@ into the `## [Unreleased]` entry of `doc/CHANGES.md` (it already describes
 `760e0ee` and says the rflag list is pending).  Release 1.0.8 only when the
 user asks, with the `AGENTS.md` checklist.
 
-### 3.2 casacure buffers whole tables on write (the largest memory problem left)
+### 3.2 ~~casacure buffers whole tables on write~~ -- done in casacure `d016b8d`, not yet released
 
-Measured (doc/RFLAG.md §7.4): `save:<name>` peaks at ~2.2 B per MS visibility
-(18-19 GB for mergA_tim) and a full `--msout` write at **~56 B per output
-visibility** (40.7 GB to write the 11 GB scan-1 copy; ~450 GB for the whole
-MS), whatever the row chunk, because casacure keeps what it writes in a buffer
-until the table is flushed.  The flags-only writes are cheap (1.8 GB).  Fix in
-`../casacure` (Rust): flush tiled-storage-manager data per chunk / bounded
-buffer.  AGENTS.md notes a known obstacle: per-chunk flushes regrow the
-single-column flag-version table.  After a fix, re-measure and lower
-`memory.TABLE_COST` (or move the writes to `CHUNK_COST`).
+Before: `save:<name>` peaked at ~2.2 B per MS visibility (18-19 GB for
+mergA_tim), and a full `--msout` at ~56 B per output visibility, because every
+flush of a table larger than its files regenerated the whole table.  Now
+`WritableTable::flush` grows the files in place (`../casacure/crates/casacure/src/grow.rs`):
+- TSM tile files are zero-extended.
+- StandardStMan appends buckets and rewrites its index chain.
+- IncrementalStMan re-encodes its last bucket and appends new ones.
 
-Where to start: `../casacure/MEMORY.md` (section "The write path"),
-`../casacure/crates/casacure/src/table.rs` (the write buffer / flush) and
-`tsm.rs`.  `../casacure/handover.md` is older (2026-09-22, casacure 3.8.3)
-but describes that repo's own bench.  Build and install into skarabina's venv
-with maturin: `cd ../casacure && uv pip install --python
-~/github/skarabina/.venv/bin/python .` (schmalzburg's venv already has 3.8.7
-from PyPI; note the version you replace).  Measure a full write's peak with
-`/usr/bin/time -f %M .venv/bin/skarabina --ms .bench/scan1.ms --msout
-.bench/w.ms --clobber` (40.7 GB with casacure 3.8.7) and `--flag save:x` on a
-copy for the save.  **Done when** a full write of scan 1 peaks at a few chunks'
-worth (a few GB) instead of 40 GB, a casacure release carries it, and
-skarabina's dependency pin (`pyproject.toml`, the `casacure` extra) is bumped
-and the table costs re-measured.  This is work in the casacure repo; agree
-the approach with the user first.
+The chunk just written is then patched in.  skarabina's `save:` flushes per
+chunk (`ca9264e`).  Results are in `BENCHMARKS.md` (2026-09-26) and
+`../casacure/MEMORY.md`.  On scan 1, the stage-0 + averaged `--msout` run went
+from 74.4 s / 21.7 GB to 17.2 s / 7.4 GB.  A full-resolution 11 GB write
+peaks at 4.1 GB.
+
+Remaining:
+1. **A casacure release (ask the user first).**  Bump casacure to 3.8.8 or
+   later, then bump skarabina's `casacure` pin in `pyproject.toml`.
+   `memory.writes_stream()` treats casacure > 3.8.7 as streaming.  The dev
+   build still reports 3.8.7, so the plan stays conservative (whole-table
+   reserve and warnings) until the release.
+2. Re-measure `CONCURRENT_WRITE_COST["write"]` (8 B/vis) now that the write is
+   per-chunk.  The averaged run above peaked at 7.4 GB against a plan of
+   9.7 GB, so the constant is not low.
+3. schmalzburg: `~/github/skarabina/.venv` has an **editable** casacure from
+   `~/github/casacure` (now `d016b8d`; it was `63556a5`, not the PyPI
+   wheel).  Rebuild it with `PATH=$HOME/.cargo/bin:$PATH maturin develop
+   --uv --release` in `~/github/casacure` with that venv active.
 
 ### 3.3 Validate the memory model on other shapes
 
