@@ -51,6 +51,7 @@ def _row_chunk(opts, ops):
         write=_write_mode(opts), out_visibilities=out, row_chunk=opts.row_chunk or None,
         # The write shares the flagging pass unless --optimize/--barber split it.
         concurrent_write=not (opts.optimize or opts.barber),
+        streamed_writes=memory.writes_stream(),
     )
     source = "--memory-limit-GB" if opts.memory_limit_gb > 0 else "available RAM"
     print(result.lines[0].replace("limit", f"limit ({source})", 1))
