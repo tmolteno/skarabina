@@ -153,6 +153,18 @@ def test_save_then_restore_recovers_the_flags(saved):
     assert np.array_equal(np.asarray(ds.flag.compute()), flag_pattern())
 
 
+def test_restore_is_lazy_and_chunked_like_the_data(saved):
+    """A restored version must not be read into memory whole: it is a dask
+    array cut into the dataset's row chunks, read when a pass needs it."""
+    ds = DaskMS(saved, row_chunk=3)
+    ds.restore_flag_version("before")
+    flag = ds.ds["FLAG"].data
+    assert isinstance(flag, da.Array)
+    assert flag.chunks[0] == ds.ds.DATA.data.chunks[0]
+    assert flag.numblocks[0] > 1
+    assert np.array_equal(np.asarray(flag), flag_pattern())
+
+
 def test_restore_updates_the_on_disk_ms_when_applied(saved):
     """--apply must write the restored flags through to the MS."""
     ds = DaskMS(saved)

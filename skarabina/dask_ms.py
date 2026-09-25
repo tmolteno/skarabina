@@ -1708,8 +1708,13 @@ class DaskMS:
         the restored state and ``--msout``/``--apply`` write it out.  With
         neither of those the restored flags are discarded, exactly as with any
         other in-memory operation.
+
+        The version's FLAG is read lazily in the dataset's row chunks, so a
+        restore costs a chunk per worker, not the whole flag cube.
         """
-        flag, flag_row = flag_versions.load_version(self.name, versionname)
+        flag, flag_row = flag_versions.load_version_lazy(
+            self.name, versionname, self.ds.FLAG.data.chunks[0]
+        )
 
         nrow_ms = int(self.ds.FLAG.shape[0])
         if int(flag.shape[0]) != nrow_ms:
@@ -1725,16 +1730,20 @@ class DaskMS:
                 f" the MS flags are {tuple(self.ds.FLAG.shape)}"
             )
 
-        self.ds["FLAG"].data = da.asarray(flag)
-        self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, da.asarray(flag_row))
+        self.ds["FLAG"].data = flag
+        self.ds["FLAG_ROW"] = (
+            self.ds.FLAG_ROW.dims,
+            da.from_array(flag_row, chunks=(self.ds.FLAG.data.chunks[0],)),
+        )
         self.changed["FLAG"] = True
         self.changed["FLAG_ROW"] = True
         self._refresh_cached_columns()
+        flagged = int(flag.sum().compute())
         print(
             "flag version '%s' restored: %.2f%% of visibilities and %d rows flagged"
             % (
                 versionname,
-                100.0 * float(flag.sum()) / flag.size if flag.size else 0.0,
+                100.0 * flagged / flag.size if flag.size else 0.0,
                 int(flag_row.sum()),
             )
         )
