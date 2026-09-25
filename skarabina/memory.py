@@ -1,37 +1,63 @@
 # Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
-"""Choosing the dask row chunk from a memory budget.
+"""Planning a run's memory: the row chunk, and what no chunk can bound.
 
-Every chunked phase of a run -- reading, flagging, averaging, writing -- holds
-about one row chunk per dask worker at a time, and its memory is a fixed
-multiple of the chunk's visibilities.  So the peak is roughly
+A run is a sequence of steps -- reading, the ``--flag`` verbs, the write --
+and its peak is the peak of its most expensive step, not their sum (measured:
+the meerkat stage-0 list with rflag peaked at 21.1 GB, rflag alone at
+20.6 GB).  Each step's memory is one of two kinds:
 
-    BASE_BYTES + workers * row_chunk * nchan * ncorr * BYTES_PER_VISIBILITY
+* **per chunk**: the step holds about one row chunk per dask worker, so it
+  costs ``fixed + workers x row_chunk x nchan x ncorr x b``, and a smaller
+  chunk bounds it.  Reading and every flag verb are of this kind.
+* **per table**: the step holds the whole table whatever the chunk.  casacure
+  buffers what it writes until the table is flushed, so ``save:<name>`` holds
+  the whole flag cube and a full ``--msout`` write the whole output table
+  (~56 bytes per output visibility: 40.7 GB to write an 11 GB MS).  No chunk
+  size helps; the plan reports them and warns when they exceed the limit.
 
-and the largest row chunk that fits a budget follows directly.  The two
-constants are measured (doc/RFLAG.md §7.3): rflag and tfcrop, the heaviest
-chunked steps, on a MeerKAT L-band scan at several chunk sizes and worker
-counts.  A larger chunk is better for the flaggers -- each baseline's time
-series in a chunk is longer -- so the chunk is made as large as the budget
-allows, but no larger than keeps every worker busy.
-
-Not governed by the chunk: ``save:`` writes a CASA flag-version table through
-casacure's buffered writer, which holds the whole flag cube (AGENTS.md).
+The row chunk is the largest that keeps every per-chunk step of the run within
+the limit -- so it is set by the most expensive verb in the list -- and no
+larger than keeps every worker busy.  A larger chunk is better for the
+flaggers (each baseline's time series in a chunk is longer).  The constants are
+measured on mergA_tim (doc/RFLAG.md §7.3-7.4) and rounded up.
 """
 
 import math
 import os
+from dataclasses import dataclass, field
 
-#: Peak bytes per visibility of one row chunk in flight, per worker: the chunk's
-#: DATA and FLAG as read, the flagger's working set, and dask's copies.
-#: Measured on mergA_tim scan 1: 33 for rflag, 26 for tfcrop; rounded up.
-BYTES_PER_VISIBILITY = 36
+GB = 2**30
 
-#: Memory a run holds whatever the chunk: the interpreter and libraries, the
-#: per-row columns (TIME, UVW, ANTENNA*), the task graph.  Measured: 2.0 GB
-#: with rflag, 3.2 GB with tfcrop; rounded up.
-BASE_BYTES = 3.5 * 2**30
+#: Per-chunk steps: ``(bytes per visibility of one row chunk in flight per
+#: worker, fixed bytes)``.  Measured as peak RSS over rows in flight at 5000-
+#: and 10 000-row chunks x 12 workers on a 2511-channel, 2-correlation MS;
+#: tfcrop and rflag are the linear fits of doc/RFLAG.md §7.3.
+CHUNK_COST = {
+    "read": (1, 0),
+    "autos": (2, 0),
+    "uv-above": (1, 0),
+    "nan": (4, 0),
+    "clip": (4, 0),
+    "spectral-window": (5, 0),
+    "restore": (3, 0),
+    "tfcrop": (30, 3.5 * GB),
+    "rflag": (36, 2.5 * GB),
+}
 
-#: Fraction of the budget the chunked phases may plan to use; the rest is
+#: Per-table steps: bytes per visibility of the whole table they hold --
+#: ``save`` per visibility of the input MS, the writes per visibility of the
+#: output (after averaging).
+TABLE_COST = {
+    "save": 2.5,
+    "write": 56.0,          # --msout, every column
+    "write-flags": 1.5,     # --write-changed-only / --apply: flag columns only
+}
+
+#: Memory a run holds whatever it does: interpreter, libraries, per-row
+#: columns, the task graph.
+BASE_BYTES = 0.5 * GB
+
+#: Fraction of the limit the per-chunk steps may plan to use; the rest is
 #: headroom for what the model does not count (allocator slack, the OS).
 SAFETY = 0.8
 
@@ -88,30 +114,96 @@ def effective_workers(workers):
     return workers if workers and workers > 0 else (os.cpu_count() or 1)
 
 
-def planned_bytes(row_chunk, workers, nchan, ncorr):
-    """What the model expects a run's chunked phases to peak at, in bytes."""
-    return BASE_BYTES + workers * row_chunk * nchan * ncorr * BYTES_PER_VISIBILITY
+def chunk_bytes(step, row_chunk, workers, nchan, ncorr):
+    """Estimated peak of a per-chunk step, in bytes (base included)."""
+    per_vis, fixed = CHUNK_COST[step]
+    return BASE_BYTES + fixed + workers * row_chunk * nchan * ncorr * per_vis
 
 
-def row_chunk_for(memory_bytes, workers, nchan, ncorr, nrow=None):
-    """The largest row chunk whose chunked phases fit ``memory_bytes``.
+def table_bytes(step, visibilities):
+    """Estimated peak of a per-table step, in bytes (base included)."""
+    return BASE_BYTES + TABLE_COST[step] * visibilities
 
-    Returns ``(row_chunk, reason)``, the reason a one-line explanation for the
-    log.  ``nrow`` caps the chunk so that every worker gets one.
+
+@dataclass
+class Plan:
+    """A run's memory plan: the row chunk, and log lines and warnings."""
+    row_chunk: int
+    limiting_step: str
+    lines: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
+
+
+def _largest_chunk(steps, budget, workers, nchan, ncorr):
+    """The largest row chunk keeping every per-chunk step within ``budget``."""
+    chosen, limiting = MAX_ROW_CHUNK, "the maximum"
+    for step in steps:
+        per_vis, fixed = CHUNK_COST[step]
+        room = budget - BASE_BYTES - fixed
+        rows = int(room // (workers * nchan * ncorr * per_vis)) if room > 0 else 0
+        if rows < chosen:
+            chosen, limiting = rows, step
+    return chosen, limiting
+
+
+def plan(steps, memory_bytes, workers, nrow, nchan, ncorr,
+         write=None, out_visibilities=None, row_chunk=None):
+    """Plan a run: choose the row chunk (unless given) and estimate each step.
+
+    ``steps`` are the flag verbs in order (``"save"``, ``"nan"``, ...).
+    ``write`` is ``None``, ``"write"`` (a full ``--msout``) or
+    ``"write-flags"`` (``--write-changed-only``/``--apply``);
+    ``out_visibilities`` is the output's size after averaging (default: the
+    input's).
     """
-    per_row = BYTES_PER_VISIBILITY * max(1, nchan) * max(1, ncorr)
-    budget = SAFETY * memory_bytes - BASE_BYTES
-    rows = int(budget // (workers * per_row)) if budget > 0 else 0
-    reason = (f"{memory_bytes / 2**30:.1f} GB x {SAFETY:.0%} - {BASE_BYTES / 2**30:.1f} GB"
-              f" over {workers} workers x {nchan} chan x {ncorr} corr"
-              f" x {BYTES_PER_VISIBILITY} B")
-    if rows < MIN_ROW_CHUNK:
-        return MIN_ROW_CHUNK, reason + (
-            f" allows {rows} rows; using the minimum, {MIN_ROW_CHUNK}"
-            " -- lower --workers to stay within the limit")
-    cap = MAX_ROW_CHUNK
-    if nrow:
-        cap = min(cap, max(MIN_ROW_CHUNK, math.ceil(nrow / workers)))
-    if rows > cap:
-        return cap, reason + f" allows {rows} rows; capped at {cap}"
-    return rows, reason
+    nchan, ncorr = max(1, nchan), max(1, ncorr)
+    chunked = ["read"] + [s for s in dict.fromkeys(steps) if s in CHUNK_COST]
+    whole = [s for s in dict.fromkeys(steps) if s in TABLE_COST]
+    budget = SAFETY * memory_bytes
+    if row_chunk is None:
+        chosen, limiting = _largest_chunk(chunked, budget, workers, nchan, ncorr)
+        if nrow:
+            idle_cap = max(MIN_ROW_CHUNK, math.ceil(nrow / workers))
+            if idle_cap < chosen:
+                chosen, limiting = idle_cap, f"{workers} workers over {nrow} rows"
+        too_small = chosen < MIN_ROW_CHUNK
+        chosen = max(MIN_ROW_CHUNK, chosen)
+    else:
+        chosen, limiting, too_small = row_chunk, "--row-chunk", False
+
+    result = Plan(chosen, limiting)
+    result.lines.append(
+        f"Memory plan: limit {memory_bytes / GB:.1f} GB, {workers} workers,"
+        f" {nrow} rows x {nchan} chan x {ncorr} corr;"
+        f" row chunk {chosen} rows, set by {limiting}")
+    for step in chunked:
+        result.lines.append(
+            f"  {step:<16} {chunk_bytes(step, chosen, workers, nchan, ncorr) / GB:7.1f} GB"
+            "  per chunk")
+    nvis = nrow * nchan * ncorr
+    tables = [(step, table_bytes(step, nvis)) for step in whole]
+    if write is not None:
+        out = nvis if out_visibilities is None else out_visibilities
+        tables.append((write, table_bytes(write, out)))
+    for step, estimate in tables:
+        result.lines.append(f"  {step:<16} {estimate / GB:7.1f} GB  whole table")
+        if estimate > memory_bytes:
+            advice = (" -- average first, or write only the flags"
+                      " (--write-changed-only / --apply)") if step == "write" else ""
+            result.warnings.append(
+                f"{step}: needs ~{estimate / GB:.0f} GB whatever the row chunk"
+                f" (casacure buffers the whole table it writes), over the"
+                f" {memory_bytes / GB:.0f} GB limit{advice}")
+
+    if too_small:
+        result.warnings.append(
+            f"{limiting} does not fit the limit even at the minimum chunk of"
+            f" {MIN_ROW_CHUNK} rows; lower --workers")
+    if row_chunk is not None:
+        worst = max(chunked, key=lambda s: chunk_bytes(s, chosen, workers, nchan, ncorr))
+        estimate = chunk_bytes(worst, chosen, workers, nchan, ncorr)
+        if estimate > budget:
+            result.warnings.append(
+                f"--row-chunk {chosen} with {workers} workers plans ~{estimate / GB:.1f} GB"
+                f" for {worst}, over {SAFETY:.0%} of the {memory_bytes / GB:.1f} GB limit")
+    return result

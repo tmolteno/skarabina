@@ -12,28 +12,51 @@ from skarabina import barber, dask_ms, flag_ops, memory
 logger = logging.getLogger(__name__)
 
 
-def _row_chunk(opts):
-    """The row chunk for this run: --row-chunk, or sized from memory."""
+def _write_mode(opts):
+    """What the run writes, for the memory plan: None, "write" or "write-flags"."""
+    averaging = any(
+        f is not None and f > 1
+        for f in (opts.frequency_average_factor, opts.time_average_factor)
+    )
+    if opts.msout:
+        # --write-changed-only falls back to a full write when averaging
+        # changes the shape of the data.
+        return "write-flags" if opts.write_changed_only and not averaging else "write"
+    if opts.apply:
+        return "write-flags"
+    return None
+
+
+def _row_chunk(opts, ops):
+    """The row chunk for this run, from the memory plan (printed).
+
+    ``--row-chunk`` when given; otherwise the largest chunk that keeps every
+    step of ``ops`` within --memory-limit-GB (default: the RAM available).
+    See :mod:`skarabina.memory`.
+    """
     workers = memory.effective_workers(opts.workers)
     limit = opts.memory_limit_gb * 2**30 if opts.memory_limit_gb > 0 \
         else memory.available_memory()
-    nrow, nchan, ncorr = dask_ms.ms_shape(opts.ms)
-    if opts.row_chunk:
-        if limit is not None and opts.memory_limit_gb > 0:
-            planned = memory.planned_bytes(opts.row_chunk, workers, nchan, ncorr)
-            if planned > limit:
-                logger.warning(
-                    "--row-chunk %d with %d workers plans for %.1f GB, over"
-                    " --memory-limit-GB %.1f", opts.row_chunk, workers,
-                    planned / 2**30, opts.memory_limit_gb)
-        return opts.row_chunk
     if limit is None:
-        print(f"Row chunk: {dask_ms.ROW_CHUNK_ROWS} rows (free memory unknown)")
-        return dask_ms.ROW_CHUNK_ROWS
-    row_chunk, reason = memory.row_chunk_for(limit, workers, nchan, ncorr, nrow)
+        row_chunk = opts.row_chunk or dask_ms.ROW_CHUNK_ROWS
+        print(f"Row chunk: {row_chunk} rows (free memory unknown)")
+        return row_chunk
+    nrow, nchan, ncorr = dask_ms.ms_shape(opts.ms)
+    out = nrow * nchan * ncorr
+    for factor in (opts.time_average_factor, opts.frequency_average_factor):
+        if factor is not None and factor > 1:
+            out //= factor
+    result = memory.plan(
+        [op.verb for op in ops], limit, workers, nrow, nchan, ncorr,
+        write=_write_mode(opts), out_visibilities=out, row_chunk=opts.row_chunk or None,
+    )
     source = "--memory-limit-GB" if opts.memory_limit_gb > 0 else "available RAM"
-    print(f"Row chunk from {source}: {reason} -> {row_chunk} rows")
-    return row_chunk
+    print(result.lines[0].replace("limit", f"limit ({source})", 1))
+    for line in result.lines[1:]:
+        print(line)
+    for warning in result.warnings:
+        logger.warning(warning)
+    return result.row_chunk
 
 
 @click.command("skarabina")
@@ -141,11 +164,12 @@ def _row_chunk(opts):
     "--row-chunk",
     type=int,
     default=None,
-    help="Number of rows read/written per dask array chunk. Default: chosen"
-    " from --memory-limit-GB, --workers and the MS's channels x correlations"
-    " (the largest chunk that fits). Every chunked phase holds about one chunk"
-    " per worker, at ~36 bytes per visibility for tfcrop/rflag. Given"
-    " explicitly, it is used as is. Mirrors tricolour's --row-chunks.",
+    help="Number of rows read/written per dask array chunk. Default: the"
+    " largest chunk that keeps every step of the --flag list within"
+    " --memory-limit-GB with --workers threads, so it is set by the most"
+    " expensive verb (rflag ~36 and tfcrop ~30 bytes per visibility per worker,"
+    " the other verbs 1-5). The run prints its memory plan. Given explicitly,"
+    " it is used as is. Mirrors tricolour's --row-chunks.",
 )
 @click.option(
     "--memory-limit-GB",
@@ -153,10 +177,12 @@ def _row_chunk(opts):
     type=float,
     default=0.0,
     show_default=True,
-    help="Memory the chunked phases (reading, flagging, averaging, writing)"
-    " may plan for, in GB; sets the row chunk when --row-chunk is not given."
-    " 0 = the RAM available now (MemAvailable, capped by a container limit)."
-    " Not governed: save:<name>, which holds the whole flag cube.",
+    help="Memory the run may plan for, in GB; sets the row chunk when"
+    " --row-chunk is not given. 0 = the RAM available now (MemAvailable,"
+    " capped by a container limit). Two steps hold a whole table whatever the"
+    " chunk -- save:<name> (~2.5 B per visibility) and a full --msout write"
+    " (~56 B per output visibility) -- and are warned about when they do not"
+    " fit.",
 )
 @click.option(
     "--workers",
@@ -206,7 +232,13 @@ def main(**kw):
         root.addHandler(fh)
         root.debug(f"options: {vars(opts)}")
 
-    ms = dask_ms.DaskMS(opts.ms, row_chunk=_row_chunk(opts))
+    # The flag list is parsed first: the row chunk is planned from it.
+    flag_specs = list(opts.flag_specs)
+    for path in opts.flag_files:
+        flag_specs.extend(flag_ops.load_file(path))
+    ops = flag_ops.parse(flag_specs)
+
+    ms = dask_ms.DaskMS(opts.ms, row_chunk=_row_chunk(opts, ops))
     fov_str = opts.field_of_view if opts.field_of_view is not None else "1.0 deg"
     # Full width, in radians; summary() halves it to get the distance from the
     # phase centre to the edge of the field.
@@ -218,11 +250,6 @@ def main(**kw):
     # separate "enable" step and no hidden canonical order.  Statistics for the
     # data-flagging steps are deferred into one dask pass (see flag_ops.run), so
     # a long sequence reads the data column once rather than once per step.
-
-    flag_specs = list(opts.flag_specs)
-    for path in opts.flag_files:
-        flag_specs.extend(flag_ops.load_file(path))
-    ops = flag_ops.parse(flag_specs)
 
     if not ops:
         print("No flagging operations requested (--flag was not given)")
