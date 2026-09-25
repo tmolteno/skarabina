@@ -3,6 +3,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **``--write-changed-only`` and ``--apply`` share the flagging pass.**  They
+  wrote one column per ``dask.compute``, so the flags were first materialised
+  to the spill and each column written from it; they now write every changed
+  column in one compute with the run's queued reports (the flags, rflag/tfcrop
+  and the summary), with no spill.  Only ``--optimize`` and ``--barber``, which
+  read the flags before the write, keep the materialising pass.  Output and
+  reports identical to 1.0.7; DATA read once (``tests/test_single_pass.py``).
+  On mergA_tim scan 1 (stage-0 list, ``--summary --write-changed-only``):
+  4.98 s against 1.0.7's 5.82 s, both one DATA pass, same 3.2 GB peak; the
+  rflag list is not yet measured (``handover.md`` §3.1).
+
 ## [1.0.7]
 
 ### Added

@@ -23,9 +23,10 @@ When bumping the version for a release, update these files to match:
 |---|---|
 | `pyproject.toml` | `project.version` |
 | `cargo/pyproject.toml` | `project.version` |
-| `cargo/genesis/skarabina-cargo-base.yml` | `vars.skarabina-cargo.images.version` |
+| `cargo/skarabina_cargo/genesis/skarabina-cargo-base.yml` | `vars.skarabina-cargo.images.version` |
+| `uv.lock` | the `version` under `name = "skarabina"` (not the cargo package) |
 
-All three must reference the same version number (e.g. `0.6.2` in both
+All of them must reference the same version number (e.g. `0.6.2` in both
 `pyproject.toml` files and `0.6.2` in the YAML).  Do **not** include a
 `v` prefix in the YAML version — CI's `docker/metadata-action` uses
 `type=semver` which strips the `v` from the git tag, so the published
@@ -34,6 +35,14 @@ the image tag exactly.
 
 Also add a changelog entry to `doc/CHANGES.md`.  Do not create or use a
 `CHANGES.md` at the top level — the canonical changelog lives under `doc/`.
+Move the `## [Unreleased]` entries under a new `## [X.Y.Z]` heading (keep an
+empty `## [Unreleased]` above it).
+
+Then, as for 1.0.5-1.0.7: commit `chore(release): X.Y.Z`, create an annotated
+tag `vX.Y.Z` with message `skarabina X.Y.Z`, push `main`, then push the tag.
+The tag triggers all three workflows (`.github/workflows/`): PyPI
+`skarabina`, PyPI `skarabina-cargo`, and the Docker image.  Check them with
+`gh run list`, and PyPI with `https://pypi.org/pypi/<package>/json`.
 
 ## Docker
 
