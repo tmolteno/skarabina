@@ -1562,8 +1562,18 @@ class DaskMS:
                 f" the MS flags are {tuple(self.ds.FLAG.shape)}"
             )
 
-        self.ds["FLAG"].data = da.asarray(flag)
-        self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, da.asarray(flag_row))
+        # Keep the dataset's chunking.  A version is read from disk as one
+        # NumPy array, and da.asarray would make it a single chunk spanning
+        # every row, while the rest of the dataset -- ROWID included -- keeps
+        # the blocks dask-ms read it in.  xds_to_table refuses to write a
+        # column whose chunking differs from ROWID's, so without this a restore
+        # breaks --apply and --msout on any MS past dask-ms's first row block.
+        # The shapes were checked equal above, so the existing chunks fit.
+        self.ds["FLAG"].data = da.asarray(flag).rechunk(self.ds.FLAG.data.chunks)
+        self.ds["FLAG_ROW"] = (
+            self.ds.FLAG_ROW.dims,
+            da.asarray(flag_row).rechunk(self.ds.FLAG_ROW.data.chunks),
+        )
         self.changed["FLAG"] = True
         self.changed["FLAG_ROW"] = True
         self._refresh_cached_columns()

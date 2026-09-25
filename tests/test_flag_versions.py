@@ -240,3 +240,39 @@ def test_save_rejects_a_path_like_name(ms):
 def test_flagversions_dir_sits_beside_the_ms(ms):
     assert flag_versions.flagversions_path(ms) == os.path.abspath(ms) + ".flagversions"
     assert os.path.isdir(ms + ".flagversions")
+
+
+def test_restore_then_apply_on_a_multi_chunk_ms(tmp_path):
+    """A restore must keep the dataset's row chunking.
+
+    dask-ms reads rows in blocks (10000 by default), so every MS bigger than
+    one block has a chunked ROWID.  ``xds_to_table`` refuses to write a column
+    whose chunking differs from ROWID's, so a restore that replaces FLAG with a
+    single-chunk array turns every later ``--apply`` into
+    "ROWID shape and/or chunking does not match that of FLAG" -- on real data
+    only, which is why the 24-row MS above never caught it.
+    """
+    nrow = 10_016  # more than dask-ms's default 10000-row block
+    path = str(tmp_path / "chunked.ms")
+    make_synthetic_ms(path, nchan=NCHAN, nrow=nrow, ncorr=NCORR)
+
+    original = np.zeros((nrow, NCHAN, NCORR), bool)
+    original[7, 1, 0] = True
+    t = table(path, readonly=False, ack=False)
+    t.putcol("FLAG", original)
+    t.close()
+
+    DaskMS(path).save_flag_version("before")
+
+    ds = DaskMS(path)
+    assert len(ds.ds.FLAG.data.chunks[0]) > 1, "fixture is not chunked"
+    ds.ds["FLAG"].data = da.ones_like(ds.ds["FLAG"].data)
+    ds.changed["FLAG"] = True
+    ds.restore_flag_version("before")
+    ds.update_ms(path, clobber=True)
+
+    t = table(path, ack=False, readonly=True)
+    try:
+        assert np.array_equal(t.getcol("FLAG"), original)
+    finally:
+        t.close()

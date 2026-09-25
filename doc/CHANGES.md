@@ -3,6 +3,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A restored flag version no longer breaks the write on a measurement set
+  larger than one dask-ms row block.**  ``restore:`` put the version back as a
+  single dask chunk spanning every row, while the rest of the dataset --
+  ``ROWID`` included -- kept the blocks dask-ms read it in.  ``xds_to_table``
+  requires a written column's chunking to match ``ROWID``'s, so every
+  ``--apply`` or ``--msout`` after a restore failed with "ROWID shape and/or
+  chunking does not match that of FLAG" once the MS passed 10000 rows.  The
+  restored flags are now rechunked to the dataset's own chunking.
+
 ## [1.0.5]
 
 ### Fixed
