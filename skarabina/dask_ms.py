@@ -947,9 +947,13 @@ class DaskMS:
         # lives on disk at one bit per visibility.  Every later pass (summary,
         # write) reads the flags back from there block by block, rather than
         # running the algorithm -- and the whole graph upstream of it -- again.
+        row_columns = self._baseline_columns(payload.chunks[0])
+        if self.defer_reports:
+            self._defer_autofit(payload, existing, params, block_function,
+                                row_columns, shape, label)
+            return
         spill = self._spill_directory(label)
         block_function = _flags_to_spill(_prepare_block(block_function))
-        row_columns = self._baseline_columns(payload.chunks[0])
         counts = []
         paths = []
         for time_index in range(payload.numblocks[0]):
@@ -994,6 +998,39 @@ class DaskMS:
             % (label, new_count, total, new_count - already,
                100.0 * (new_count - already) / total if total else 0.0)
         )
+
+    def _defer_autofit(self, payload, existing, params, block_function,
+                       row_columns, shape, label):
+        """The lazy form of :meth:`_run_autofit`, for a run that defers reports.
+
+        The flags stay a graph of one delayed call per block and the counts
+        are queued, so the run's final pass -- the write, or the pass that
+        materialises the flags -- evaluates each block exactly once, sharing
+        its read of DATA with every other step: no pass, and no spill, of the
+        flagger's own.
+        """
+        plain = _prepare_block(block_function)
+        blocks = []
+        for index in range(payload.numblocks[0]):
+            rows = tuple(column.blocks[index] for column in row_columns) or None
+            block = payload.blocks[index]
+            blocks.append(da.from_delayed(
+                delayed(plain)(block, existing.blocks[index], params, rows),
+                shape=block.shape, dtype=bool,
+            ))
+        new_flags = da.concatenate(blocks, axis=0)
+        self.ds["FLAG"] = (self.ds.FLAG.dims, new_flags)
+        self.changed["FLAG"] = True
+        total = int(np.prod(shape))
+
+        def report(new_count, already):
+            new_count, already = int(new_count), int(already)
+            print(
+                "%s: %d of %d visibilities flagged, %d newly (%.2f%% of all)"
+                % (label, new_count, total, new_count - already,
+                   100.0 * (new_count - already) / total if total else 0.0)
+            )
+        self._report([da.sum(new_flags), da.sum(existing)], report)
 
     def _baseline_columns(self, row_chunks):
         """``[ANTENNA1, ANTENNA2, SCAN_NUMBER]`` chunked like the data, or ``[]``.
@@ -1239,7 +1276,7 @@ class DaskMS:
                     )
         self._report([da.sum(mask) for _, (_, mask) in entries], report)
 
-    def _report_integrations(self):
+    def _report_integrations(self, time=None):
         """Report the integration structure of the MS, gap-tolerantly.
 
         Integrations are counted via :func:`group_integrations` rather than by
@@ -1251,7 +1288,8 @@ class DaskMS:
         """
         if "TIME" not in self.ds.data_vars:
             return
-        time = self.ds.TIME.data.compute()
+        if time is None:
+            time = self.ds.TIME.data.compute()
         if time.size == 0:
             return
 
@@ -1334,172 +1372,165 @@ class DaskMS:
         percentile_inputs = [25, 33, 50, 75, 95, 100]
         percentile_values = da.percentile(abs_uv.flatten(), percentile_inputs)
 
-        with ProgressBar():
-            (
-                percentile_values,
-                num_flagged,
-                rows_flagged,
-                total,
-                rows_total,
-                percent,
-                rows_percent,
-                bins,
-                min_unflagged,
-                max_unflagged,
-                min_flagged,
-                max_flagged,
-                max_per_row,
-                min_total_per_row,
-                max_total_per_row,
-            ) = dask.compute(
-                percentile_values,
-                num_flagged,
-                rows_flagged,
-                total,
-                rows_total,
-                percent,
-                rows_percent,
-                bins,
-                min_unflagged,
-                max_unflagged,
-                min_flagged,
-                max_flagged,
-                max_per_row,
-                min_total_per_row,
-                max_total_per_row,
-            )
+        # The per-row columns the report prints from, computed with the rest:
+        # after time averaging they are graphs over the flags, and computing
+        # them one by one in the report was a pass over DATA each.
+        column_names = [name for name in ("TIME", "INTERVAL", "EXPOSURE", "FIELD_ID")
+                        if name in self.ds.data_vars]
 
-        print(f"Flagging Summary ({self.name}): {percent} % - {num_flagged}/{total}.")
-        print(f"    flags: {percent:4.2f} % - {num_flagged}/{total}.")
-        print(f"    rows: {rows_percent:4.2f} % - {rows_flagged}/{rows_total}.")
-        print(f"    max-uv: {percentile_values[-1]:4.2f}")
-        print("    UV-Percentiles: ")
-        for p, v in zip(percentile_inputs, percentile_values):
-            print(f"        {p:6f}: \t{v:7.2f}")
-        print("    Row flagging histogram (% of visibilities unflagged):")
-        labels = ["   0%", " 1-25%", "26-50%", "51-75%", "76-99%", "  100%"]
-        for label, count in zip(labels, bins):
-            pct = 100.0 * int(count) / int(rows_total) if int(rows_total) > 0 else 0.0
-            bar = "#" * max(1, int(pct / 2))
-            print(f"        {label}: {int(count):8d} ({pct:5.1f}%) {bar}")
-        print(
-            f"    Visibilities per row: {int(max_per_row)} total"
-            f" (unflagged: min={int(min_unflagged)}, max={int(max_unflagged)};"
-            f" flagged: min={int(min_flagged)}, max={int(max_flagged)})",
-        )
-        if int(min_total_per_row) == int(max_total_per_row):
+        # Printed by report(), when the values are in: now, or -- in a run
+        # that defers its reports -- after the pass that computes them with
+        # the write, so the summary costs no pass of its own.
+        def report(
+            percentile_values, num_flagged, rows_flagged, total,
+            rows_total, percent, rows_percent, bins,
+            min_unflagged, max_unflagged, min_flagged, max_flagged,
+            max_per_row, min_total_per_row, max_total_per_row,
+            column_values,
+        ):
+            columns = dict(zip(column_names, column_values))
+            print(f"Flagging Summary ({self.name}): {percent} % - {num_flagged}/{total}.")
+            print(f"    flags: {percent:4.2f} % - {num_flagged}/{total}.")
+            print(f"    rows: {rows_percent:4.2f} % - {rows_flagged}/{rows_total}.")
+            print(f"    max-uv: {percentile_values[-1]:4.2f}")
+            print("    UV-Percentiles: ")
+            for p, v in zip(percentile_inputs, percentile_values):
+                print(f"        {p:6f}: \t{v:7.2f}")
+            print("    Row flagging histogram (% of visibilities unflagged):")
+            labels = ["   0%", " 1-25%", "26-50%", "51-75%", "76-99%", "  100%"]
+            for label, count in zip(labels, bins):
+                pct = 100.0 * int(count) / int(rows_total) if int(rows_total) > 0 else 0.0
+                bar = "#" * max(1, int(pct / 2))
+                print(f"        {label}: {int(count):8d} ({pct:5.1f}%) {bar}")
             print(
-                f"    Row size check: all rows consistent"
-                f" ({int(min_total_per_row)} elements each)"
+                f"    Visibilities per row: {int(max_per_row)} total"
+                f" (unflagged: min={int(min_unflagged)}, max={int(max_unflagged)};"
+                f" flagged: min={int(min_flagged)}, max={int(max_flagged)})",
             )
-        else:
-            print(
-                f"    Row size check: INCONSISTENT —"
-                f" min={int(min_total_per_row)}, max={int(max_total_per_row)}"
-            )
-        if self.chan_freq_hz is not None:
-            nchan = len(self.chan_freq_hz)
-            fmin = self.chan_freq_hz[0] / 1e6
-            fmax = self.chan_freq_hz[-1] / 1e6
-            span = fmax - fmin
-            widths = self.chan_width_hz
-            if widths is not None and len(widths) == nchan:
-                # Report the spectrum actually present (the sum of the channel
-                # widths), not the span between the band edges: those differ
-                # when --optimize has dropped channels from the middle of the
-                # band, and the span would then overstate the band.
-                bw = float(np.sum(widths)) / 1e6
-                chan_width = float(np.median(widths)) / 1e3
+            if int(min_total_per_row) == int(max_total_per_row):
                 print(
-                    f"    Spectral windows: {self.nspw}"
-                    f" (channels: {nchan},"
-                    f" {fmin:.3f}–{fmax:.3f} MHz,"
-                    f" {chan_width:.1f} kHz each,"
-                    f" {bw:.1f} MHz of spectrum)"
+                    f"    Row size check: all rows consistent"
+                    f" ({int(min_total_per_row)} elements each)"
                 )
-                gaps = np.diff(self.chan_freq_hz) > 0.5 * (
-                    np.asarray(widths)[1:] + np.asarray(widths)[:-1]
+            else:
+                print(
+                    f"    Row size check: INCONSISTENT —"
+                    f" min={int(min_total_per_row)}, max={int(max_total_per_row)}"
                 )
-                if gaps.any():
-                    hole = float(np.sum(np.diff(self.chan_freq_hz)[gaps])) - float(
-                        np.sum(np.asarray(widths)[1:][gaps])
-                    )
+            if self.chan_freq_hz is not None:
+                nchan = len(self.chan_freq_hz)
+                fmin = self.chan_freq_hz[0] / 1e6
+                fmax = self.chan_freq_hz[-1] / 1e6
+                span = fmax - fmin
+                widths = self.chan_width_hz
+                if widths is not None and len(widths) == nchan:
+                    # Report the spectrum actually present (the sum of the channel
+                    # widths), not the span between the band edges: those differ
+                    # when --optimize has dropped channels from the middle of the
+                    # band, and the span would then overstate the band.
+                    bw = float(np.sum(widths)) / 1e6
+                    chan_width = float(np.median(widths)) / 1e3
                     print(
-                        f"    Band has holes: {hole / 1e6:.3f} MHz inside the"
-                        f" {span:.1f} MHz span is not covered by any channel"
+                        f"    Spectral windows: {self.nspw}"
+                        f" (channels: {nchan},"
+                        f" {fmin:.3f}–{fmax:.3f} MHz,"
+                        f" {chan_width:.1f} kHz each,"
+                        f" {bw:.1f} MHz of spectrum)"
                     )
-            else:
+                    gaps = np.diff(self.chan_freq_hz) > 0.5 * (
+                        np.asarray(widths)[1:] + np.asarray(widths)[:-1]
+                    )
+                    if gaps.any():
+                        hole = float(np.sum(np.diff(self.chan_freq_hz)[gaps])) - float(
+                            np.sum(np.asarray(widths)[1:][gaps])
+                        )
+                        print(
+                            f"    Band has holes: {hole / 1e6:.3f} MHz inside the"
+                            f" {span:.1f} MHz span is not covered by any channel"
+                        )
+                else:
+                    print(
+                        f"    Spectral windows: {self.nspw}"
+                        f" (channels: {nchan},"
+                        f" {fmin:.3f}–{fmax:.3f} MHz,"
+                        f" bandwidth: {span:.1f} MHz)"
+                    )
+
+                # Fringe-rotation integration time limit (Wijnholds 2018, MNRAS).
+                # Time averaging causes decorrelation that depends on baseline
+                # length, frequency, and angular distance ℓ from the phase centre
+                # (see max_integration_time).  --field-of-view is the full width of
+                # the field of view, matching skarabina-analyze --image-fov; ℓ is
+                # half of it, the distance from the phase centre to its edge.
+                max_uv = percentile_values[-1]
+                nu_max = fmax * 1e6
+                fov_rad = getattr(self, "_fov_rad", 0.0174533)
+
                 print(
-                    f"    Spectral windows: {self.nspw}"
-                    f" (channels: {nchan},"
-                    f" {fmin:.3f}–{fmax:.3f} MHz,"
-                    f" bandwidth: {span:.1f} MHz)"
+                    "    Max integration time (fringe-rotation limit,"
+                    " FOV=%.2f deg full width):" % math.degrees(fov_rad)
                 )
+                # The 10% row is TIME_AVERAGE_LOSS, the criterion
+                # `skarabina-analyze` quotes as max_integration_time_s, so the two
+                # commands can be compared directly.
+                loss_pcts = sorted({1, 3, 5, int(round(TIME_AVERAGE_LOSS * 100))})
+                for loss_pc in loss_pcts:
+                    print(
+                        "        %d%% loss:  %5.1f s"
+                        % (loss_pc, max_integration_time(nu_max, max_uv, fov_rad, loss_pc / 100.0))
+                    )
 
-            # Fringe-rotation integration time limit (Wijnholds 2018, MNRAS).
-            # Time averaging causes decorrelation that depends on baseline
-            # length, frequency, and angular distance ℓ from the phase centre
-            # (see max_integration_time).  --field-of-view is the full width of
-            # the field of view, matching skarabina-analyze --image-fov; ℓ is
-            # half of it, the distance from the phase centre to its edge.
-            max_uv = percentile_values[-1]
-            nu_max = fmax * 1e6
-            fov_rad = getattr(self, "_fov_rad", 0.0174533)
+                if "INTERVAL" in self.ds.data_vars:
+                    dt_current = integration_interval(columns["INTERVAL"])
+                    if dt_current is not None:
+                        print("    Current integration time: %.1f s" % dt_current)
+                elif "EXPOSURE" in self.ds.data_vars:
+                    dt_current = integration_interval(columns["EXPOSURE"])
+                    if dt_current is not None:
+                        print("    Current integration time: %.1f s" % dt_current)
 
-            print(
-                "    Max integration time (fringe-rotation limit,"
-                " FOV=%.2f deg full width):" % math.degrees(fov_rad)
-            )
-            # The 10% row is TIME_AVERAGE_LOSS, the criterion
-            # `skarabina-analyze` quotes as max_integration_time_s, so the two
-            # commands can be compared directly.
-            loss_pcts = sorted({1, 3, 5, int(round(TIME_AVERAGE_LOSS * 100))})
-            for loss_pc in loss_pcts:
-                print(
-                    "        %d%% loss:  %5.1f s"
-                    % (loss_pc, max_integration_time(nu_max, max_uv, fov_rad, loss_pc / 100.0))
-                )
+                self._report_integrations(columns.get("TIME"))
 
-            if "INTERVAL" in self.ds.data_vars:
-                dt_current = integration_interval(self.ds.INTERVAL.data.compute())
-                if dt_current is not None:
-                    print("    Current integration time: %.1f s" % dt_current)
-            elif "EXPOSURE" in self.ds.data_vars:
-                dt_current = integration_interval(self.ds.EXPOSURE.data.compute())
-                if dt_current is not None:
-                    print("    Current integration time: %.1f s" % dt_current)
+            # Field listing
+            print("    Fields:")
+            field_names = {}
+            for s in self.sub_table_names:
+                if s.endswith("/FIELD"):
+                    try:
+                        ft = table(s, ack=False)
+                        names = ft.getcol("NAME")
+                        ft.close()
+                        for i, name in enumerate(names):
+                            field_names[i] = name.strip()
+                    except Exception:
+                        pass
 
-            self._report_integrations()
-
-        # Field listing
-        print("    Fields:")
-        field_names = {}
-        for s in self.sub_table_names:
-            if s.endswith("/FIELD"):
-                try:
-                    ft = table(s, ack=False)
-                    names = ft.getcol("NAME")
-                    ft.close()
-                    for i, name in enumerate(names):
-                        field_names[i] = name.strip()
-                except Exception:
-                    pass
-
-        # FIELD_ID may be a data variable (multi-field MS) or an
-        # attribute (single-field MS).
-        if "FIELD_ID" in self.ds.data_vars:
-            field_ids = self.ds.FIELD_ID.data
-            unique_ids = da.unique(field_ids).compute()
-        else:
-            unique_ids = [int(self.ds.attrs.get("FIELD_ID", 0))]
-
-        for fid in sorted(unique_ids):
-            if "FIELD_ID" in self.ds.data_vars:
-                n = int(da.sum(field_ids == fid).compute())
+            # FIELD_ID may be a data variable (multi-field MS) or an
+            # attribute (single-field MS).
+            if "FIELD_ID" in columns:
+                field_ids = columns["FIELD_ID"]
+                unique_ids = np.unique(field_ids)
             else:
-                n = int(self.ds.FLAG.shape[0])
-            name = field_names.get(int(fid), f"FIELD_ID={fid}")
-            print(f"        {fid}: {name:20s} {n:8d} rows")
+                unique_ids = [int(self.ds.attrs.get("FIELD_ID", 0))]
+
+            for fid in sorted(unique_ids):
+                if "FIELD_ID" in columns:
+                    n = int(np.sum(field_ids == fid))
+                else:
+                    n = int(self.ds.FLAG.shape[0])
+                name = field_names.get(int(fid), f"FIELD_ID={fid}")
+                print(f"        {fid}: {name:20s} {n:8d} rows")
+
+        self._report(
+            [
+                percentile_values, num_flagged, rows_flagged, total,
+                rows_total, percent, rows_percent, bins,
+                min_unflagged, max_unflagged, min_flagged, max_flagged,
+                max_per_row, min_total_per_row, max_total_per_row,
+                [self.ds[name].data for name in column_names],
+            ],
+            report,
+        )
 
     def time_average(self, factor):
         """
@@ -2147,8 +2178,14 @@ class DaskMS:
 
         writes = xds_to_table(ds_to_write, name, "ALL")
 
+        # The reports queued by the run -- the verbs' counts, the summary --
+        # are computed in the same pass as the write: FLAG is still the lazy
+        # graph over DATA (nan, clip, rflag ...), and the write reads DATA for
+        # its own column, so dask shares one read between them.
+        pending, report = self._take_pending()
         with ProgressBar():
-            dask.compute(writes)
+            _, *values = dask.compute(writes, *pending)
+        report(values)
 
         # Copy subtables (SPECTRAL_WINDOW, ANTENNA, FIELD, etc.) from
         # the input MS.  xds_to_table only writes the main table.

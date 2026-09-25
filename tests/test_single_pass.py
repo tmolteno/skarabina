@@ -72,6 +72,29 @@ def test_rflag_shares_its_pass_with_the_verbs_before_it(tmp_path, column_reads):
     assert column_reads["DATA"] == data_bytes
 
 
+@pytest.mark.parametrize("flags, extra", [
+    ("nan, clip 0 100, autos", []),
+    ("nan, clip 0 100, autos", ["--summary"]),
+    ("nan, clip 0 100, autos", ["--summary", "--time-average-factor", "2",
+                                "--frequency-average-factor", "4"]),
+    ("nan, clip 0 100, autos, rflag", ["--summary", "--frequency-average-factor", "4"]),
+    ("nan, autos, tfcrop, uv-above 1000", ["--time-average-factor", "2"]),
+])
+def test_a_full_write_and_averaging_share_the_pass(tmp_path, column_reads, flags, extra):
+    """The write reads DATA for its own column; the flags, rflag/tfcrop, the
+    averaging and the summary are computed in that same pass."""
+    path, data_bytes = _ms(tmp_path)
+    _run(["--ms", path, "--row-chunk", "300", "--flag", flags,
+          "--msout", str(tmp_path / "out.ms"), "--clobber"] + extra)
+    assert column_reads["DATA"] == data_bytes, "DATA was read more than once"
+
+
+def test_a_flag_list_with_nothing_after_it_reads_data_once(tmp_path, column_reads):
+    path, data_bytes = _ms(tmp_path)
+    _run(["--ms", path, "--row-chunk", "300", "--flag", "nan, rflag, clip 0 100"])
+    assert column_reads["DATA"] == data_bytes
+
+
 def test_the_single_pass_writes_the_same_flags(tmp_path):
     """Materialising the flags must not change them."""
     from casacore.tables import table

@@ -269,14 +269,22 @@ def main(**kw):
     # averaging, the write) would evaluate it again, a read of DATA each.
     # When one of them follows, the flags are materialised once, with every
     # queued report computed in the same pass; otherwise only the reports.
+    #
+    # A full --msout write reads DATA for its own column, so it is the pass:
+    # averaging stays lazy, the summary is queued, and the write computes the
+    # flags, the averaged output and every report in one go.  --optimize needs
+    # the flags before it can choose the rows to write, so it keeps a pass of
+    # its own (the materialised flags), and so do the flags-only writes, which
+    # write column by column.
     downstream = (
         opts.summary or opts.msout or opts.apply or opts.optimize
         or (opts.frequency_average_factor or 1) > 1
         or (opts.time_average_factor or 1) > 1
     )
-    if ops and downstream:
+    single_pass = _write_mode(opts) == "write" and not opts.optimize
+    if ops and downstream and not single_pass:
         ms.materialise_flags()
-    else:
+    elif not single_pass:
         ms.flush_reports()
 
     # --- Row removal / averaging (MUST be last before writing) ---
@@ -317,3 +325,6 @@ def main(**kw):
         )
     elif opts.apply:
         ms.update_ms(opts.ms, opts.clobber)
+
+    # Anything still queued (a run whose last pass did not take the reports).
+    ms.flush_reports()
