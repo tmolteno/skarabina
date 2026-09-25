@@ -312,7 +312,7 @@ def _safe_template(template, fallback):
     return np.where(bad, fallback, template)
 
 
-def flag_1d(values, cutoff, n_iterations=N_FLAG_ITERATIONS):
+def flag_1d(values, cutoff, n_iterations=N_FLAG_ITERATIONS, flagged=None):
     """Flag values deviating from 1 by more than ``cutoff`` robust sigmas.
 
     The scatter is re-measured each iteration from the values that survived the
@@ -322,10 +322,21 @@ def flag_1d(values, cutoff, n_iterations=N_FLAG_ITERATIONS):
     removing those lowers the estimate, and later passes can then see weaker
     ones against a threshold that has effectively tightened.
 
-    Returns ``(flag, sigma)`` with the final scatter estimate.
+    ``flagged`` marks values flagged before this call.  They are left out of
+    the scatter from the first iteration on and stay flagged: a sample that was
+    flagged for a reason -- dead data, RFI found by an earlier step -- says
+    nothing about the noise of the samples being judged, and on a heavily
+    flagged row it would otherwise be most of the sample the scatter is
+    measured from.
+
+    Returns ``(flag, sigma)`` with the final scatter estimate; ``flag``
+    includes the ``flagged`` values.
     """
     values = np.asarray(values, dtype=float)
-    flagged = ~np.isfinite(values)
+    excluded = ~np.isfinite(values)
+    if flagged is not None:
+        excluded |= np.asarray(flagged, dtype=bool)
+    flagged = excluded.copy()
     sigma = np.nan
     for _ in range(max(1, n_iterations)):
         surviving = values[~flagged]
@@ -338,43 +349,49 @@ def flag_1d(values, cutoff, n_iterations=N_FLAG_ITERATIONS):
             new = np.abs(values - 1.0) > 0.0
         else:
             new = np.abs(values - 1.0) > cutoff * sigma
-        new |= ~np.isfinite(values)
+        new |= excluded
         if np.array_equal(new, flagged):
             break
         flagged = new
     return flagged, sigma
 
 
-def flag_lanes(values, cutoff, axis, n_iterations=N_FLAG_ITERATIONS):
+def flag_lanes(values, cutoff, axis, n_iterations=N_FLAG_ITERATIONS,
+               flagged=None):
     """:func:`flag_1d` of every lane of a 2-D array along ``axis``, at once.
 
     Identical, lane for lane and bit for bit, to calling :func:`flag_1d` on
     each row (``axis=1``) or column (``axis=0``): the same surviving values, the
     same two medians taken the same way (:func:`skarabina.nanstats.nanmedian`),
     and a lane stops iterating exactly when :func:`flag_1d` would -- when too
-    few values survive, or when an iteration changes nothing.  Lanes are taken
-    a group at a time so the working set stays bounded.
+    few values survive, or when an iteration changes nothing.  ``flagged``, the
+    same shape as ``values``, is the per-sample equivalent of :func:`flag_1d`'s
+    and is left out of every lane's scatter in the same way.  Lanes are taken a
+    group at a time so the working set stays bounded.
 
     The loop this replaces was one :func:`flag_1d` call per row of the plane,
     each doing two ``np.median`` calls per iteration: on a 10 000-row,
     79-channel block, 10 000 calls and two thirds of the time TFCrop took.
     """
     values = np.asarray(values, dtype=float)
+    excluded = ~np.isfinite(values)
+    if flagged is not None:
+        excluded |= np.asarray(flagged, dtype=bool)
     lanes_first = values if axis == 1 else values.T
+    excluded = excluded if axis == 1 else excluded.T
     flags = np.empty(lanes_first.shape, dtype=bool)
     group = max(1, GROUP_VALUES // max(1, lanes_first.shape[1]))
     for start in range(0, lanes_first.shape[0], group):
         stop = start + group
         flags[start:stop] = _flag_lane_group(
-            lanes_first[start:stop], cutoff, n_iterations
+            lanes_first[start:stop], excluded[start:stop], cutoff, n_iterations
         )
     return flags if axis == 1 else flags.T
 
 
-def _flag_lane_group(values, cutoff, n_iterations):
+def _flag_lane_group(values, excluded, cutoff, n_iterations):
     """:func:`flag_lanes` for a ``(lane, sample)`` group."""
-    non_finite = ~np.isfinite(values)
-    flagged = non_finite.copy()
+    flagged = excluded.copy()
     deviation = np.abs(values - 1.0)
     active = np.ones(values.shape[0], dtype=bool)
     for _ in range(max(1, n_iterations)):
@@ -389,7 +406,7 @@ def _flag_lane_group(values, cutoff, n_iterations):
         # flagging exact deviations from 1 -- a limit of zero.
         noiseless = ~np.isfinite(sigma) | (sigma == 0.0)
         limit = np.where(noiseless, 0.0, cutoff * sigma)
-        new = (deviation[active] > limit[:, None]) | non_finite[active]
+        new = (deviation[active] > limit[:, None]) | excluded[active]
         changed = np.any(new != flagged[active], axis=1)
         rows = np.flatnonzero(active)
         flagged[rows[changed]] = new[changed]
@@ -665,7 +682,7 @@ def _fit_and_flag_freq(plane, flagged, params):
     """Bandpass direction: fit the time-average, flatten, flag across frequency."""
     template = bandpass_template(plane, flagged, params)
     flat = _flatten(plane, template)
-    return flag_lanes(flat, params.freqcutoff, axis=1), flat
+    return _new_flags(flat, flagged, params.freqcutoff, axis=1), flat
 
 
 def _fit_and_flag_time(plane, flagged, params):
@@ -675,7 +692,19 @@ def _fit_and_flag_time(plane, flagged, params):
     )
     safe = _safe_template(baseline, np.ones_like(baseline))
     flat = _flatten(plane, safe[None, :])
-    return flag_lanes(flat, params.timecutoff, axis=0), flat
+    return _new_flags(flat, flagged, params.timecutoff, axis=0), flat
+
+
+def _new_flags(flat, flagged, cutoff, axis):
+    """One direction's flags on a flattened plane: only what it finds itself.
+
+    The samples flagged before TFCrop ran are kept out of the scatter (see
+    :func:`flag_1d`), and out of the result, so ``combined`` holds each
+    direction's own judgements and nothing else -- which is what the window
+    statistics then measure the outlier content of a neighbourhood from.  The
+    caller adds the pre-existing flags back when it assembles the final plane.
+    """
+    return flag_lanes(flat, cutoff, axis=axis, flagged=flagged) & ~flagged
 
 
 def _fit_for(fit_type):

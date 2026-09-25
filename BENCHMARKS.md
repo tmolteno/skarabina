@@ -274,6 +274,14 @@ MS (79 chan × 2 corr, ~69 % pre-flagged), `--flag tfcrop` with CASA defaults,
   run concurrently, each with bounded temporaries; it does not grow with the
   table (718 → ~780 → 778 MiB over a 4× longer MS; repeated 860k runs spread by
   40 MiB).  For comparison `rflag` at 1.72M rows peaked at 903 MiB (882 at 430k).
+- **Afterwards, pre-existing flags were taken out of tfcrop's scatter**
+  (`flag_1d`/`flag_lanes`, see `doc/CHANGES.md`), which changes the flags.
+  Same 430k MS: 8.00 s, 708 MiB; 271 190 new flags instead of 168 182.  All
+  18 958 live samples of the ~0.1 % injected-RFI rows are caught either way;
+  the difference is false positives on clean data, 0.71 % → 1.19 % of the live
+  samples.  This MS's pre-flags are random picks of clean noise, so counting
+  them gave each row a larger, equally clean sample -- on real data those
+  samples are dead or RFI, which is what the fix is for.
 
 ---
 
