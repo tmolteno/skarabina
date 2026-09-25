@@ -177,12 +177,16 @@ The row chunk is applied at read time in `DaskMS.__init__`
 (`xds_from_ms(..., chunks={"row": row_chunk})`) and the pool is set in
 `main()` (`dask.config.set(pool=ThreadPool(workers))`).
 
-Caveat (measured 2026-09-25): on the benchmark MS, *neither* lever moves the
-overall peak RSS, because peak is set by `--flag save:imported` — writing the
-CASA backup of the 8 GB flag cube through casacure's buffered write store
-peaks at ~18-19 GB regardless of chunking/workers.  The levers are still the
-right tool for a flagging/averaging run without `save:`, and for the per-chunk
-working set in general.
+Caveat (measured 2026-09-25, casacure 3.8.7): on the benchmark MS, *neither*
+lever moved the overall peak RSS.  The peak was set by `--flag save:imported`:
+casacure buffered the whole written table, so the backup of the 8 GB flag cube
+peaked at ~18-19 GB, and a full `--msout` at ~56 B per output visibility.
+Since casacure `d016b8d` (2026-09-26, unreleased after 3.8.7) grows a written
+table in place, both are chunk-bounded.  `flag_versions.save_version_streaming`
+flushes per 20 000-row chunk.  On scan 1 the stage-0 + averaged `--msout` run
+peaks at 7.4 GB, set by the per-chunk working set (12 workers x 11 977 rows),
+so the levers bound it again.  `memory.writes_stream()` tells the plan which
+kind of backend is installed.
 
 ### Performance work (2026-09-25)
 
@@ -215,15 +219,22 @@ landed in this repo and in `../casacure`:
 | correctness fixes only | 128.6 s | 199.9 s | 88.2 s | ~27 GB |
 | + GIL / batch / bulk encode | 113.9 s | 160.8 s | 53.9 s | ~27 GB |
 | + upstream 3.8.7 typed reads & sparse flush (merged) | **74.4 s** | 119.8 s | 56.7 s | **21.7 GB** |
+| + casacure grows tables in place (`d016b8d`), save flushes per chunk, averaging restored (`21ea072`) | **17.2 s** | 69.1 s | 23.1 s | **7.4 GB** |
+
+The last row was measured 2026-09-26 on schmalzburg at load ~7, so its
+timings are load-dependent.  It ran on `.bench/scan1.ms`, the copy of scan 1.
+The rows above predate `760e0ee`, which made 1.0.8 ignore
+`--frequency-average-factor` (fixed in `21ea072`), so all rows average 32x.
+The same scan written at full resolution (11 GB, what 1.0.8 did) took 37.8 s
+at a 4.1 GB peak.
 
 Memory notes:
 
-- On this MS, `--flag save:imported` is the dominant RAM consumer: it writes
-  a CASA-compatible backup of the whole flag cube (1.6M x 2511 x 2 booleans ~
-  8 GB) through casacure's buffered write store plus a final full flush,
-  peaking around 18-19 GB.  The read side is streamed in chunks; the write
-  buffer is a casacure flush limitation (per-chunk flush would regrow the
-  single-column flag-version table on every flush), noted as future work.
+- Up to casacure 3.8.7, `--flag save:imported` was the dominant RAM consumer.
+  It writes a CASA-compatible backup of the whole flag cube (1.6M x 2511 x 2
+  booleans ~ 8 GB), and casacure buffered the whole written table, peaking
+  around 18-19 GB.  casacure now grows tables in place, and the save flushes
+  per chunk, so a flush costs the chunk.
 - The dask/task phases (flagging, averaging, writing the reduced MS) are all
   row-chunked (10k rows) and now run well under 2-3 GB; `--workers` and
   `--row-chunk` bound the concurrent-chunk working set further if needed.

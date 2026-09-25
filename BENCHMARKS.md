@@ -11,6 +11,51 @@ and keep `bench/meerkat-flags.yml` in step with the `flag-average` step of
 
 ---
 
+## Writing: casacure grows tables in place, 2026-09-26
+
+Host schmalzburg (12 cores, 62 GB), load 6-8 (shared: timings are
+load-dependent), casacure `d016b8d` (editable, over 3.8.7), skarabina
+`21ea072`.  The input is `.bench/scan1.ms`, a copy of scan 1 of mergA_tim:
+143 716 rows x 2511 channels x 2 correlations.  The command is the
+AGENTS.md canonical benchmark:
+
+```
+DASK_MS_BACKEND=casacure /usr/bin/time -v .venv/bin/skarabina --ms scan1.ms \
+  --summary --time-average-factor 1 --frequency-average-factor 32 --clobber \
+  --flag save:imported --flag autos --flag "uv-above 2500" --flag nan \
+  --flag "clip 0 100" --flag "spectral-window ../bench/spectral-flags-L.yml" \
+  --field-of-view 3.3deg --msout bench_ave.ms
+```
+
+| build | output | wall | user | sys | peak RSS |
+|---|---|---|---|---|---|
+| casacure 3.8.7 (2026-09-25, AGENTS.md) | 79 chan | 74.4 s | 119.8 s | 56.7 s | 21.7 GB |
+| casacure `d016b8d`, skarabina `ca9264e` (averaging still dropped) | 2511 chan, 11 GB | 37.8 s | 27.7 s | 28.0 s | 4.1 GB |
+| casacure `d016b8d`, skarabina `21ea072` | 79 chan, 375 MB | **17.2 s** | 69.1 s | 23.1 s | **7.4 GB** |
+
+Checks:
+- The output's TIME, ANTENNA1/2, SCAN_NUMBER, FIELD_ID, DATA_DESC_ID,
+  STATE_ID, UVW, INTERVAL and EXPOSURE are identical to the input.
+- The saved `flags.imported` FLAG and FLAG_ROW equal the input's.
+
+### Reading the result
+
+- casacure 3.8.7 buffered every table it wrote until complete.  The 21.7 GB
+  was the `save:` backup of the 8 GB flag cube; a full-resolution `--msout`
+  was ~56 B per visibility, about 40 GB for this scan.
+- Now each flush appends default rows to the storage managers and patches
+  the chunk in (`../casacure/MEMORY.md`).  The full-resolution write, 11 GB
+  of output, peaks at 4.1 GB.
+- The averaged run peaks higher (7.4 GB) because the averaging and the
+  flaggers' chunks are in flight together.  That is the per-chunk working set
+  of 12 workers x 11 977 rows, so `--row-chunk` / `--workers` bound it.
+- In casacure's own suite (`tests/test_write_scaling.py`, a dask-ms write in
+  2000-row chunks), 256k rows (a 375 MiB table) took 1865 MiB and 57.6 s
+  before.  It now takes 188 MiB and 1.45 s, against python-casacore's
+  234 MiB and 2.4 s.  1.02M rows (1.5 GiB) take 224 MiB and 6.5 s.
+
+---
+
 ## Flagging the bandpass calibrator, 2026-09-24
 
 **Workload** — `.bench/data/bpcal.ms`, the local copy of a real MeerKAT L-band

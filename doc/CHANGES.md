@@ -3,6 +3,32 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **``--frequency-average-factor``, ``--time-average-factor`` and
+  ``--optimize`` work again.**  1.0.8 (``760e0ee``) dropped their calls from
+  ``main()`` with the old pass logic, so they were accepted and silently
+  ignored: ``--msout`` wrote the full-resolution, unoptimised MS.
+  ``tests/test_cli_transforms.py`` now runs them through the CLI.
+- ``save:<name>`` rejects a version name that would escape the
+  ``.flagversions`` directory (``save:../x``), as ``save_version`` always did.
+
+### Changed
+
+- **``save:<name>`` holds one chunk, not the flag cube.**  It flushes the
+  version table after every 20 000-row chunk and reads and writes FLAG_ROW per
+  chunk.  With a casacure that grows tables in place (after 3.8.7) the save
+  and a full ``--msout`` write are both chunk-bounded.  On mergA_tim scan 1
+  (stage-0 list with ``save:imported``, ``--summary``, 32x frequency
+  averaging, ``--msout``, casacure ``d016b8d``) the run took 17.2 s at a
+  7.4 GB peak.  The last recorded run of this workload (2026-09-25) took
+  74.4 s at 21.7 GB.  A full-resolution 11 GB ``--msout`` of the same scan
+  peaked at 4.1 GB, which the old model put at ~40 GB.
+- The memory plan knows whether the backend streams writes
+  (``memory.writes_stream()``: python-casacore, or casacure > 3.8.7).  If it
+  does, ``save:`` and the writes are per-chunk steps, with no whole-table
+  reserve and no warning.
+
 ## [1.0.8]
 
 ### Changed
