@@ -267,34 +267,47 @@ def neighbour_residual(level, span=1):
 
 
 def _neighbour_residual_rows(level, span):
-    """:func:`neighbour_residual` of a 2-D ``(time, chan)`` group of rows."""
+    """:func:`neighbour_residual` of a 2-D ``(time, chan)`` group of rows.
+
+    Width 1 -- the two adjacent channels -- is taken for every sample
+    directly: the median of two values is their mean, or the one that is not
+    NaN.  The wider spans are only needed where that left a usable sample
+    without a reference (both neighbours flagged), so they are gathered for
+    those samples alone.  Sorting every sample's 2, 4 and 6 neighbours was 80 %
+    of rflag's time on a 10 000 x 2511 plane.  The values, and the arithmetic
+    of their medians, are the same as a sort's (see
+    :func:`skarabina.nanstats.nanmedian`), so the result is too.
+    """
     out = np.full(level.shape, np.nan)
     nchan = level.shape[-1]
     usable_level = np.isfinite(level)
-    for width in range(span, 4):
-        unresolved = ~np.isfinite(out)
-        if not unresolved.any():
-            break
+    first = span
+    if span <= 1 and nchan >= 3:
+        left, right = level[:, :-2], level[:, 2:]
+        with np.errstate(invalid="ignore"):
+            reference = np.where(np.isnan(left), right,
+                                 np.where(np.isnan(right), left, (left + right) / 2))
+        centre = level[:, 1:-1]
+        usable = usable_level[:, 1:-1] & np.isfinite(reference)
+        out[:, 1:-1][usable] = centre[usable] - reference[usable]
+        first = 2
+    for width in range(max(first, span), 4):
         # Channels at the band edges have no full window at this width, so they
         # stay NaN; only channels width .. nchan-width-1 get a reference.
         inner = nchan - 2 * width
         if inner <= 0:
             continue
-        # The 2*width neighbours (centre excluded) of every inner channel, as
-        # shifted views stacked on a new last axis, and their per-timestep
-        # median in one call over the whole (time, chan, 2*w) stack.
-        offsets = [*range(-width, 0), *range(1, width + 1)]
-        stacked = np.stack(
-            [level[:, width + offset:width + offset + inner]
-             for offset in offsets],
-            axis=-1,
-        )
-        # A neighbour column that is entirely flagged is normal on real data;
-        # the median is then NaN and the sample is simply left unflagged.
-        reference = np.full(level.shape, np.nan)
-        reference[:, width:width + inner] = _nanmedian(stacked, axis=-1)
-        usable = unresolved & np.isfinite(reference) & usable_level
-        out[usable] = level[usable] - reference[usable]
+        need = usable_level[:, width:width + inner] & np.isnan(out[:, width:width + inner])
+        rows, cols = np.nonzero(need)
+        if rows.size == 0:
+            continue
+        cols = cols + width
+        offsets = np.array([*range(-width, 0), *range(1, width + 1)])
+        # A neighbour set that is entirely flagged is normal on real data; the
+        # median is then NaN and the sample is simply left unflagged.
+        reference = _nanmedian(level[rows[:, None], cols[:, None] + offsets], axis=-1)
+        ok = np.isfinite(reference)
+        out[rows[ok], cols[ok]] = level[rows[ok], cols[ok]] - reference[ok]
     return out
 
 
