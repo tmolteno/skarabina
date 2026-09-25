@@ -301,7 +301,7 @@ write would do):
 | `uv-above 8000` | 0.4 GB | 0.2 GB | per chunk |
 | `nan` | 1.3 GB | 1.8 GB | per chunk |
 | `clip 0 100` | 1.9 GB | 2.2 GB | per chunk |
-| `spectral-window` | 1.8 GB | 2.6 GB | per chunk |
+| `spectral-window` | 1.1 GB | 1.8 GB | per chunk (1.8 / 2.6 GB before 1.0.8, when each rule held a table-sized array) |
 | `restore:` | 0.8 GB | 1.2 GB | per chunk (read lazily since `d1e1190`; it held the whole cube before) |
 | `save:` | 1.9 GB | 1.8 GB | **whole table**: 2.2 B per MS visibility (19.7 GB predicted for the full MS, 18-19 GB measured) |
 | stage-0 list + rflag | -- | 21.1 GB | = rflag alone (20.6 GB) + 0.5 |
@@ -318,7 +318,7 @@ averaged or as flags alone.
 
 `skarabina.memory.plan` turns this into the run's plan: per-chunk costs
 (bytes per visibility per worker: read and `uv-above` 1, `autos` 2, `nan` and
-`clip` 4, `spectral-window` 5, `restore:` 3, tfcrop 30 + 3.5 GB, rflag
+`clip` 4, `spectral-window` 4 (5 before 1.0.8), `restore:` 3, tfcrop 30 + 3.5 GB, rflag
 36 + 2.5 GB), per-table costs (`save:` 2.5 B per MS visibility, full write
 56 B and flags-only write 1.5 B per output visibility), and the largest row
 chunk keeping every per-chunk step of the `--flag` list within 80 % of

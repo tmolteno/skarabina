@@ -170,7 +170,7 @@ def _row_chunk(opts, ops):
     " largest chunk that keeps every step of the --flag list within"
     " --memory-limit-GB with --workers threads, so it is set by the most"
     " expensive verb (rflag ~36 and tfcrop ~30 bytes per visibility per worker,"
-    " the other verbs 1-5). The run prints its memory plan. Given explicitly,"
+    " the other verbs 1-4). The run prints its memory plan. Given explicitly,"
     " it is used as is. Mirrors tricolour's --row-chunks.",
 )
 @click.option(

@@ -31,7 +31,9 @@
   per YAML entry on a 1.6M-row, 2511-channel MS) and embedded in the graph --
   and it read UVW in a pass of its own.  The gates are lazy, chunked like the
   flags, and the per-entry counts are queued with the run's reports.  Output
-  and report lines unchanged.
+  and report lines unchanged.  On mergA_tim scan 1 (12 workers) its peak fell
+  from 1.84 / 2.59 GB to 1.06 / 1.81 GB at 5000 / 10 000-row chunks, the same
+  as ``nan``; the memory plan now counts it at 4 bytes per visibility, not 5.
 
 ## [1.0.7]
 
