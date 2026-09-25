@@ -9,8 +9,8 @@ Everything below is committed and pushed to `origin/main`.
 
 | | |
 |---|---|
-| released | **1.0.7** (tag `v1.0.7`, PyPI `skarabina` + `skarabina-cargo`, Docker `1.0.7`) |
-| unreleased on `main` | `760e0ee` — `--write-changed-only`/`--apply` share the flagging pass (plus this handover and the `bench/` scripts) |
+| released | **1.0.8** (tag `v1.0.8`, PyPI `skarabina` + `skarabina-cargo`, Docker `1.0.8`): flags-only writes in the single pass (`760e0ee`), rflag ~2.5x faster (`7d1433a`), lazy `spectral-window` (`2cdcda2`, its memory constant re-measured at 4 B/vis) |
+| unreleased on `main` | nothing but documentation |
 | branches | only `main`; `baseline-aware-flagging` and `tfcrop-local-scatter` were merged and deleted (local, `origin`, schmalzburg) |
 | test suite | all pass except `tests/test_flag_versions.py::test_save_rejects_a_path_like_name`, which fails on 1.0.6 too (pre-existing, not investigated) |
 
@@ -109,7 +109,7 @@ killed process (SIGKILL, OOM) leaves one behind; check
 
 ## 3. Next steps, in order
 
-### 3.1 ~~Finish verifying `760e0ee` on real data~~ -- done; release 1.0.8 when asked
+### 3.1 ~~Finish verifying `760e0ee` on real data, release 1.0.8~~ -- done (1.0.8 released)
 
 **Done after the handover** (schmalzburg idle, load 0.00): the rflag list with
 `--summary --write-changed-only` read DATA once in both versions; v1.0.7
