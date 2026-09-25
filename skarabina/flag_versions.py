@@ -336,6 +336,53 @@ def load_version(ms_path, versionname):
     return flag, flag_row
 
 
+def _read_version_rows(path, start, nrow):
+    """FLAG rows ``[start, start + nrow)`` of a flag-version table."""
+    t = table(path, ack=False, readonly=True)
+    try:
+        return np.asarray(t.getcol("FLAG", startrow=start, nrow=nrow), dtype=bool)
+    finally:
+        t.close()
+
+
+def load_version_lazy(ms_path, versionname, row_chunks):
+    """A flag version as ``(flag, flag_row)``: FLAG as a lazy dask array.
+
+    ``flag`` is cut into ``row_chunks`` (the dataset's row chunks) and each
+    chunk is read from the version table only when a pass needs it, so a
+    restored version costs one chunk per dask worker rather than the whole
+    flag cube -- 8 GB for a 1.6M-row, 2511-channel MS, held for the rest of
+    the run by :func:`load_version`.  ``flag_row`` (one bool per row) is read
+    eagerly.  Raises like :func:`load_version` for a missing version.
+    """
+    import dask.array as da
+    from dask import delayed
+
+    path = version_path(ms_path, versionname)
+    if not os.path.isdir(path):
+        load_version(ms_path, versionname)          # raises the helpful error
+    t = table(path, ack=False, readonly=True)
+    try:
+        nrow = t.nrows()
+        cell = t.getcol("FLAG", startrow=0, nrow=1).shape[1:] if nrow else (0, 0)
+        flag_row = np.asarray(t.getcol("FLAG_ROW")) if nrow else np.zeros(0, bool)
+    finally:
+        t.close()
+    if sum(row_chunks) != nrow:
+        # Let the caller report the mismatch with the shapes.
+        row_chunks = (nrow,) if nrow else ()
+    blocks, start = [], 0
+    for n in row_chunks:
+        blocks.append(da.from_delayed(
+            delayed(_read_version_rows)(path, start, n),
+            shape=(n,) + tuple(cell), dtype=bool,
+        ))
+        start += n
+    flag = da.concatenate(blocks, axis=0) if blocks \
+        else da.zeros((0,) + tuple(cell), dtype=bool)
+    return flag, flag_row
+
+
 def list_versions(ms_path):
     """The versions of an MS as ``[(name, comment), ...]``, oldest first."""
     return read_version_list(ms_path)
