@@ -109,7 +109,15 @@ killed process (SIGKILL, OOM) leaves one behind; check
 
 ## 3. Next steps, in order
 
-### 3.1 Finish verifying `760e0ee` on real data, then release 1.0.8 (when asked)
+### 3.1 ~~Finish verifying `760e0ee` on real data~~ -- done; release 1.0.8 when asked
+
+**Done after the handover** (schmalzburg idle, load 0.00): the rflag list with
+`--summary --write-changed-only` read DATA once in both versions; v1.0.7
+233.1 s / 25.7 GB, `760e0ee` 232.6 s / 25.5 GB
+(`~/github/skarabina/.bench/cmp-760e0ee-rflag.log`).  The numbers are in
+`doc/CHANGES.md`.  What remains is the release, when the user asks.
+
+The original instructions, kept for re-running:
 
 `760e0ee` makes `--write-changed-only` and `--apply` write every changed
 column in one `dask.compute` with the run's queued reports
@@ -192,8 +200,13 @@ against 31.0 GB with the full write in the pass.
 
 Roughly by expected value:
 
-1. **rflag CPU** dominates any run with rflag (~260-300 s for scan 1 on 12
-   threads, vs ~10 s for the other verbs).  Profile a real block (use
+1. **rflag CPU** dominates any run with rflag.  *After the handover:* the
+   spectral step's neighbour medians were 80 % of it and are fixed (width 1
+   direct, wider spans only where needed; bit-identical): scan 1 with the
+   stage-0 list went 232 s -> 95 s.  A plane is now ~4 s single-threaded,
+   split evenly between the spectral step and the time step's prefix sums;
+   the rest below is what remains.  Originally: ~260-300 s for scan 1 on 12
+   threads, vs ~10 s for the other verbs.  Profile a real block (use
    `bench/mem_block.py` rows + cProfile).  Candidates: the spectral step's
    three neighbour-median widths (`rflag._neighbour_residual_rows`) — only
    unresolved samples need the wider ones; the time step's per-channel-group
