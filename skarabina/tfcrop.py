@@ -78,6 +78,18 @@ N_FLAG_ITERATIONS = 5
 #: stay bounded however long the dask chunk or wide the band.
 GROUP_VALUES = 1 << 20
 
+#: A lane (a row, or a column) with fewer live samples than this is judged
+#: against the scatter of the whole plane rather than its own; see
+#: :func:`flag_lanes`.  0 turns the fallback off.
+MIN_LANE_SAMPLES = 0
+
+#: Where a short lane's fallback scatter comes from: ``"local"``, the lanes
+#: around it (neighbouring timesteps for a row, neighbouring channels for a
+#: column) pooled until they hold :data:`POOL_SAMPLES` live values, or
+#: ``"block"``, every live value of the plane.
+LANE_POOL = "local"
+POOL_SAMPLES = 300
+
 #: Threshold, in robust sigmas, used to reject outliers *while fitting*.  This
 #: is deliberately tighter than the flagging cutoffs: it exists to keep RFI out
 #: of the fit, not to decide the final flags.
@@ -371,7 +383,7 @@ def flag_1d(values, cutoff, n_iterations=N_FLAG_ITERATIONS, flagged=None):
 
 
 def flag_lanes(values, cutoff, axis, n_iterations=N_FLAG_ITERATIONS,
-               flagged=None):
+               flagged=None, min_samples=None):
     """:func:`flag_1d` of every lane of a 2-D array along ``axis``, at once.
 
     Identical, lane for lane and bit for bit, to calling :func:`flag_1d` on
@@ -382,6 +394,14 @@ def flag_lanes(values, cutoff, axis, n_iterations=N_FLAG_ITERATIONS,
     same shape as ``values``, is the per-sample equivalent of :func:`flag_1d`'s
     and is left out of every lane's scatter in the same way.  Lanes are taken a
     group at a time so the working set stays bounded.
+
+    A lane with fewer than ``min_samples`` live values (default
+    :data:`MIN_LANE_SAMPLES`) is instead judged against the scatter of the
+    whole array: :func:`flag_1d`'s adaptive sigma of every live value pooled,
+    which the flattening makes comparable across lanes.  A robust sigma from a
+    handful of values is itself noisy, and a 3-sigma cut against an
+    underestimate flags noise; a lane with fewer than two live values has no
+    scatter of its own at all and is otherwise never judged.
 
     The loop this replaces was one :func:`flag_1d` call per row of the plane,
     each doing two ``np.median`` calls per iteration: on a 10 000-row,
@@ -394,20 +414,96 @@ def flag_lanes(values, cutoff, axis, n_iterations=N_FLAG_ITERATIONS,
     lanes_first = values if axis == 1 else values.T
     excluded = excluded if axis == 1 else excluded.T
     flags = np.empty(lanes_first.shape, dtype=bool)
+    if min_samples is None:
+        min_samples = MIN_LANE_SAMPLES
+    counts = np.count_nonzero(~excluded, axis=1)
+    short = counts < min_samples
+    fallback_sigma = None
+    if short.any():
+        fallback_sigma = _pooled_sigma(
+            lanes_first, excluded, counts, short, cutoff, n_iterations
+        )
     group = max(1, GROUP_VALUES // max(1, lanes_first.shape[1]))
     for start in range(0, lanes_first.shape[0], group):
         stop = start + group
-        flags[start:stop] = _flag_lane_group(
+        flags[start:stop], _ = _flag_lane_group(
             lanes_first[start:stop], excluded[start:stop], cutoff, n_iterations
+        )
+    if fallback_sigma is not None:
+        rows = np.flatnonzero(short & np.isfinite(fallback_sigma))
+        sigma = fallback_sigma[rows]
+        limit = np.where(sigma == 0.0, 0.0, cutoff * sigma)
+        flags[rows] = excluded[rows] | (
+            np.abs(lanes_first[rows] - 1.0) > limit[:, None]
         )
     return flags if axis == 1 else flags.T
 
 
+def _pooled_sigma(values, excluded, counts, short, cutoff, n_iterations):
+    """The fallback scatter for each lane of a ``(lane, sample)`` array.
+
+    ``"block"``: :func:`flag_1d`'s adaptive sigma of every live value.
+    ``"local"``: the lanes are cut, in order, into consecutive tiles of about
+    :data:`POOL_SAMPLES` live values (a short final tile joins the one before),
+    and each lane gets its tile's adaptive sigma.  A tile of rows is a few
+    neighbouring rows, so the scatter follows a noise level that drifts through
+    the chunk, which one block-wide value cannot.
+
+    Tiles are measured a group at a time, each group's tiles laid out as
+    padded lanes of one array whose size stays within :data:`GROUP_VALUES`, and
+    a group with no ``short`` lane is skipped (its lanes come back NaN; only the
+    short lanes' values are used).  Laying out a whole 10 000 x 2511 plane at
+    once, as the first version did, took 12 dask workers past 59 GB.
+    """
+    if LANE_POOL == "block":
+        _, sigma = flag_1d(values[~excluded], cutoff, n_iterations)
+        return np.full(values.shape[0], sigma)
+    sigma = np.full(values.shape[0], np.nan)
+    total = int(counts.sum())
+    if total < 2:
+        return sigma
+    target = max(2, POOL_SAMPLES)
+    tile = np.minimum((np.cumsum(counts) - counts) // target,
+                      max(0, total // target - 1))
+    # A long lane can jump a tile number; renumber so tiles are 0..n-1.
+    _, tile = np.unique(tile, return_inverse=True)
+    ntiles = int(tile[-1]) + 1
+    first_lane = np.searchsorted(tile, np.arange(ntiles))
+    end_lane = np.append(first_lane[1:], values.shape[0])
+    tile_live = np.add.reduceat(counts, first_lane)
+    needed = np.zeros(ntiles, dtype=bool)
+    needed[tile[short]] = True
+    tile_sigma = np.full(ntiles, np.nan)
+    t0 = 0
+    while t0 < ntiles:
+        t1, width = t0 + 1, max(2, int(tile_live[t0]))
+        while t1 < ntiles and max(width, tile_live[t1]) * (t1 - t0 + 1) <= GROUP_VALUES:
+            width = max(width, int(tile_live[t1]))
+            t1 += 1
+        if needed[t0:t1].any():
+            lo, hi = first_lane[t0], end_lane[t1 - 1]
+            lane, sample = np.nonzero(~excluded[lo:hi])
+            owner = tile[lo + lane] - t0
+            position = np.arange(lane.size) - np.searchsorted(owner, owner)
+            padded = np.full((t1 - t0, width), np.nan)
+            padded[owner, position] = values[lo:hi][lane, sample]
+            _, tile_sigma[t0:t1] = _flag_lane_group(
+                padded, np.isnan(padded), cutoff, n_iterations
+            )
+        t0 = t1
+    return tile_sigma[tile]
+
+
 def _flag_lane_group(values, excluded, cutoff, n_iterations):
-    """:func:`flag_lanes` for a ``(lane, sample)`` group."""
+    """:func:`flag_lanes` for a ``(lane, sample)`` group.
+
+    Returns ``(flags, sigma)``, ``sigma`` being each lane's final scatter as
+    :func:`flag_1d` returns it (NaN for a lane never measured).
+    """
     flagged = excluded.copy()
     deviation = np.abs(values - 1.0)
     active = np.ones(values.shape[0], dtype=bool)
+    final_sigma = np.full(values.shape[0], np.nan)
     for _ in range(max(1, n_iterations)):
         # A lane with fewer than two survivors stops, as flag_1d breaks.
         active &= np.count_nonzero(~flagged, axis=1) >= 2
@@ -416,6 +512,7 @@ def _flag_lane_group(values, excluded, cutoff, n_iterations):
         surviving = np.where(flagged[active], np.nan, values[active])
         centre = nanmedian(surviving, axis=1)
         sigma = 1.4826 * nanmedian(np.abs(surviving - centre[:, None]), axis=1)
+        final_sigma[active] = sigma
         # A noiseless lane has nothing to scale by, so it falls back to
         # flagging exact deviations from 1 -- a limit of zero.
         noiseless = ~np.isfinite(sigma) | (sigma == 0.0)
@@ -425,7 +522,7 @@ def _flag_lane_group(values, excluded, cutoff, n_iterations):
         rows = np.flatnonzero(active)
         flagged[rows[changed]] = new[changed]
         active[rows[~changed]] = False
-    return flagged
+    return flagged, final_sigma
 
 
 def _window_pass(flat, flagged, mode, halfwin, cutoff):
