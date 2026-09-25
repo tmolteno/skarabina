@@ -258,13 +258,24 @@ def test_tfcrop_runs_through_the_dispatcher(tmp_path):
 
     from skarabina.dask_ms import DaskMS
 
+    import numpy as np
+    from casacore.tables import table
+
     path = str(tmp_path / "tfcrop.ms")
     make_synthetic_ms(path, nchan=32, ncorr=1, nrow=40)
+    # Noise and one spike: the fixture's DATA is exactly 1 everywhere, and a
+    # flagger that flags constant data is flagging rounding, not RFI.
+    data = 1.0 + np.random.default_rng(0).normal(0, 0.01, (40, 32, 1)).astype(complex)
+    data[20, 10, 0] = 5.0
+    t = table(path, readonly=False, ack=False)
+    t.putcol("DATA", data)
+    t.close()
     ms = DaskMS(path)
     ops = flag_ops.parse(["tfcrop [timecutoff=4, freqcutoff=3, maxnpieces=2]"])
     flag_ops.run(ms, ops, log=lambda *_: None)
-    import numpy as np
-    assert np.asarray(ms.ds.FLAG.data).any(), "the verb flagged nothing"
+    flags = np.asarray(ms.ds.FLAG.data)
+    assert flags[20, 10, 0], "the verb did not flag the spike"
+    assert flags.mean() < 0.05, f"flagged {flags.mean():.1%} of noise"
 
 
 def test_run_reports_every_operation_in_order(tmp_path):

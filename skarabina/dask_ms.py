@@ -25,6 +25,7 @@ from dask.diagnostics import ProgressBar
 from daskms import xds_from_ms, xds_to_table  # noqa: E402
 
 from skarabina import flag_versions
+from skarabina.baselines import Baselines
 from skarabina.rflag import rflag_plane
 from skarabina.tfcrop import tfcrop_plane
 
@@ -38,30 +39,39 @@ logger = logging.getLogger(__name__)
 # (default 10000).  Lower it (with --workers) to shrink peak RSS on large MSes.
 ROW_CHUNK_ROWS = 10000
 
+#: Whether tfcrop and rflag separate the baselines of a row chunk (see
+#: :mod:`skarabina.baselines` and doc/RFLAG.md).  Off, every chunk is treated
+#: as one baseline's time series, which is what versions up to 1.0.6 did.
+AUTOFIT_BASELINES = True
 
-def _autofit_block(plane_function, data, existing, params):
-    """Run a plane-wise auto-flagger over one ``(time, chan, corr)`` block.
 
-    Both auto-flagging algorithms work on a single baseline and correlation.
-    Which correlation a plane belongs to is a bookkeeping detail of how the MS
-    stores its data -- the polarisation products are flagged independently,
-    exactly as CASA does -- so the loop lives here rather than in the algorithm.
+def _autofit_block(plane_function, data, existing, params, rows=None):
+    """Run a plane-wise auto-flagger over one ``(row, chan, corr)`` block.
+
+    The polarisation products are flagged independently, exactly as CASA does,
+    so the loop over correlations lives here rather than in the algorithm.
+    ``rows`` -- ``(antenna1, antenna2, scan)`` of the block's rows, ``scan``
+    possibly None -- tells the algorithm which baseline each row belongs to;
+    without it the rows are taken to be one baseline's time series.
     """
+    baselines = None if rows is None else Baselines(*rows)
     planes = []
     for corr in range(data.shape[2]):
-        flag, _ = plane_function(data[:, :, corr], params, existing[:, :, corr])
+        flag, _ = plane_function(
+            data[:, :, corr], params, existing[:, :, corr], baselines=baselines
+        )
         planes.append(flag)
     return np.stack(planes, axis=2)
 
 
-def _tfcrop_block(amplitude, existing, params):
+def _tfcrop_block(amplitude, existing, params, rows=None):
     """TFCrop over one block; see :func:`_autofit_block`."""
-    return _autofit_block(tfcrop_plane, amplitude, existing, params)
+    return _autofit_block(tfcrop_plane, amplitude, existing, params, rows)
 
 
-def _rflag_block(data, existing, params):
+def _rflag_block(data, existing, params, rows=None):
     """RFlag over one block; see :func:`_autofit_block`."""
-    return _autofit_block(rflag_plane, data, existing, params)
+    return _autofit_block(rflag_plane, data, existing, params, rows)
 
 
 def _prepare_block(block_function):
@@ -71,10 +81,10 @@ def _prepare_block(block_function):
     imaginary parts, so it needs the complex visibilities as they are.  Doing
     the conversion here keeps it in the same deferred call as the algorithm.
     """
-    def run(data, existing, params):
+    def run(data, existing, params, rows=None):
         if block_function is _tfcrop_block:
             data = np.absolute(data)
-        return block_function(data, existing, params)
+        return block_function(data, existing, params, rows)
     return run
 
 
@@ -93,8 +103,8 @@ def _flags_to_spill(block_function):
     costs no second evaluation of the block and no second read of the input
     flags.
     """
-    def run(data, existing, params, path):
-        flags = block_function(data, existing, params)
+    def run(data, existing, params, path, *rows):
+        flags = block_function(data, existing, params, rows or None)
         np.save(path, np.packbits(flags, axis=None), allow_pickle=False)
         return np.array(
             [[np.count_nonzero(flags), np.count_nonzero(existing)]],
@@ -816,6 +826,12 @@ class DaskMS:
 
         payload = cube(self.ds.DATA.data)
         existing = cube(self.ds.FLAG.data)
+        # The blocks are paired by index, so the flags must be cut where the
+        # data are.  They are not always: restore_flag_version sets FLAG from
+        # an in-memory array, one chunk, and pairing that with a multi-chunk
+        # DATA failed with an IndexError.
+        if existing.chunks != payload.chunks:
+            existing = existing.rechunk(payload.chunks)
 
         # One ``delayed`` call per block, evaluated exactly once, in ONE
         # ``compute``: that pass reads DATA and the incoming flags once, runs
@@ -827,15 +843,17 @@ class DaskMS:
         # running the algorithm -- and the whole graph upstream of it -- again.
         spill = self._spill_directory(label)
         block_function = _flags_to_spill(_prepare_block(block_function))
+        row_columns = self._baseline_columns(payload.chunks[0])
         counts = []
         paths = []
         for time_index in range(payload.numblocks[0]):
             path = os.path.join(spill, "block%06d.npy" % time_index)
             paths.append(path)
+            rows = [column.blocks[time_index] for column in row_columns]
             counts.append(
                 delayed(block_function)(
                     payload.blocks[time_index], existing.blocks[time_index],
-                    params, path,
+                    params, path, *rows,
                 )
             )
         (counts,) = dask.compute(counts)
@@ -864,6 +882,26 @@ class DaskMS:
             % (label, new_count, total, new_count - already,
                100.0 * (new_count - already) / total if total else 0.0)
         )
+
+    def _baseline_columns(self, row_chunks):
+        """``[ANTENNA1, ANTENNA2, SCAN_NUMBER]`` chunked like the data, or ``[]``.
+
+        Empty when :data:`AUTOFIT_BASELINES` is off or the antennas are not in
+        the dataset; the scan is None-padded when the MS has no scan column, so
+        a block always receives ``(antenna1, antenna2, scan)``.
+        """
+        if not AUTOFIT_BASELINES:
+            return []
+        names = ("ANTENNA1", "ANTENNA2")
+        if any(name not in self.ds.data_vars for name in names):
+            return []
+        columns = [da.asarray(self.ds[name].data).rechunk((row_chunks,))
+                   for name in names]
+        if "SCAN_NUMBER" in self.ds.data_vars:
+            columns.append(da.asarray(self.ds.SCAN_NUMBER.data).rechunk((row_chunks,)))
+        else:
+            columns.append(da.full(sum(row_chunks), -1, chunks=(row_chunks,), dtype=np.int32))
+        return columns
 
     def flag_rflag(self, params):
         """Flag outliers from sliding-window statistics (a CASA ``rflag``).

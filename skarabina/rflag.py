@@ -28,6 +28,7 @@ around by the very RFI being looked for, and the algorithm would then miss it.
 
 import numpy as np
 
+from skarabina.baselines import baseline_noise
 from skarabina.nanstats import nanmedian as _nanmedian
 
 #: Defaults, all from CASA's ``flagdata`` so a recipe transfers unchanged.
@@ -141,7 +142,7 @@ def _window_starts(n_samples, winsize):
     return list(zip(starts.tolist(), stops.tolist()))
 
 
-def local_rms(values, winsize):
+def local_rms(values, winsize, windows=None):
     """Local scatter of the real and imaginary parts, over a sliding window.
 
     The scatter is measured *about the window's own mean*, not about zero::
@@ -178,37 +179,53 @@ def local_rms(values, winsize):
         parts = tuple(part[:, None] for part in parts)
 
     counts = None
+    fewest = None
     sum_squares = None
     for part in parts:
         usable = np.isfinite(part)
         filled = np.where(usable, part, 0.0)
-        count, total = _window_sums(filled, winsize)
-        _, total_sq = _window_sums(filled * filled, winsize)
+        # The count is of the *usable* samples in each window.  Taking the
+        # window's length instead -- as this did until 1.0.6 -- counts every
+        # flagged sample as a visibility of zero: against a signal of ~10 a
+        # window with one flagged sample shows a scatter of ~5, and with 30 %
+        # of samples flagged two windows in three hold one, which lifts the
+        # median, and so the threshold, until the time step flags nothing.
+        _, count = _window_sums(usable.astype(float), winsize, windows)
+        _, total = _window_sums(filled, winsize, windows)
+        _, total_sq = _window_sums(filled * filled, winsize, windows)
         counts = count if counts is None else counts + count
+        fewest = count if fewest is None else np.minimum(fewest, count)
         sum_squares = total_sq if sum_squares is None else sum_squares + total_sq
         # sum((x - mean)^2) = sum(x^2) - count * mean^2, per part.
         with np.errstate(invalid="ignore", divide="ignore"):
             mean = np.where(count > 0, total / np.maximum(count, 1), 0.0)
         sum_squares = sum_squares - count * mean * mean
 
+    # A window with fewer than two usable samples has no scatter to measure:
+    # one sample about its own mean is exactly zero, and on heavily flagged
+    # data enough of those zeros would pull the median -- and the threshold --
+    # down onto the noise.  They are NaN, which the statistics leave out.
     with np.errstate(invalid="ignore", divide="ignore"):
         scatter = np.where(
-            counts > 0, sum_squares / np.maximum(counts, 1), np.nan
+            fewest >= 2, sum_squares / np.maximum(counts, 1), np.nan
         )
         # A tiny negative value is cancellation in the subtraction above.
         out = np.sqrt(np.maximum(scatter, 0.0))
     return out[:, 0] if values.ndim == 1 else out
 
 
-def _window_sums(values, winsize):
+def _window_sums(values, winsize, windows=None):
     """Windowed sum and count of a finite-masked array, from prefix sums.
 
     Returns ``(count, total)`` with the window centred on each sample and
     clipped at the ends, so every sample has a window and none runs off the
     edge.  A NaN counts as absent from both, which is what lets a caller pass
-    data with flagged samples masked out.
+    data with flagged samples masked out.  ``windows``, a ``(starts, stops)``
+    pair, overrides the centred windows -- how a window is kept inside one
+    baseline's rows (see :func:`_baseline_windows`).
     """
-    starts, stops = _window_bounds(values.shape[0], winsize)
+    starts, stops = windows if windows is not None \
+        else _window_bounds(values.shape[0], winsize)
     padded = np.zeros((values.shape[0] + 1,) + values.shape[1:], dtype=float)
     np.cumsum(values, axis=0, out=padded[1:])
     total = padded[stops] - padded[starts]
@@ -313,7 +330,7 @@ def _time_thresholds(local, timedev, timedevscale, floor):
 
 
 def _spectral_step(plane, flagged, freqdev, freqdevscale, spectralmin,
-                   spectralmax, floor):
+                   spectralmax, floor, scale=None):
     """Spectral analysis: flag channels whose level departs from the band.
 
     Each channel is reduced to one number -- the mean of its real and imaginary
@@ -343,6 +360,12 @@ def _spectral_step(plane, flagged, freqdev, freqdevscale, spectralmin,
     trusted.
 
     A pre-existing flag is excluded from the statistics, as for the time step.
+
+    ``scale``, one noise level per row, is given when the rows are several
+    baselines (see :func:`rflag_plane`): the measured deviation and the
+    threshold are then taken on the residuals in units of each row's noise, so
+    one threshold serves every baseline, and a noisier baseline is not flagged
+    for its noise.  ``spectralmax``/``spectralmin`` stay in data units.
     """
     values = np.where(flagged, _MISSING, plane)
     # Each sample against its spectral neighbours, in the real and imaginary
@@ -368,13 +391,16 @@ def _spectral_step(plane, flagged, freqdev, freqdevscale, spectralmin,
 
     if freqdev is not None:
         threshold = max(float(freqdevscale) * float(freqdev), floor)
+    elif scale is not None:
+        residual = residual / scale[:, None]
+        threshold = float(freqdevscale) * robust_scale(residual[np.isfinite(residual)])
     else:
         threshold = float(freqdevscale) * deviation
     flagged_out |= (residual > threshold) & np.isfinite(residual)
     return flagged_out, deviation
 
 
-def _time_step(plane, flagged, params, floor):
+def _time_step(plane, flagged, params, floor, groups=None, scale=None):
     """Time analysis: flag channels whose local scatter is anomalous.
 
     Every channel is independent, so the channels are taken a group at a time
@@ -382,6 +408,14 @@ def _time_step(plane, flagged, params, floor):
     replaces made ~10 numpy calls per channel per plane).  The group is sized
     so that the handful of ``(time, group)`` float temporaries stays bounded
     whatever the length of the dask chunk.
+
+    ``groups``, a ``(group_start, group_stop)`` pair per row, clips every
+    window to its row's group -- one baseline's rows, sorted into time order --
+    so a window never spans two baselines.  ``scale``, one noise level per row,
+    puts the local r.m.s. in units of each row's noise before the threshold is
+    measured, so the threshold is pooled over every baseline, as CASA pools
+    its statistics over all baselines and timesteps.  A supplied ``timedev``
+    stays in data units.
     """
     n_time, n_chan = plane.shape
     flagged_out = flagged.copy()
@@ -395,18 +429,28 @@ def _time_step(plane, flagged, params, floor):
     # wherever suspects are adjacent; the count takes their union for free.
     half = params.winsize // 2
     t = np.arange(n_time)
-    span_start = np.clip(t - (params.winsize - 1 - half), 0, n_time)
-    span_stop = np.clip(t + half + 1, 0, n_time)
+    low, high = (0, n_time) if groups is None else groups
+    span_start = np.clip(t - (params.winsize - 1 - half), low, high)
+    span_stop = np.clip(t + half + 1, low, high)
+    windows = None
+    if groups is not None:
+        # The same clipped, centred window as _window_bounds, inside a group.
+        windows = (np.maximum(t - half, low),
+                   np.minimum(t - half + params.winsize, high))
+    normalise = scale is not None and params.timedev is None
+    unit_floor = floor / float(np.median(scale)) if normalise else floor
 
     group = max(1, GROUP_VALUES // n_time)
     for first in range(0, n_chan, group):
         chans = slice(first, min(first + group, n_chan))
         values = np.where(flagged[:, chans], _MISSING, plane[:, chans])
-        local = local_rms(values, params.winsize)
+        local = local_rms(values, params.winsize, windows)
+        if normalise:
+            local = local / scale[:, None]
         threshold = _time_thresholds(
-            local, params.timedev, params.timedevscale, floor
+            local, params.timedev, params.timedevscale, unit_floor
         )
-        thresholds[chans] = threshold
+        thresholds[chans] = threshold * (float(np.median(scale)) if normalise else 1.0)
         # A channel with no usable threshold is left alone.  Elsewhere, where
         # the local r.m.s. exceeds the threshold the scatter there cannot be
         # explained by the channel's typical noise, so every timestep in that
@@ -422,15 +466,48 @@ def _time_step(plane, flagged, params, floor):
     return flagged_out, thresholds
 
 
-def rflag_plane(plane, params, flagged=None):
+def rflag_plane(plane, params, flagged=None, baselines=None):
     """Run RFlag on one ``(time, chan)`` plane of complex visibilities.
 
-    ``plane`` holds the visibilities of a single baseline and correlation;
-    ``flagged`` the flags already set on it.  Returns ``(flag, stats)``, where
-    ``flag`` is the complete flag plane -- pre-existing flags included, since the
-    caller needs to know what to write back -- and ``stats`` carries the
-    thresholds the algorithm derived, for reporting.
+    ``plane`` holds the visibilities of one correlation; ``flagged`` the flags
+    already set on it.  Returns ``(flag, stats)``, where ``flag`` is the
+    complete flag plane -- pre-existing flags included, since the caller needs
+    to know what to write back -- and ``stats`` carries the thresholds the
+    algorithm derived, for reporting.
+
+    Without ``baselines`` the rows are taken to be one baseline's timesteps.
+    A measurement-set chunk is many baselines interleaved, and ``baselines``
+    (a :class:`skarabina.baselines.Baselines` for the rows) says which: the
+    rows are then sorted into baselines, each sliding window stays inside one
+    baseline's time series, and both steps measure their threshold in units of
+    each baseline's noise as predicted by the per-antenna model, so a single
+    threshold serves the whole chunk (doc/RFLAG.md).
     """
+    if baselines is not None:
+        return _rflag_baselines(plane, params, flagged, baselines)
+    return _rflag(plane, params, flagged)
+
+
+def _rflag_baselines(plane, params, flagged, baselines):
+    """:func:`rflag_plane` over a chunk of interleaved baselines."""
+    plane = np.asarray(plane)
+    flagged = np.zeros(plane.shape, dtype=bool) if flagged is None \
+        else np.asarray(flagged, dtype=bool)
+    scale = baseline_noise(plane, flagged | ~np.isfinite(plane), baselines)
+    usable = np.isfinite(scale) & (scale > 0)
+    scale = np.where(usable, scale, np.median(scale[usable]) if usable.any() else 1.0)
+    order = baselines.order
+    flag, stats = _rflag(
+        plane[order], params, flagged[order],
+        groups=(baselines.group_start, baselines.group_stop), scale=scale[order],
+    )
+    out = np.empty_like(flag)
+    out[order] = flag
+    return out, stats
+
+
+def _rflag(plane, params, flagged, groups=None, scale=None):
+    """The algorithm proper, on rows already in (baseline, time) order."""
     plane = np.asarray(plane)
     if flagged is None:
         flagged = np.zeros(plane.shape, dtype=bool)
@@ -442,10 +519,12 @@ def rflag_plane(plane, params, flagged=None):
     finite = np.abs(plane[np.isfinite(plane)])
     floor = DEGENERACY_FLOOR * (float(np.median(finite)) if finite.size else 0.0)
 
-    flagged, time_thresholds = _time_step(plane, flagged, params, floor)
+    flagged, time_thresholds = _time_step(
+        plane, flagged, params, floor, groups=groups, scale=scale
+    )
     flagged, freq_deviation = _spectral_step(
         plane, flagged, params.freqdev, params.freqdevscale,
-        params.spectralmin, params.spectralmax, floor,
+        params.spectralmin, params.spectralmax, floor, scale=scale,
     )
 
     finite_thresholds = time_thresholds[np.isfinite(time_thresholds)]
