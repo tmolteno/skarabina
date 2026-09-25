@@ -34,7 +34,8 @@ def chunk(nant=20, ntime=50, nchan=128, seed=0, preflag=0.3, complex_data=True):
     sigma = (s[a1] * s[a2])[:, None]
     band = 1 + 0.3 * np.cos(np.linspace(0, 2.5, nchan))
     level = (rng.uniform(5, 15, nb) * np.exp(1j * rng.uniform(0, 2 * np.pi, nb)))[b][:, None]
-    vis = level * band + sigma * (rng.normal(size=(b.size, nchan)) + 1j * rng.normal(size=(b.size, nchan)))
+    noise = rng.normal(size=(b.size, nchan)) + 1j * rng.normal(size=(b.size, nchan))
+    vis = level * band + sigma * noise
     rfi = np.zeros(vis.shape, dtype=bool)
     burst = np.zeros(vis.shape, dtype=bool)
     # time bursts: 20 baselines, 2 integrations, 10 channels, 8 sigma
@@ -49,8 +50,9 @@ def chunk(nant=20, ntime=50, nchan=128, seed=0, preflag=0.3, complex_data=True):
     vis = np.where(rfi, vis + 8 * sigma * np.exp(1j * rng.uniform(0, 2 * np.pi, vis.shape)), vis)
     # one noisy baseline (3x noise, no RFI): must not be flagged wholesale
     noisy = b == 7
-    vis[noisy] = level[noisy] * band + 3 * sigma[noisy] * (rng.normal(size=(noisy.sum(), nchan))
-                                                           + 1j * rng.normal(size=(noisy.sum(), nchan)))
+    shape = (noisy.sum(), nchan)
+    extra = rng.normal(size=shape) + 1j * rng.normal(size=shape)
+    vis[noisy] = level[noisy] * band + 3 * sigma[noisy] * extra
     pre = rng.random(vis.shape) < preflag
     if not complex_data:
         vis = np.abs(vis)
@@ -73,11 +75,13 @@ def score(label, flag, pre, rfi, noisy):
 if __name__ == "__main__":
     for seed in (0, 1):
         vis, pre, rfi, a1, a2, b, noisy = chunk(seed=seed)
-        print(f"-- seed {seed}: {vis.shape[0]} rows, {100 * rfi[~pre].mean():.2f}% of live samples RFI")
+        print(f"-- seed {seed}: {vis.shape[0]} rows,"
+              f" {100 * rfi[~pre].mean():.2f}% of live samples RFI")
         amplitude = np.abs(vis).astype(float)
         for name, run, data in (("tfcrop", tfcrop_plane, amplitude), ("rflag", rflag_plane, vis)):
             params = TFCropParams() if name == "tfcrop" else RFlagParams()
-            for label, kwargs in (("classic", {}), ("baseline-aware", {"baselines": Baselines(a1, a2)})):
+            aware = {"baselines": Baselines(a1, a2)}
+            for label, kwargs in (("classic", {}), ("baseline-aware", aware)):
                 t0 = time.perf_counter()
                 flag, _ = run(data, params, pre, **kwargs)
                 score(f"{name} {label} ({time.perf_counter() - t0:.2f}s)", flag, pre, rfi, noisy)
