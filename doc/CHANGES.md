@@ -3,7 +3,34 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **``tfcrop`` and ``rflag`` separate the baselines of a row chunk.**  An MS is
+  written time-major, so a dask row chunk is ~1900 baselines per integration,
+  not one baseline's time series, which is what both flaggers assumed.  On a
+  MeerKAT L-band calibrator scan that made tfcrop flag 27 % of the RFI-free
+  band (4.3 % on single-baseline planes), and left rflag's time step comparing
+  unrelated baselines.  Rows are now grouped by (scan, baseline); rflag's
+  windows stay inside a baseline, tfcrop fits a bandpass per baseline, and both
+  measure their thresholds in units of each baseline's noise from a
+  per-antenna model (noise_ij ~ s_i s_j), which on that scan predicted every
+  baseline's noise to 1.5 %.  ``dask_ms.AUTOFIT_BASELINES = False`` restores
+  the old behaviour.  See ``doc/RFLAG.md``, which also compares skarabina's
+  rflag with CASA's source.
+
 ### Fixed
+
+- **rflag's time step no longer goes blind on flagged data.**  The window
+  scatter divided by the window's length rather than its usable samples, so
+  every flagged sample counted as a zero visibility; with 30 % of samples
+  flagged the threshold rose until nothing was flagged.  A window with a
+  single usable sample now gives no estimate instead of zero.
+- **tfcrop fits narrow bands.**  A piece now keeps at least ``degree + 3``
+  channels: an 8-channel band was split into unfittable 1-2 channel pieces and
+  "fitted" as a step.
+- **``restore:`` followed by ``rflag``/``tfcrop`` no longer fails** with an
+  ``IndexError`` on a multi-chunk MS; the restored flags are rechunked to the
+  data.
 
 - **``tfcrop`` no longer measures its scatter from samples that are already
   flagged.**  ``flag_1d`` -- and so both directions of every plane -- took the
