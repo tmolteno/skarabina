@@ -732,7 +732,9 @@ paired with a false-positive bound.  The properties pinned are:
 A reimplementation of CASA's `flagdata(mode='rflag')`, which Eric Greisen
 developed in AIPS.  The implementation is `skarabina/rflag.py` and, like
 `tfcrop`, is free of dask: it works on one `(time, chan)` plane of complex
-visibilities.
+visibilities.  **[RFLAG.md](RFLAG.md)** compares it with CASA's source, and
+describes the baseline-aware chunks and per-antenna noise model that both
+auto-flaggers use on a measurement set.
 
 ### 10.1 What it does that tfcrop does not
 
@@ -741,9 +743,8 @@ different question -- is the *scatter* here unusual? -- and needs no model of th
 band at all:
 
 1. **Time analysis, per channel.**  Slide a window of `winsize` integrations
-   along time and measure the local scatter.  Take the median of those, and the
-   median absolute deviation from it, then flag where the local scatter sits
-   more than `timedevscale` deviations above.
+   along time and measure the local scatter, then flag the window where it
+   exceeds `timedevscale` times the median local scatter.
 2. **Spectral analysis, per sample.**  Compare each sample with the median of
    its neighbouring *channels*, and flag where it departs by more than
    `freqdevscale` times the typical such departure.

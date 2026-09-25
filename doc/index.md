@@ -9,6 +9,7 @@ flagging of measurement sets.
 - [Time & frequency averaging](AVERAGING.md)
 - [Splitting an MS by field](SPLITTING.md)
 - [Measurement set analyzer](ANALYZE.md)
+- [RFlag, and how it differs from CASA's](RFLAG.md)
 - [Changelog](CHANGES.md)
 
 ## Quick start
