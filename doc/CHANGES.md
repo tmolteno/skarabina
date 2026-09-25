@@ -14,7 +14,31 @@
   ``doc/INSTALL.md`` gives the explicit fork route for that case.  Runs select
   the backend with ``DASK_MS_BACKEND=casacure``.
 
+### Changed
+
+- **``rflag`` is about 8x faster, and its memory no longer grows with the
+  table.**  The neighbour medians used ``np.nanmedian``, whose small-axis path
+  goes through masked arrays and was ~90 % of the algorithm's time; they now
+  come from one sort (same result, bit for bit).  The time step is vectorised
+  over groups of channels rather than looped per channel.  ``rflag`` and
+  ``tfcrop`` no longer ``persist`` the whole flag cube: each block's flags are
+  written to a spill directory (``$TMPDIR`` if set, otherwise beside the input
+  MS) at one bit per visibility, and the counts come back from the same pass,
+  so the incoming flags are no longer evaluated a second time just to count
+  them.  On a 430k-row, 79-channel synthetic MS: 65 s / 1.8 GB before, 8 s /
+  0.9 GB after, with identical flags (``BENCHMARKS.md``).
+
 ### Fixed
+
+- **``rflag`` no longer flags nearly everything on heavily flagged data.**
+  Flagged samples were masked with ``np.where(flagged, np.nan, plane)``, which
+  on complex data gives ``nan+0j``: the imaginary part of every flagged sample
+  entered the statistics as a zero.  On a calibrator scan that arrives ~70 %
+  flagged this pulled the spectral step's measured deviation down tenfold, and
+  every remaining sample then exceeded the threshold -- the 100 % recorded in
+  ``BENCHMARKS.md`` for bpcal.ms.  Flagged samples are now NaN in both parts.
+  On a synthetic MS of the same shape with ~0.1 % of rows carrying RFI, the
+  run went from 19.6 M new flags (97.7 % of the MS in total) to 43 540.
 
 - **A second ``--write-changed-only`` run over the same input no longer fails
   with ``storage error: Permission denied``.**  Sharing the unchanged columns

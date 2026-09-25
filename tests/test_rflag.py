@@ -6,6 +6,8 @@ false-positive rate can both be measured.  A flagger that flags everything
 scores 100% recall and is useless, so every recall assertion is paired with a
 false-positive bound.
 """
+import warnings
+
 import numpy as np
 import pytest
 
@@ -516,3 +518,84 @@ def test_flag_rflag_and_tfcrop_both_run_in_one_pass():
     assert np.all(after_both[after_rflag]), "tfcrop cleared rflag's flags"
     assert after_both.sum() >= after_rflag.sum()
     assert isinstance(ms, DaskMS)
+
+
+# --- performance-motivated rewrites must not change the answer ---------------
+
+
+def test_nanmedian_matches_numpy():
+    """The sort-based median replaces ``np.nanmedian`` and must agree exactly."""
+    from skarabina.rflag import _nanmedian
+
+    rng = np.random.default_rng(40)
+    for lanes in (1, 2, 3, 4, 6, 7, 50):
+        values = rng.normal(size=(300, 9, lanes))
+        values[rng.random(values.shape) < 0.5] = np.nan
+        values[0] = np.nan  # whole lanes with nothing usable
+        for axis in (0, -1):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                expected = np.nanmedian(values, axis=axis)
+            np.testing.assert_array_equal(_nanmedian(values, axis=axis), expected)
+
+
+def test_grouping_does_not_change_the_result(monkeypatch):
+    """Channels (time step) and rows (spectral step) are processed in groups
+    to bound the working set; the group size must be invisible in the flags."""
+    import skarabina.rflag as rflag
+
+    plane = spike_plane(3.0, ntime=300, nchan=40, seed=41)
+    plane[100:104, 7] *= 8.0
+    flagged = np.random.default_rng(41).random(plane.shape) < 0.3
+    reference, stats = rflag_plane(plane, RFlagParams(), flagged)
+    monkeypatch.setattr(rflag, "GROUP_VALUES", 500)
+    grouped, grouped_stats = rflag_plane(plane, RFlagParams(), flagged)
+    np.testing.assert_array_equal(grouped, reference)
+    assert grouped_stats == stats
+
+
+def test_flag_rflag_keeps_its_result_on_disk_not_in_memory(tmp_path, monkeypatch):
+    """The per-block flags are spilled under $TMPDIR, read back on every later
+    pass, and removed with the instance -- the table's worth of flags is never
+    held in memory, and nothing is left behind."""
+    import gc
+
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    plane = spike_plane(3.0)
+    ms = _synthetic_ms(_cube(plane), row_chunk=64)
+    ms.flag_rflag(RFlagParams())
+
+    spills = list(tmp_path.glob(".skarabina-spill-*/flag_rflag-*/block*.npy"))
+    assert len(spills) == -(-plane.shape[0] // 64), "one spilled file per block"
+    first = np.asarray(ms.ds.FLAG.data)
+    second = np.asarray(ms.ds.FLAG.data)
+    np.testing.assert_array_equal(first, second)
+    assert first[:, 20, 0].mean() > 0.9
+
+    del ms
+    gc.collect()
+    assert not list(tmp_path.glob(".skarabina-spill-*")), "spill left behind"
+
+
+def test_heavily_preflagged_clean_data_is_left_alone():
+    """Flagged samples must be absent from BOTH parts of the statistics.
+
+    ``np.where(flagged, np.nan, plane)`` on complex data gives ``nan+0j``, so
+    the imaginary part of every flagged sample used to count as a zero.  With
+    most of the plane already flagged -- the normal state of a real calibrator
+    scan -- that pulled the spectral deviation down tenfold and rflag flagged
+    nearly everything left (100 % of the bench's bpcal.ms, 97 % here).
+    """
+    rng = np.random.default_rng(42)
+    plane = make_plane(ntime=2000, nchan=64, noise=1.0, seed=42)
+    flagged = rng.random(plane.shape) < 0.45
+    flagged[rng.random(plane.shape[0]) < 0.37] = True
+    flag, stats = rflag_plane(plane, RFlagParams(), flagged)
+    assert stats["new"] / stats["total"] < 0.005, (
+        f"flagged {stats['new']} new samples of clean noise"
+    )
+
+    plane[:, 30] *= 3.0
+    flag, _ = rflag_plane(plane, RFlagParams(), flagged)
+    unflagged = ~flagged[:, 30]
+    assert flag[unflagged, 30].mean() > 0.9, "the RFI channel was missed"

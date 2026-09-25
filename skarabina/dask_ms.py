@@ -4,6 +4,8 @@ import math
 import os
 import shutil
 import sys
+import tempfile
+import weakref
 from contextlib import contextmanager
 
 import dask
@@ -76,18 +78,52 @@ def _prepare_block(block_function):
     return run
 
 
-def _flags_and_counts(block_function):
-    """Wrap a block function so one call yields flags and both flag counts.
+def _flags_to_spill(block_function):
+    """Wrap a block function so its flags go to disk and only counts come back.
 
-    The new count and the pre-existing count are reductions of arrays that
-    already exist at that point, so returning them here costs nothing and saves
-    a second traversal -- which, on a graph that is not persisted, means saving
-    a second evaluation of the whole block.
+    The auto-flaggers are the expensive part of a run and their result is
+    needed by more than one later pass (the summary, the write), so it must be
+    kept -- but keeping it in memory, as ``persist`` did, holds the whole flag
+    cube and grows with the length of the table.  Each block's flags are
+    written instead to ``path``, packed to one bit per visibility, and read back
+    block by block by whichever pass needs them (:func:`_load_spilled_flags`).
+
+    The call returns ``[[flagged, pre_existing]]`` for the block: both counts
+    are reductions of arrays that are already in hand here, so the report
+    costs no second evaluation of the block and no second read of the input
+    flags.
     """
-    def run(data, existing, params):
+    def run(data, existing, params, path):
         flags = block_function(data, existing, params)
-        return flags, int(np.count_nonzero(flags)), int(np.count_nonzero(existing))
+        np.save(path, np.packbits(flags, axis=None), allow_pickle=False)
+        return np.array(
+            [[np.count_nonzero(flags), np.count_nonzero(existing)]],
+            dtype=np.int64,
+        )
     return run
+
+
+def _load_spilled_flags(path, shape):
+    """One block of flags written by :func:`_flags_to_spill`."""
+    packed = np.load(path, allow_pickle=False)
+    count = int(np.prod(shape))
+    return np.unpackbits(packed, count=count).view(bool).reshape(shape)
+
+
+def _spill_parent(ms_name):
+    """Where the auto-flaggers keep their per-block results.
+
+    ``$TMPDIR`` when the user has set it; otherwise beside the input MS, which
+    is by construction a disk big enough for data of this size.  The system
+    temporary directory is the last resort only, because on many machines it
+    is a tmpfs -- memory, which is exactly what spilling is meant to spare.
+    """
+    if os.environ.get("TMPDIR"):
+        # Read here rather than left to ``tempfile``, which caches the first
+        # temporary directory it finds for the life of the process.
+        return os.environ["TMPDIR"]
+    parent = os.path.dirname(os.path.abspath(ms_name))
+    return parent if os.access(parent, os.W_OK) else None
 
 
 def _parameter_summary(params):
@@ -723,6 +759,24 @@ class DaskMS:
     #: live, which is a reasonable working set per dask worker.
     AUTOFIT_BLOCK_VALUES = 8_000_000
 
+    def _spill_directory(self, label):
+        """A fresh directory for one auto-flagging run's per-block flags.
+
+        All runs of this instance share one parent, removed when the instance
+        is garbage collected or the interpreter exits, so a run leaves nothing
+        behind; a later run's flags may be built on an earlier one's, so none
+        is removed sooner.
+        """
+        if getattr(self, "_spill_root", None) is None:
+            self._spill_root = tempfile.mkdtemp(
+                prefix=".skarabina-spill-",
+                dir=_spill_parent(getattr(self, "name", None) or "."),
+            )
+            weakref.finalize(
+                self, shutil.rmtree, self._spill_root, ignore_errors=True
+            )
+        return tempfile.mkdtemp(prefix=label + "-", dir=self._spill_root)
+
     def _run_autofit(self, params, plane_function, block_function, label):
         """Chunk the cube along time and run a plane-wise flagger over it.
 
@@ -763,36 +817,45 @@ class DaskMS:
         payload = cube(self.ds.DATA.data)
         existing = cube(self.ds.FLAG.data)
 
-        # One ``delayed`` call per block.  The blocks are the expensive part,
-        # and they must run exactly once: ``delayed`` results are not cached
-        # between ``compute`` calls, so forcing the flag counts here and then
-        # letting the write's ``compute`` touch the same blocks runs the whole
-        # algorithm again.  ``persist`` materialises them once and keeps the
-        # results in memory, so the report counts AND the later write (and any
-        # downstream computation combined into the same dask graph) share that
-        # single evaluation.
-        blocks = []
+        # One ``delayed`` call per block, evaluated exactly once, in ONE
+        # ``compute``: that pass reads DATA and the incoming flags once, runs
+        # the algorithm, writes each block's flags to the spill directory and
+        # hands back only the two counts per block.  Nothing the size of the
+        # table is ever held: a worker has one block in flight, and the result
+        # lives on disk at one bit per visibility.  Every later pass (summary,
+        # write) reads the flags back from there block by block, rather than
+        # running the algorithm -- and the whole graph upstream of it -- again.
+        spill = self._spill_directory(label)
+        block_function = _flags_to_spill(_prepare_block(block_function))
+        counts = []
+        paths = []
         for time_index in range(payload.numblocks[0]):
-            # TFCrop works on amplitudes and RFlag on the complex visibilities,
-            # so each block converts its own; the conversion is deferred with
-            # the rest of the block to keep it inside the per-block working set.
-            block = delayed(_flags_and_counts(_prepare_block(block_function)))(
-                payload.blocks[time_index], existing.blocks[time_index], params
-            )
-            blocks.append(
-                _da.from_delayed(
-                    block[0], shape=payload.blocks[time_index].shape, dtype=bool
+            path = os.path.join(spill, "block%06d.npy" % time_index)
+            paths.append(path)
+            counts.append(
+                delayed(block_function)(
+                    payload.blocks[time_index], existing.blocks[time_index],
+                    params, path,
                 )
             )
-        new_flags = _da.concatenate(blocks, axis=0).persist()
-
-        # The counts are reductions of materialised data now: the newly
-        # flagged count comes from the persisted flags, and the pre-existing
-        # count from the input FLAG column (a plain dask read, not the
-        # algorithm).
-        new_count = int(new_flags.sum().compute())
-        already = int(_da.sum(existing).compute())
+        (counts,) = dask.compute(counts)
+        counts = np.concatenate(counts) if counts else np.zeros((0, 2), int)
+        new_count, already = (int(n) for n in counts.sum(axis=0))
         total = int(np.prod(shape))
+
+        new_flags = _da.concatenate(
+            [
+                _da.from_delayed(
+                    delayed(_load_spilled_flags)(path, block_shape),
+                    shape=block_shape, dtype=bool,
+                )
+                for path, block_shape in zip(
+                    paths,
+                    ((rows, n_chan, n_corr) for rows in payload.chunks[0]),
+                )
+            ],
+            axis=0,
+        ) if paths else _da.zeros(shape, dtype=bool, chunks=payload.chunks)
 
         self.ds["FLAG"] = (self.ds.FLAG.dims, new_flags)
         self.changed["FLAG"] = True

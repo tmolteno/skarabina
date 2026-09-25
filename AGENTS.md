@@ -52,6 +52,7 @@ tracked; the measurement set it runs on is not.
 | `bench/meerkat-flags.yml` | the flag list it runs, with the `../meerkat_imaging` provenance of every entry |
 | `bench/spectral-flags-L.yml` | copy of `../meerkat_imaging/spectral-flags-L.yml`, used by the `spectral-window` entry |
 | `bench/run_stage.py` | child process: fixes the casacure/casacore import order, then runs the CLI |
+| `bench/make_synthetic_ms.py` | writes a bpcal-shaped synthetic MS (79 chan x 2 corr, ~69 % pre-flagged) for hosts without `bpcal.ms` |
 
 The workload is the stage-0 flag sequence of `../meerkat_imaging`
 (`white-belt-0-flagging.yml`, step `flag-average`) — `save:imported`, `autos`,
@@ -141,6 +142,13 @@ options control the concurrent-chunk working set (mirroring tricolour's
   `N * nchan * ncorr * 8` for DATA; lower it to shrink each chunk.
 - `--workers N` (default 0 = all cores) — the number of dask threads, i.e. the
   number of chunks materialised concurrently.
+
+`rflag`/`tfcrop` (`DaskMS._run_autofit`) run once per dask row chunk and do
+not persist their result: each block's flags are spilled at one bit per
+visibility to `.skarabina-spill-*` in `$TMPDIR` if set, else beside the input
+MS (never `/tmp` by default — often tmpfs), and read back by later passes.  The
+directory is removed with the `DaskMS` instance.  Inside a block,
+`rflag.GROUP_VALUES` caps the vectorised temporaries.
 
 The row chunk is applied at read time in `DaskMS.__init__`
 (`xds_from_ms(..., chunks={"row": row_chunk})`) and the pool is set in
