@@ -14,7 +14,7 @@ and keep `bench/meerkat-flags.yml` in step with the `flag-average` step of
 ## Writing: casacure grows tables in place, 2026-09-26
 
 Host schmalzburg (12 cores, 62 GB), load 6-8 (shared: timings are
-load-dependent), casacure `d016b8d` (editable, over 3.8.7), skarabina
+load-dependent), casacure `d016b8d` (released as 3.8.8), skarabina
 `21ea072`.  The input is `.bench/scan1.ms`, a copy of scan 1 of mergA_tim:
 143 716 rows x 2511 channels x 2 correlations.  The command is the
 AGENTS.md canonical benchmark:
@@ -37,6 +37,22 @@ Checks:
 - The output's TIME, ANTENNA1/2, SCAN_NUMBER, FIELD_ID, DATA_DESC_ID,
   STATE_ID, UVW, INTERVAL and EXPOSURE are identical to the input.
 - The saved `flags.imported` FLAG and FLAG_ROW equal the input's.
+
+### casacure 3.8.8 against python-casacore
+
+Same host, input and flag list, with the two backends run alternately, twice
+each (load 7 rising to 11).  python-casacore 3.8.1 runs from a separate venv
+(`.venv-casacore` on schmalzburg: `uv venv -p 3.13` + `uv pip install -e .
+python-casacore`), without `DASK_MS_BACKEND`.
+
+| workload | casacure 3.8.8 | python-casacore 3.8.1 | ratio (time / peak) |
+|---|---|---|---|
+| + 32x frequency average, `--msout` | 17.3 s, 7.40 GB / 17.5 s, 7.41 GB | 21.3 s, 10.1 GB / 22.5 s, 8.99 GB | **0.80 / 0.77** |
+| + `--write-changed-only --msout` | 7.7 s, 2.51 GB / 7.6 s, 2.23 GB | 13.8 s, 4.16 GB / 10.6 s, 4.49 GB | **0.62 / 0.54** |
+
+The two backends' averaged outputs are identical in every readable
+main-table column and in SPECTRAL_WINDOW, and their printed reports match.
+(FLAG_CATEGORY is unreadable by casacore in the input too.)
 
 ### Reading the result
 

@@ -1,7 +1,7 @@
 # Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 [project]
 name = "skarabina"
-version = "1.0.8"
+version = "1.0.9"
 description = "Skarabina (dungbeetle): An all purpose 1GC flagger"
 authors = [
     { name = "Tim Molteno", email = "tim@elec.ac.nz" }
@@ -11,6 +11,10 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "dask-ms[casacure,xarray,zarr]",
+    # 3.8.8: tables grow in place on write (save: and --msout are
+    # chunk-bounded) and the IncrementalStMan writer no longer loses
+    # SCAN_NUMBER / FIELD_ID values.
+    "casacure>=3.8.8",
     "zarr>=2.0",
     "angle-parser>=0.1.0",
 ]
@@ -26,7 +30,7 @@ skarabina-analyze = "skarabina.analyze:main"
 # way to ask for the Rust backend: pip install skarabina[casacure].  Runs select
 # it with DASK_MS_BACKEND=casacure; without casacure installed, dask-ms falls
 # back to real python-casacore.
-casacure = ["casacure"]
+casacure = ["casacure>=3.8.8"]
 
 [dependency-groups]
 dev = [

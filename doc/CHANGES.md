@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.9]
+
 ### Fixed
 
 - **``--frequency-average-factor``, ``--time-average-factor`` and
@@ -24,6 +26,10 @@
   7.4 GB peak.  The last recorded run of this workload (2026-09-25) took
   74.4 s at 21.7 GB.  A full-resolution 11 GB ``--msout`` of the same scan
   peaked at 4.1 GB, which the old model put at ~40 GB.
+- Requires casacure >= 3.8.8.  That version grows written tables in place
+  and fixes an IncrementalStMan writer bug: MSes written by casacure <= 3.8.7
+  could read back wrong SCAN_NUMBER / FIELD_ID values where a value recurred.
+  Re-check those columns of any ``--msout`` written with an older casacure.
 - The memory plan knows whether the backend streams writes
   (``memory.writes_stream()``: python-casacore, or casacure > 3.8.7).  If it
   does, ``save:`` and the writes are per-chunk steps, with no whole-table
