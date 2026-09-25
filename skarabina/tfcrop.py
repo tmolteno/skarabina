@@ -849,9 +849,16 @@ def _tfcrop_baselines(plane, params, flagged, baselines):
     # 1. Per-baseline time-averaged spectrum, then its robust fit.
     order = baselines.order
     starts = np.cumsum(baselines.sizes) - baselines.sizes
+    # Full-plane temporaries are the memory of this function (a 10 000 x 2511
+    # plane is 200 MB of float64, per dask worker), so they are made once and
+    # reused in place rather than chained.
+    sorted_plane = plane[order]
     live = ~flagged[order]
-    totals = np.add.reduceat(np.where(live, plane[order], 0.0), starts, axis=0)
-    counts = np.add.reduceat(live.astype(np.int64), starts, axis=0)
+    sorted_plane[~live] = 0.0
+    totals = np.add.reduceat(sorted_plane, starts, axis=0)
+    del sorted_plane
+    counts = np.add.reduceat(live, starts, axis=0, dtype=np.int64)
+    del live
     with np.errstate(invalid="ignore", divide="ignore"):
         spectra = np.where(counts > 0, totals / np.maximum(counts, 1), np.nan)
     templates = np.full(spectra.shape, np.nan)
@@ -866,21 +873,25 @@ def _tfcrop_baselines(plane, params, flagged, baselines):
         templates[chosen] = fitted.T
     templates = _safe_template(templates, spectra)
     templates = np.where(np.isfinite(templates) & (templates != 0.0), templates, 1.0)
-    row_template = templates[baselines.labels]
-    flat = _flatten(plane, row_template)
-    residual = plane - row_template
+    # One working plane: the per-row template, then the residual from it.
+    work = templates[baselines.labels]
+    flat = _flatten(plane, work) if params.usewindowstats != "none" else None
+    np.subtract(plane, work, out=work)
 
     # 3 & 4.  Both directions report only their own new flags.
     freq_flags = time_flags = np.zeros_like(flagged)
     if params.flagdimension in ("freqtime", "freq"):
-        unit = _in_modelled_units(residual, flagged, baselines)
-        freq_flags = (np.abs(unit) > params.freqcutoff) & ~flagged
+        _to_modelled_units(work, flagged, baselines)
+        freq_flags = (np.abs(work) > params.freqcutoff) & ~flagged
     if params.flagdimension in ("freqtime", "timefreq", "time"):
-        reference = group_median_rows(np.where(flagged, np.nan, plane), baselines)
-        unit = _in_modelled_units(
-            plane - reference[baselines.labels], flagged, baselines
-        )
-        time_flags = _new_flags(1.0 + unit, flagged, params.timecutoff, axis=0)
+        reference = group_median_rows(plane, baselines, flagged=flagged)
+        np.take(reference, baselines.labels, axis=0, out=work)
+        del reference
+        np.subtract(plane, work, out=work)
+        _to_modelled_units(work, flagged, baselines)
+        work += 1.0
+        time_flags = _new_flags(work, flagged, params.timecutoff, axis=0)
+    del work
     combined = _combine(freq_flags, time_flags, params.flagdimension)
 
     window_extra = np.zeros_like(combined)
@@ -897,8 +908,10 @@ def _tfcrop_baselines(plane, params, flagged, baselines):
     return flag, stats
 
 
-def _in_modelled_units(residual, flagged, baselines):
-    """``residual`` divided by its baseline's modelled scatter (0 where flagged).
+def _to_modelled_units(residual, flagged, baselines):
+    """Divide ``residual``, in place, by its baseline's modelled scatter.
+
+    Flagged samples are set to 0.
 
     Each row's robust scatter (over a strided subset of its unflagged
     channels) is pooled per baseline and replaced by the per-antenna model.
@@ -916,7 +929,8 @@ def _in_modelled_units(residual, flagged, baselines):
         usable, scatter, np.median(scatter[usable]) if usable.any() else 1.0
     )
     with np.errstate(invalid="ignore"):
-        return np.where(flagged, 0.0, residual / scatter[:, None])
+        residual /= scatter[:, None]
+    residual[flagged] = 0.0
 
 
 class TFCropParams:

@@ -108,12 +108,14 @@ def group_median(values, baselines):
     return nanmedian(padded, axis=1)
 
 
-def group_median_rows(values, baselines, budget=1 << 22):
+def group_median_rows(values, baselines, budget=1 << 22, flagged=None):
     """Per-group, per-column median of a ``(row, column)`` array, NaN-aware.
 
-    Returns ``(groups, columns)``.  Groups are taken a batch at a time, each
-    laid out as a ``(group, row-in-group, column)`` block of at most about
-    ``budget`` values, so the working set stays bounded.
+    Returns ``(groups, columns)``.  ``flagged`` samples are left out, as NaN
+    would be.  Groups are taken a batch at a time, each laid out as a
+    ``(group, row-in-group, column)`` block of at most about ``budget``
+    values, so the working set stays bounded -- no masked copy of the whole
+    array is made.
     """
     values = np.asarray(values, dtype=float)
     ncol = values.shape[1]
@@ -129,6 +131,8 @@ def group_median_rows(values, baselines, budget=1 << 22):
         for group in range(first, last):
             rows = order[starts[group]:starts[group] + baselines.sizes[group]]
             block[group - first, :rows.size] = values[rows]
+            if flagged is not None:
+                block[group - first, :rows.size][flagged[rows]] = np.nan
         out[first:last] = nanmedian(block, axis=1)
     return out
 
