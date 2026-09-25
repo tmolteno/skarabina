@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.6]
+
 ### Added
 
 - **A ``casacure`` extra: ``pip install skarabina[casacure]``.**  casacure is
