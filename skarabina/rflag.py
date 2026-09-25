@@ -373,17 +373,27 @@ def _spectral_step(plane, flagged, freqdev, freqdevscale, spectralmin,
     # to be clean in one part only.  Where neither part has a comparison -- the
     # channels at the very ends of the band -- the deviation stays NaN and is
     # left unflagged rather than treated as zero.
-    parts = np.stack([np.abs(neighbour_residual(np.real(values))),
-                      np.abs(neighbour_residual(np.imag(values)))])
+    #
+    # The parts are taken one after the other and combined in place: every
+    # array here is the size of the whole plane, and stacking both parts and
+    # their absolute values made the spectral step ~5x the plane's own size.
+    residual = neighbour_residual(np.real(values))
+    np.abs(residual, out=residual)
+    other = neighbour_residual(np.imag(values))
+    del values
+    np.abs(other, out=other)
     # fmax takes the larger of the two and ignores a NaN in either one, so a
     # sample with no comparison in both parts stays NaN.
-    residual = np.fmax(parts[0], parts[1])
+    np.fmax(residual, other, out=residual)
+    del other
     flagged_out = flagged.copy()
-    finite = residual[np.isfinite(residual)]
-    if finite.size < 3:
+    usable = np.isfinite(residual)
+    if np.count_nonzero(usable) < 3:
         return flagged_out, np.nan
 
-    deviation = robust_scale(finite)
+    # robust_scale of values that are already finite and non-negative: their
+    # median, taken on a copy that np.median may reorder in place.
+    deviation = float(np.median(residual[usable], overwrite_input=True))
     if deviation > spectralmax:
         return np.ones_like(flagged), deviation
     if deviation < spectralmin:
@@ -392,11 +402,13 @@ def _spectral_step(plane, flagged, freqdev, freqdevscale, spectralmin,
     if freqdev is not None:
         threshold = max(float(freqdevscale) * float(freqdev), floor)
     elif scale is not None:
-        residual = residual / scale[:, None]
-        threshold = float(freqdevscale) * robust_scale(residual[np.isfinite(residual)])
+        residual /= scale[:, None]
+        threshold = float(freqdevscale) * float(
+            np.median(residual[usable], overwrite_input=True)
+        )
     else:
         threshold = float(freqdevscale) * deviation
-    flagged_out |= (residual > threshold) & np.isfinite(residual)
+    flagged_out |= (residual > threshold) & usable
     return flagged_out, deviation
 
 
