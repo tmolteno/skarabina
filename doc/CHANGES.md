@@ -3,6 +3,21 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **``tfcrop`` no longer measures its scatter from samples that are already
+  flagged.**  ``flag_1d`` -- and so both directions of every plane -- took the
+  robust sigma over every finite sample, flagged or not.  A row that arrives
+  mostly flagged is usually mostly dead: with 62 % of each row at zero the
+  zeros became the median, the measured scatter collapsed to 0, and the
+  noiseless fallback flagged *every* live sample (5760 of 5760 in the new
+  test).  Pre-existing flags are now left out of the scatter and stay
+  flagged, and each direction reports only its own new flags, so the window
+  statistics no longer count the pre-existing ones either.  The cost is a
+  smaller sample per lane: on the synthetic bench MS, whose pre-flagged
+  samples happen to be clean noise, false positives on clean data went from
+  0.71 % to 1.19 % of the live samples, with all injected RFI still caught.
+
 ### Changed
 
 - **``tfcrop`` is about 10x faster.**  The per-row and per-column flagging

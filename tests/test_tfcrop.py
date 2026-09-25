@@ -718,10 +718,17 @@ def test_flag_lanes_matches_flag_1d_lane_by_lane(axis):
     from skarabina.tfcrop import flag_lanes
 
     flat = _lanes_plane(50)
+    pre = np.random.default_rng(50).random(flat.shape) < 0.3
+    pre[9] = True                 # a lane that arrives wholly flagged
     lanes = flat if axis == 1 else flat.T
-    expected = np.stack([flag_1d(lane, 3.0)[0] for lane in lanes])
-    got = flag_lanes(flat, 3.0, axis=axis)
-    np.testing.assert_array_equal(got if axis == 1 else got.T, expected)
+    pre_lanes = pre if axis == 1 else pre.T
+    for mask, mask_lanes in ((None, [None] * len(lanes)), (pre, pre_lanes)):
+        expected = np.stack([
+            flag_1d(lane, 3.0, flagged=lane_mask)[0]
+            for lane, lane_mask in zip(lanes, mask_lanes)
+        ])
+        got = flag_lanes(flat, 3.0, axis=axis, flagged=mask)
+        np.testing.assert_array_equal(got if axis == 1 else got.T, expected)
 
 
 def _window_pass_loop(flat, flagged, mode, halfwin, cutoff):
@@ -798,3 +805,44 @@ def test_robust_fit_columns_agrees_with_robust_fit(degree):
         expected, expected_keep = robust_fit(x, y[:, col], 7, degree)
         np.testing.assert_allclose(fitted[:, col], expected, rtol=1e-9, atol=1e-9)
         np.testing.assert_array_equal(keep[:, col], expected_keep)
+
+
+def test_flag_1d_leaves_preexisting_flags_out_of_the_scatter():
+    """A row that arrives mostly flagged -- dead samples at zero -- must not
+    set the scatter the rest of it is judged against."""
+    rng = np.random.default_rng(54)
+    row = 1.0 + rng.normal(0, 0.01, 400)
+    dead = np.zeros(row.size, dtype=bool)
+    dead[:240] = True
+    row[dead] = 0.0              # 60 % dead: each deviates from 1 by 1.0
+    row[300] = 1.2               # RFI, 20 sigma above the live noise
+
+    flag, sigma = flag_1d(row, 4.0, flagged=dead)
+    assert sigma == pytest.approx(0.01, rel=0.3), "scatter came from the dead samples"
+    assert flag[300], "the RFI was hidden by the dead samples' scatter"
+    assert flag[dead].all(), "a pre-existing flag was dropped"
+    assert np.count_nonzero(flag[~dead]) <= 3
+
+
+def test_tfcrop_does_not_judge_against_already_flagged_data():
+    """A burst in a heavily pre-flagged plane is found without flagging the
+    rest of the live data, and the directions report only their own flags."""
+    from skarabina.tfcrop import _fit_and_flag_freq
+
+    plane = make_plane(ntime=120, nchan=128, noise=0.03, seed=55)
+    flagged = np.zeros(plane.shape, dtype=bool)
+    flagged[:, :80] = True       # most of every row arrives flagged ...
+    plane[:, :80] = 0.0          # ... because it is dead
+    plane[40, 100] *= 3.0
+    new, _ = _fit_and_flag_freq(plane, flagged, TFCropParams())
+    assert new[40, 100], "the burst was missed"
+    # Counted in, the dead zeros are the median of every row, the measured
+    # scatter collapses to zero, and the noiseless fallback flagged all 5760
+    # live samples.
+    assert new.sum() / (~flagged).sum() < 0.02, (
+        f"flagged {new.sum()} of {(~flagged).sum()} live samples"
+    )
+    assert not (new & flagged).any(), "a direction re-reported pre-existing flags"
+    flag, stats = tfcrop_plane(plane, TFCropParams(), flagged)
+    assert flag[flagged].all()
+    assert stats["pre_existing"] == int(flagged.sum())
