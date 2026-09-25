@@ -485,14 +485,19 @@ def load_file(path) -> List[str]:
     return entries
 
 
-def run(ms, ops, log=print):
+def run(ms, ops, log=print, flush=True):
     """Run parsed operations in order against a :class:`DaskMS`.
 
-    Returns the number of operations run.  Statistics for the data-flagging
-    steps are deferred and reported in one pass at the end, so a sequence of N
-    operations reads the data column once rather than N times.
+    Returns the number of operations run.  Every step's statistics are queued
+    (``ms.defer_reports``) and computed together in the next pass over the
+    data, so a sequence of N operations reads the data once rather than N
+    times: rflag/tfcrop compute the reports queued before them in their own
+    pass, and the rest are computed at the end -- here when ``flush`` is set,
+    or, with ``flush=False``, by the caller's next pass
+    (``ms.materialise_flags()`` or ``ms.flush_reports()``), which is how the
+    CLI folds them into the pass that materialises the flags.
     """
-    defer = {}
+    ms.defer_reports = True
     for op in ops:
         log(op.describe())
         if op.verb == "save":
@@ -504,11 +509,9 @@ def run(ms, ops, log=print):
         elif op.verb == "uv-above":
             ms.flag_uv_above(float(op.args[0]))
         elif op.verb == "nan":
-            ms.flag_data({"NAN": True}, defer=defer)
+            ms.flag_data({"NAN": True})
         elif op.verb == "clip":
-            ms.flag_data(
-                {"CLIP": (float(op.args[0]), float(op.args[1]))}, defer=defer
-            )
+            ms.flag_data({"CLIP": (float(op.args[0]), float(op.args[1]))})
         elif op.verb == "tfcrop":
             ms.flag_tfcrop(TFCropParams(**_coerce_parameters(op.args)))
         elif op.verb == "rflag":
@@ -517,5 +520,6 @@ def run(ms, ops, log=print):
             ms.flag_spectral_window(op.args[0])
         else:  # pragma: no cover - parse() rejects anything else
             raise FlagOrderError(f"unhandled verb {op.verb!r}")
-    ms.report_data_flags(defer)
+    if flush:
+        ms.flush_reports()
     return len(ops)
