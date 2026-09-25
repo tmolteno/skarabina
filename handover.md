@@ -11,7 +11,7 @@ Everything below is committed and pushed to `origin/main`.
 |---|---|
 | released | **1.0.7** (tag `v1.0.7`, PyPI `skarabina` + `skarabina-cargo`, Docker `1.0.7`) |
 | unreleased on `main` | `760e0ee` — `--write-changed-only`/`--apply` share the flagging pass (plus this handover and the `bench/` scripts) |
-| stale branches | `baseline-aware-flagging`, `tfcrop-local-scatter` — both merged into `main`; can be deleted (local and `origin`) — ask first |
+| branches | only `main`; `baseline-aware-flagging` and `tfcrop-local-scatter` were merged and deleted (local, `origin`, schmalzburg) |
 | test suite | all pass except `tests/test_flag_versions.py::test_save_rejects_a_path_like_name`, which fails on 1.0.6 too (pre-existing, not investigated) |
 
 **Working agreements** (as practised with the user in this work):
