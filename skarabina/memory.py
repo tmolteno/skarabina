@@ -10,10 +10,13 @@ the meerkat stage-0 list with rflag peaked at 21.1 GB, rflag alone at
   costs ``fixed + workers x row_chunk x nchan x ncorr x b``, and a smaller
   chunk bounds it.  Reading and every flag verb are of this kind.
 * **per table**: the step holds the whole table whatever the chunk.  casacure
-  buffers what it writes until the table is flushed, so ``save:<name>`` holds
-  the whole flag cube and a full ``--msout`` write the whole output table
-  (~56 bytes per output visibility: 40.7 GB to write an 11 GB MS).  No chunk
-  size helps; the plan reports them and warns when they exceed the limit.
+  up to 3.8.7 buffers what it writes into a new table until the table is
+  complete, so ``save:<name>`` holds the whole flag cube and a full
+  ``--msout`` write the whole output table (~56 bytes per output visibility:
+  40.7 GB to write an 11 GB MS).  No chunk size helps; the plan reports them
+  and warns when they exceed the limit.  A backend that streams writes
+  (python-casacore; casacure after 3.8.7, which grows the written table in
+  place) makes them per-chunk steps: :func:`writes_stream` tells which.
 
 The row chunk is the largest that keeps every per-chunk step of the run within
 the limit -- so it is set by the most expensive verb in the list -- and no
@@ -63,6 +66,15 @@ TABLE_COST = {
     "write": 56.0,          # --msout, every column
     "write-flags": 1.5,     # --write-changed-only / --apply: flag columns only
 }
+
+#: A streamed ``save:``: one flag_versions.CHUNK_ROWS chunk of FLAG in
+#: flight, as the numpy read plus the backend's pending cells (~3 B per
+#: visibility; measured 184 MiB peak for an 800k x 256 x 4 cube).
+SAVE_CHUNK_ROWS = 20_000
+SAVE_CHUNK_COST = 3
+
+#: The last casacure that buffers a new table's writes whole.
+BUFFERING_CASACURE = (3, 8, 7)
 
 #: Memory a run holds whatever it does: interpreter, libraries, per-row
 #: columns, the task graph.
@@ -120,6 +132,31 @@ def available_memory():
     return available
 
 
+def _version_tuple(text):
+    parts = []
+    for piece in text.split(".")[:3]:
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts + [0] * (3 - len(parts)))
+
+
+def writes_stream():
+    """Whether the table backend writes a new table chunk by chunk.
+
+    python-casacore writes through bounded bucket caches.  casacure up to
+    3.8.7 buffered a new table's cells until it was complete; later casacure
+    grows the table in place at each flush.  The backend is casacure when
+    DASK_MS_BACKEND=casacure selects it (see skarabina/dask_ms.py).
+    """
+    if os.environ.get("DASK_MS_BACKEND", "").lower() != "casacure":
+        return True
+    try:
+        from importlib.metadata import version
+        return _version_tuple(version("casacure")) > BUFFERING_CASACURE
+    except Exception:
+        return False
+
+
 def effective_workers(workers):
     """The dask thread count a ``--workers`` value means (0: all cores)."""
     return workers if workers and workers > 0 else (os.cpu_count() or 1)
@@ -162,7 +199,8 @@ def _largest_chunk(steps, budget, workers, nchan, ncorr, extra=0):
 
 
 def plan(steps, memory_bytes, workers, nrow, nchan, ncorr,
-         write=None, out_visibilities=None, row_chunk=None, concurrent_write=False):
+         write=None, out_visibilities=None, row_chunk=None, concurrent_write=False,
+         streamed_writes=False):
     """Plan a run: choose the row chunk (unless given) and estimate each step.
 
     ``steps`` are the flag verbs in order (``"save"``, ``"nan"``, ...).
@@ -172,7 +210,9 @@ def plan(steps, memory_bytes, workers, nrow, nchan, ncorr,
     input's).  ``concurrent_write`` says the full write shares the flagging
     pass (the CLI's single pass): its per-chunk cost is then added to every
     step, and its whole-table buffer reserved out of the budget, because both
-    grow while the flaggers' chunks are in flight.
+    grow while the flaggers' chunks are in flight.  ``streamed_writes`` says
+    the backend writes chunk by chunk (:func:`writes_stream`): ``save`` and
+    the writes then hold no whole table, so nothing is reserved or warned.
     """
     nchan, ncorr = max(1, nchan), max(1, ncorr)
     chunked = ["read"] + [s for s in dict.fromkeys(steps) if s in CHUNK_COST]
@@ -181,7 +221,7 @@ def plan(steps, memory_bytes, workers, nrow, nchan, ncorr,
     out = nvis if out_visibilities is None else out_visibilities
     concurrent = concurrent_write and write in CONCURRENT_WRITE_COST
     extra = CONCURRENT_WRITE_COST[write] if concurrent else 0
-    reserve = TABLE_COST[write] * out if concurrent else 0
+    reserve = TABLE_COST[write] * out if concurrent and not streamed_writes else 0
     budget = SAFETY * memory_bytes - reserve
     if row_chunk is None:
         chosen, limiting = _largest_chunk(chunked, budget, workers, nchan, ncorr, extra)
@@ -203,9 +243,19 @@ def plan(steps, memory_bytes, workers, nrow, nchan, ncorr,
     for step in chunked:
         estimate = chunk_bytes(step, chosen, workers, nchan, ncorr, extra) + reserve
         result.lines.append(f"  {step:<16} {estimate / GB:7.1f} GB{suffix}")
-    tables = [(step, table_bytes(step, nvis)) for step in whole]
-    if write is not None:
-        tables.append((write, table_bytes(write, out)))
+    if streamed_writes:
+        for step in whole:
+            estimate = BASE_BYTES + SAVE_CHUNK_ROWS * nchan * ncorr * SAVE_CHUNK_COST
+            result.lines.append(f"  {step:<16} {estimate / GB:7.1f} GB  streamed per chunk")
+        if write is not None and not concurrent:
+            per_vis = CONCURRENT_WRITE_COST.get(write, 0)
+            estimate = BASE_BYTES + workers * chosen * nchan * ncorr * per_vis
+            result.lines.append(f"  {write:<16} {estimate / GB:7.1f} GB  per chunk")
+        tables = []
+    else:
+        tables = [(step, table_bytes(step, nvis)) for step in whole]
+        if write is not None:
+            tables.append((write, table_bytes(write, out)))
     for step, estimate in tables:
         result.lines.append(f"  {step:<16} {estimate / GB:7.1f} GB  whole table")
         if estimate > memory_bytes:

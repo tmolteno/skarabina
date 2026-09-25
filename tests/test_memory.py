@@ -138,3 +138,28 @@ def test_ms_shape(tmp_path):
     path = str(tmp_path / "m.ms")
     make_synthetic_ms(path, nchan=16, nrow=40, ncorr=2)
     assert ms_shape(path) == (40, 16, 2)
+
+
+def test_a_streaming_backend_has_no_whole_table_steps():
+    """casacure after 3.8.7 (and python-casacore) write a new table chunk by
+    chunk: save and the write are per-chunk costs, nothing is reserved, and an
+    11 GB full write draws no warning."""
+    kw = dict(MEERKAT, out_visibilities=MEERKAT["nrow"] * MEERKAT["nchan"] * MEERKAT["ncorr"])
+    buffered = memory.plan(["save"] + STAGE0, 16 * GB, 12, write="write",
+                           concurrent_write=True, **kw)
+    streamed = memory.plan(["save"] + STAGE0, 16 * GB, 12, write="write",
+                           concurrent_write=True, streamed_writes=True, **kw)
+    assert buffered.warnings and not streamed.warnings
+    assert not [line for line in streamed.lines if "whole table" in line]
+    assert any("save" in line and "streamed per chunk" in line for line in streamed.lines)
+    assert streamed.row_chunk >= buffered.row_chunk
+
+
+def test_writes_stream_follows_the_backend(monkeypatch):
+    from importlib import metadata
+    monkeypatch.delenv("DASK_MS_BACKEND", raising=False)
+    assert memory.writes_stream()               # python-casacore
+    monkeypatch.setenv("DASK_MS_BACKEND", "casacure")
+    for installed, streams in (("3.8.7", False), ("3.8.8", True), ("3.9.0", True)):
+        monkeypatch.setattr(metadata, "version", lambda _name, v=installed: v)
+        assert memory.writes_stream() is streams, installed
