@@ -44,13 +44,14 @@ CHUNK_COST = {
     "rflag": (36, 2.5 * GB),
 }
 
-#: Added to every per-chunk step when a full ``--msout`` write shares the
-#: flagging pass (it does unless ``--optimize`` is given): the chunks the write
-#: and the averaging hold -- DATA, WEIGHT_SPECTRUM, SIGMA_SPECTRUM -- are in
-#: flight at the same time as the flaggers'.  Measured: the stage-0 list + rflag
-#: with a full write peaked 5.4 GB above the same run with a separate write
-#: pass, at 12 workers x 11 977 rows x 2511 x 2 -- 7.5 B per visibility.
-CONCURRENT_WRITE_COST = 8
+#: Added to every per-chunk step when the write shares the flagging pass (it
+#: does unless ``--optimize``/``--barber`` split it): the chunks the write holds
+#: are in flight at the same time as the flaggers'.  A full write (with its
+#: averaging) holds DATA, WEIGHT_SPECTRUM and SIGMA_SPECTRUM -- measured: the
+#: stage-0 list + rflag peaked 5.4 GB above the same run with a separate write
+#: pass, at 12 workers x 11 977 rows x 2511 x 2, 7.5 B per visibility; a
+#: flags-only write holds FLAG and FLAG_ROW.
+CONCURRENT_WRITE_COST = {"write": 8, "write-flags": 1}
 
 #: Per-table steps: bytes per visibility of the whole table they hold --
 #: ``save`` per visibility of the input MS, the writes per visibility of the
@@ -176,9 +177,9 @@ def plan(steps, memory_bytes, workers, nrow, nchan, ncorr,
     whole = [s for s in dict.fromkeys(steps) if s in TABLE_COST]
     nvis = nrow * nchan * ncorr
     out = nvis if out_visibilities is None else out_visibilities
-    concurrent = concurrent_write and write == "write"
-    extra = CONCURRENT_WRITE_COST if concurrent else 0
-    reserve = TABLE_COST["write"] * out if concurrent else 0
+    concurrent = concurrent_write and write in CONCURRENT_WRITE_COST
+    extra = CONCURRENT_WRITE_COST[write] if concurrent else 0
+    reserve = TABLE_COST[write] * out if concurrent else 0
     budget = SAFETY * memory_bytes - reserve
     if row_chunk is None:
         chosen, limiting = _largest_chunk(chunked, budget, workers, nchan, ncorr, extra)

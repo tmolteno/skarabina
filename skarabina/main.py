@@ -49,8 +49,8 @@ def _row_chunk(opts, ops):
     result = memory.plan(
         [op.verb for op in ops], limit, workers, nrow, nchan, ncorr,
         write=_write_mode(opts), out_visibilities=out, row_chunk=opts.row_chunk or None,
-        # A full write shares the flagging pass unless --optimize splits it.
-        concurrent_write=not opts.optimize,
+        # The write shares the flagging pass unless --optimize/--barber split it.
+        concurrent_write=not (opts.optimize or opts.barber),
     )
     source = "--memory-limit-GB" if opts.memory_limit_gb > 0 else "available RAM"
     print(result.lines[0].replace("limit", f"limit ({source})", 1))
@@ -272,43 +272,15 @@ def main(**kw):
     # When one of them follows, the flags are materialised once, with every
     # queued report computed in the same pass; otherwise only the reports.
     #
-    # A full --msout write reads DATA for its own column, so it is the pass:
-    # averaging stays lazy, the summary is queued, and the write computes the
-    # flags, the averaged output and every report in one go.  --optimize needs
-    # the flags before it can choose the rows to write, so it keeps a pass of
-    # its own (the materialised flags), and so do the flags-only writes, which
-    # write column by column.
-    downstream = (
-        opts.summary or opts.msout or opts.apply or opts.optimize
-        or (opts.frequency_average_factor or 1) > 1
-        or (opts.time_average_factor or 1) > 1
-    )
-    single_pass = _write_mode(opts) == "write" and not opts.optimize
-    if ops and downstream and not single_pass:
+    # Whatever comes last reads the flags anyway, so it is the pass: a write
+    # (full, averaged, --write-changed-only or --apply) computes the flags,
+    # the averaging and every queued report -- the summary's included -- in
+    # its own dask.compute; with no write, flush_reports does.  --optimize and
+    # --barber read the flags before the write (to choose rows, to plot), so
+    # the flags are materialised for them in one pass of their own.
+    reads_flags_early = opts.optimize or opts.barber
+    if ops and reads_flags_early:
         ms.materialise_flags()
-    elif not single_pass:
-        ms.flush_reports()
-
-    # --- Row removal / averaging (MUST be last before writing) ---
-
-    if opts.frequency_average_factor is not None and opts.frequency_average_factor > 1:
-        ms.frequency_average(opts.frequency_average_factor)
-
-    if opts.time_average_factor is not None and opts.time_average_factor > 1:
-        ms.time_average(opts.time_average_factor)
-
-    if opts.optimize:
-        if opts.msout is None and not opts.apply:
-            raise RuntimeError(
-                "--optimize has no effect without --msout or --apply:"
-                " it only removes fully-flagged rows and channels in"
-                " memory, so the result is discarded unless written."
-                " Add --msout PATH to write a new MS or --apply to"
-                " update the input MS in place."
-            )
-        ms.optimize(keep_fully_flagged_channels=opts.keep_fully_flagged_channels)
-
-    # --- Read-only reports (after all processing) ---
 
     if opts.summary:
         ms.summary()

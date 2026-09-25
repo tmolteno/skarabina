@@ -74,7 +74,7 @@ def test_a_write_in_the_same_pass_costs_the_flaggers_room():
     together = memory.plan(STAGE0 + ["rflag"], 62 * GB, 12, concurrent_write=True, **kw)
     assert together.row_chunk < apart.row_chunk
     fits = memory.chunk_bytes("rflag", together.row_chunk, 12, 2511, 2,
-                              memory.CONCURRENT_WRITE_COST)
+                              memory.CONCURRENT_WRITE_COST["write"])
     assert fits + memory.TABLE_COST["write"] * kw["out_visibilities"] \
         <= memory.SAFETY * 62 * GB
 
@@ -101,7 +101,7 @@ def test_effective_workers():
 
 def _opts(path, **kw):
     base = dict(ms=path, row_chunk=None, memory_limit_gb=0.0, workers=2, msout=None,
-                apply=False, write_changed_only=False, optimize=False,
+                apply=False, write_changed_only=False, optimize=False, barber=False,
                 frequency_average_factor=None, time_average_factor=None)
     base.update(kw)
     return SimpleNamespace(**base)
