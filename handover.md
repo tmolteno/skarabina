@@ -233,11 +233,11 @@ Roughly by expected value:
    alternative is to pool per-chunk statistics in the single pass and apply
    them in the write pass (needs the flags to be decided after the pool).
 6. ~~`flag_spectral_window` computes `uv_dist` eagerly~~ -- done after the
-   handover: the gates are lazy, and this also fixed a table-sized numpy
-   array per YAML entry (see `doc/CHANGES.md` Unreleased).  Its
-   `memory.CHUNK_COST["spectral-window"]` (5 B/vis) was measured with that
-   array in place and is probably now an over-estimate; re-measure with
-   `bench/mem_run.py`.
+   handover: the gates are lazy, which also removed a table-sized numpy
+   array per YAML entry (`doc/CHANGES.md`).  Re-measured with
+   `bench/mem_run.py` on scan 1, 12 workers: 1.06 / 1.81 GB at 5 000 /
+   10 000 rows (was 1.84 / 2.59 GB), the same as `nan`;
+   `memory.CHUNK_COST["spectral-window"]` lowered from 5 to 4 B/vis.
 7. **Graph size**: `materialise_flags` and `_run_autofit` compute with
    `optimize_graph=False`, because they mix delayed and array collections and
    dask optimises those separately, renaming the shared read tasks (DATA was

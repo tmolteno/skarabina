@@ -38,7 +38,9 @@ CHUNK_COST = {
     "uv-above": (1, 0),
     "nan": (4, 0),
     "clip": (4, 0),
-    "spectral-window": (5, 0),
+    # 5 until 1.0.8, when its row gates held a table-sized numpy array; lazy,
+    # it measures as nan does (1.81 GB at 10 000 rows x 12 workers on scan 1).
+    "spectral-window": (4, 0),
     "restore": (3, 0),
     "tfcrop": (30, 3.5 * GB),
     "rflag": (36, 2.5 * GB),
