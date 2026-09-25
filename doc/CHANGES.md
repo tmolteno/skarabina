@@ -17,7 +17,15 @@
   ``--write-changed-only`` went from 22.0 GB of DATA read (4 passes), 27.3 s
   and 6.3 GB peak to 5.5 GB (1 pass), 10.0 s and 3.2 GB.  Measured with a
   probe on dask-ms's column reads; ``tests/test_single_pass.py`` counts them.
-  The per-verb report lines now print when that pass completes.
+  A full ``--msout`` write -- with or without averaging -- is that pass too:
+  the flags, rflag/tfcrop, the averaging, the summary and the write are one
+  ``dask.compute``.  The stage-0 list with rflag, 32x frequency averaging,
+  ``--summary`` and a full write went from 11.0 GB of DATA read (2 passes) and
+  350 s to 5.5 GB (1 pass) and 312 s; it holds the write's chunks alongside
+  rflag's (31.0 GB peak against 25.6 GB), which the memory plan now counts.
+  Only ``--optimize``, which must see the flags before choosing the rows to
+  write, keeps a second pass.  The per-verb report lines now print when the
+  pass completes.
 
 - **``--memory-limit-GB`` and a memory plan per run.**  Without
   ``--row-chunk``, skarabina picks the largest row chunk that keeps every step

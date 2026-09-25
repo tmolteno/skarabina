@@ -331,6 +331,15 @@ copy with the stage-0 list and rflag:
 | available RAM, 46.9 GB | 11 977 (12 workers over 143 716 rows) | 27.2 GB | 26.5 GB |
 | `--memory-limit-GB 16` | 4 850 (rflag) | 12.8 GB | 11.6 GB |
 
+Since commit `0eecfa1` a full `--msout` write shares the flagging pass (one
+read of DATA), so its chunks -- DATA, WEIGHT_SPECTRUM, SIGMA_SPECTRUM -- are in
+flight with the flaggers'.  The same scan with the stage-0 list, rflag,
+`--frequency-average-factor 32`, `--summary` and a full write peaked at
+31.0 GB against 25.6 GB with the write as a second pass: 7.5 bytes per
+visibility per worker more.  The plan adds 8 (`CONCURRENT_WRITE_COST`) to every
+per-chunk step and reserves the write's whole-table estimate when the write
+shares the pass; it predicts 33.8 GB for that run.
+
 ## 8. Bugs found on the way
 
 Both were in the single-baseline algorithm and are fixed for it too:
