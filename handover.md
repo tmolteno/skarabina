@@ -11,8 +11,37 @@ Everything below is committed and pushed to `origin/main`.
 |---|---|
 | released | **1.0.7** (tag `v1.0.7`, PyPI `skarabina` + `skarabina-cargo`, Docker `1.0.7`) |
 | unreleased on `main` | `760e0ee` — `--write-changed-only`/`--apply` share the flagging pass (plus this handover and the `bench/` scripts) |
-| stale branches | `baseline-aware-flagging`, `tfcrop-local-scatter` — both merged into `main`; safe to delete (local and `origin`) |
+| stale branches | `baseline-aware-flagging`, `tfcrop-local-scatter` — both merged into `main`; can be deleted (local and `origin`) — ask first |
 | test suite | all pass except `tests/test_flag_versions.py::test_save_rejects_a_path_like_name`, which fails on 1.0.6 too (pre-existing, not investigated) |
+
+**Working agreements** (as practised with the user in this work):
+
+- Commit straight to `main` and push; no PRs.  Conventional subjects
+  (`perf(io):`, `feat(memory):`, `fix(tfcrop):`, `docs:`, `bench:`), a body
+  that says what was measured, and the trailer
+  `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- **Release only when the user asks** ("release it as X"); then follow the
+  `AGENTS.md` checklist without further questions.
+- Ask before deleting branches, remote files, or anything under
+  `~/github/meerkat_imaging`.
+- Every performance claim comes with a measurement: numbers, host, load,
+  command; old-vs-new outputs compared for identity where the change should
+  not alter results.
+
+**Running the tests** (moist, local): `.venv/bin/python -m pytest -q` from the
+repo root — no environment variable needed (python-casacore); ~17 s; expect
+exactly the one failure above.  `.venv/bin/flake8 skarabina tests/test_*.py
+bench` for lint (pre-existing warnings in `tests/test_frequency_average.py`).
+The cab schema: `cd cargo && .venv/bin/python -m pytest -q tests`.
+
+**How the single pass fits together** (read `DaskMS._report`'s docstring and
+the comment block before `ms.materialise_flags()` in `skarabina/main.py`):
+`flag_ops.run` sets `ms.defer_reports`; every verb, `summary()` and
+rflag/tfcrop (`_defer_autofit`) queue their reductions through `_report`
+instead of computing; whichever compute comes last takes the queue with
+`_take_pending` — the write (`write_new_ms` full path, or `_write_columns`
+for `--write-changed-only`/`--apply`), `materialise_flags` (only with
+`--optimize`/`--barber`), or `flush_reports` at the end of `main`.
 
 What 1.0.7 contains is in `doc/CHANGES.md`.  In short:
 
@@ -52,15 +81,26 @@ was stopped half way (§3.1).
 - `~/github/skarabina/.bench/scan1.ms` (11 GB, gitignored): a written copy of
   scan 1, for anything that writes.  `scan1.ms.flagversions` holds test
   versions `memtest` and `imported` (625 MB) — deletable.
-- `.bench/iocmp3.sh`, `.bench/iocmp3.log`: the interrupted comparison (§3.1).
+- `.bench/iocmp3.log`: output of the interrupted comparison (§3.1);
+  `.bench/iocmp3.sh` was its ad-hoc driver, superseded by
+  `bench/compare_versions.sh` (it needed `/tmp/ioprobe.py`, now gone).
 - the tests there: run with `DASK_MS_BACKEND=casacure`; tests that import
   `casacore.tables` before `daskms` fail with `No module named casacore`
   (import order), and 15 write-path tests fail with casacure `PoisonError`
   panics — both happen on 1.0.6 too; the flagging tests pass.
 
 **moist** (the local workstation, `/home/tim/github/skarabina`) — 8 cores,
-30 GB, python-casacore 3.8.1 (not casacure), numpy 2.4.  `/tmp` is tmpfs.  No
-MeerKAT data; `bench/make_synthetic_ms.py` writes a bpcal-shaped MS.
+30 GB, python-casacore 3.8.1 (not casacure), numpy 2.4.6, dask-ms 0.2.23.
+`/tmp` is tmpfs.  No MeerKAT data; `bench/make_synthetic_ms.py` writes a
+bpcal-shaped MS (79 x 2 fixed); `tests/ms_fixture.make_synthetic_ms(path,
+nchan=, nrow=, ncorr=)` makes any shape.  The bench scripts set
+`DASK_MS_BACKEND=casacure` by default; on moist they fall back to
+python-casacore, so memory numbers from moist are not comparable with the
+casacure calibration.
+
+**echo** — the laptop `BENCHMARKS.md` was measured on (i5-8365U, bpcal.ms in
+its `.bench/data/`).  Not used in this work; ask the user for access before
+relying on it.
 
 Spill directories: rflag/tfcrop and the flag materialisation write bit-packed
 blocks to `.skarabina-spill-*` in `$TMPDIR` or **beside the input MS**.  A
@@ -69,31 +109,38 @@ killed process (SIGKILL, OOM) leaves one behind; check
 
 ## 3. Next steps, in order
 
-### 3.1 Finish verifying `760e0ee` on real data, then release 1.0.8
+### 3.1 Finish verifying `760e0ee` on real data, then release 1.0.8 (when asked)
 
 `760e0ee` makes `--write-changed-only` and `--apply` write every changed
 column in one `dask.compute` with the run's queued reports
-(`DaskMS._write_columns`), instead of materialising the flags first.  Verified
-on synthetic data: output and reports identical to v1.0.7 (write-changed-only
-and apply, with `--summary`, for nan/clip/autos/uv-above, rflag and tfcrop
-lists) and DATA read once (`tests/test_single_pass.py`).  On schmalzburg the
-stage-0 list with `--summary --write-changed-only` gave 1 DATA pass in both
-versions (1.0.7 already read it once there, via the materialising pass) and
-4.98 s vs 5.82 s at the same 3.2 GB peak; **the rflag half was stopped** because
-the machine was loaded.  When it is idle:
+(`DaskMS._write_columns`), instead of materialising the flags first.  Already
+verified on synthetic data: output and reports identical to v1.0.7
+(write-changed-only and apply, with `--summary`, for nan/clip/autos/uv-above,
+rflag and tfcrop lists) and DATA read once (`tests/test_single_pass.py`).
+On schmalzburg, stage-0 list with `--summary --write-changed-only`: 1.0.7
+5.82 s, `760e0ee` 4.98 s, both 1 DATA pass (1.0.7 read it once too, via the
+materialising pass), both 3.2 GB peak (`~/github/skarabina/.bench/iocmp3.log`
+has this half).  **The rflag half was stopped** because the machine was
+loaded.  When `uptime` shows it idle (load < 2):
 
 ```sh
-ssh tim@schmalzburg 'uptime; bash ~/github/skarabina/.bench/iocmp3.sh'
-# needs /tmp/ioprobe.py: scp bench/io_probe.py tim@schmalzburg:/tmp/ioprobe.py
+ssh tim@schmalzburg
+cd ~/github/skarabina && git pull --ff-only
+bench/compare_versions.sh .bench/scan1.ms v1.0.7 \
+  "autos, uv-above 8000, nan, clip 0 100, spectral-window bench/spectral-flags-L.yml, rflag" \
+  --workers 12 --summary --msout OUT --clobber --write-changed-only
 ```
 
-Expect: 1 DATA pass for both, the new one without the spill write; peak RSS
-about the same (the flags-only write holds FLAG/FLAG_ROW chunks, planned at
-1 B/vis/worker, `memory.CONCURRENT_WRITE_COST["write-flags"]`).  Then add the
-numbers to `doc/CHANGES.md` (Unreleased) and release 1.0.8 with the
-`AGENTS.md` checklist (both `pyproject.toml`, `cargo/.../skarabina-cargo-base.yml`,
-`uv.lock` line ~1076, changelog heading, `chore(release): X` commit, annotated
-tag `vX` "skarabina X", push `main` then the tag; CI publishes).
+(`compare_versions.sh` makes a temporary worktree of the old ref, runs both
+through `bench/io_probe.py`, writes only to `.bench/cmp_out.ms` and deletes
+it; it never writes to the input.)  **Done when**: both versions read DATA
+once (`IOPROBE TOTAL DATA=5506` MB), the new one is not slower beyond the
+machine's noise (a few %), and its peak RSS is within ~10 % of 1.0.7's (the
+plan counts the flags-only write at 1 B/vis/worker,
+`memory.CONCURRENT_WRITE_COST["write-flags"]`).  Then put the rflag numbers
+into the `## [Unreleased]` entry of `doc/CHANGES.md` (it already describes
+`760e0ee` and says the rflag list is pending).  Release 1.0.8 only when the
+user asks, with the `AGENTS.md` checklist.
 
 ### 3.2 casacure buffers whole tables on write (the largest memory problem left)
 
@@ -107,14 +154,35 @@ buffer.  AGENTS.md notes a known obstacle: per-chunk flushes regrow the
 single-column flag-version table.  After a fix, re-measure and lower
 `memory.TABLE_COST` (or move the writes to `CHUNK_COST`).
 
+Where to start: `../casacure/MEMORY.md` (section "The write path"),
+`../casacure/crates/casacure/src/table.rs` (the write buffer / flush) and
+`tsm.rs`.  `../casacure/handover.md` is older (2026-09-22, casacure 3.8.3)
+but describes that repo's own bench.  Build and install into skarabina's venv
+with maturin: `cd ../casacure && uv pip install --python
+~/github/skarabina/.venv/bin/python .` (schmalzburg's venv already has 3.8.7
+from PyPI; note the version you replace).  Measure a full write's peak with
+`/usr/bin/time -f %M .venv/bin/skarabina --ms .bench/scan1.ms --msout
+.bench/w.ms --clobber` (40.7 GB with casacure 3.8.7) and `--flag save:x` on a
+copy for the save.  **Done when** a full write of scan 1 peaks at a few chunks'
+worth (a few GB) instead of 40 GB, a casacure release carries it, and
+skarabina's dependency pin (`pyproject.toml`, the `casacure` extra) is bumped
+and the table costs re-measured.  This is work in the casacure repo; agree
+the approach with the user first.
+
 ### 3.3 Validate the memory model on other shapes
 
 `skarabina/memory.py` constants were measured on one MS shape (2511 chan x 2
 corr, 12 workers) — `CHUNK_COST` per verb, `TABLE_COST`, `BASE_BYTES`,
 `CONCURRENT_WRITE_COST`.  Check a 4k/32k-channel MS, 4 correlations, a few
-workers, and averaging.  Tools: `bench/mem_run.py` (end-to-end peak RSS of a
-flag list at a given chunk/workers) and `bench/mem_block.py` (per-block
-working memory; must stay linear in rows).  Checked so far: the plan predicted
+workers, and averaging -- under casacure (schmalzburg), which is what the
+constants describe.  Make shapes with `tests/ms_fixture.make_synthetic_ms`
+plus noise (as `bench/make_synthetic_ms.py` does for 79 x 2); no real MS of
+another shape is known locally -- ask the user.  Tools: `bench/mem_run.py`
+(end-to-end peak RSS of a flag list at a given chunk/workers) and
+`bench/mem_block.py` (per-block working memory; must stay linear in rows).
+**Done when** the plan's estimate is at or above the measured peak and within
+~25 % of it for each shape tried; if not, refit the constant for the verb that
+misses (they are per visibility, so a new shape should not change them).  Checked so far: the plan predicted
 27.2 GB / 12.8 GB against 26.5 / 11.6 GB measured (stage-0 + rflag), and 33.8
 against 31.0 GB with the full write in the pass.
 
@@ -151,10 +219,15 @@ Roughly by expected value:
    them in the write pass (needs the flags to be decided after the pool).
 6. **`flag_spectral_window`** computes `uv_dist` eagerly (a small UVW pass per
    run); make the row gates lazy.
-7. **Graph size**: the single-pass computes run with `optimize_graph=False`
-   in `materialise_flags` and `_run_autofit` (mixing delayed and array
-   collections defeats key sharing otherwise).  Fine at 15-150 chunks; check
-   task-scheduling overhead on a whole 1.6M-row MS at small chunks.
+7. **Graph size**: `materialise_flags` and `_run_autofit` compute with
+   `optimize_graph=False`, because they mix delayed and array collections and
+   dask optimises those separately, renaming the shared read tasks (DATA was
+   read twice).  The writes (`write_new_ms`, `_write_columns`) compute
+   optimised: everything there is a dask array (rflag/tfcrop's delayed blocks
+   enter as `from_delayed` arrays), so it is optimised together and the reads
+   stay shared -- `tests/test_single_pass.py` checks both write paths read DATA
+   once.  Fine at 15-150 chunks; check task-scheduling overhead on a whole
+   1.6M-row MS at small chunks.
 
 ### 3.5 Open algorithm questions (need the user's decision)
 
@@ -178,6 +251,7 @@ Roughly by expected value:
 
 | script | what |
 |---|---|
+| `compare_versions.sh <ms> <old-ref> "<flags>" [args]` | two versions side by side through `io_probe.py` (temporary worktree for the old ref; output only to `.bench/cmp_out.ms`) |
 | `io_probe.py <skarabina args>` | runs the CLI and counts MS column reads per `dask.compute` (wraps `daskms.reads.ndarray_getcol`); DATA MB / DATA size = passes.  For an old version: run from a `git worktree` with `PYTHONPATH=<worktree>` (it prints which code ran) |
 | `mem_run.py <ms> <rows> <workers> "<flags>" [--scan S]` | end-to-end peak RSS of a flag list + one final pass; how `memory.CHUNK_COST` was measured |
 | `mem_block.py <ms> <scan> 2500,5000,10000 [aware,classic]` | per-block working memory of tfcrop/rflag under tracemalloc |
