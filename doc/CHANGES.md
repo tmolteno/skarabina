@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.7]
+
 ### Added
 
 - **A run reads DATA and FLAG once, however many ``--flag`` verbs it has.**
@@ -60,6 +62,20 @@
   the old behaviour.  See ``doc/RFLAG.md``, which also compares skarabina's
   rflag with CASA's source.
 
+- **``tfcrop`` is about 10x faster.**  The per-row and per-column flagging
+  (``flag_1d``, looped over every row and column of a block with two
+  ``np.median`` calls per iteration) is vectorised as ``flag_lanes`` on the
+  sort-based median, bit for bit the same.  The time-direction baselines are
+  fitted for all columns at once (``robust_fit_columns``), solving each piece's
+  weighted least squares through its normal equations instead of one SVD
+  ``lstsq`` per column and piece; results agree to rounding.  That work was
+  interpreter-bound and serialised dask's threads on the GIL, so the run now
+  also scales with ``--workers``.  The ``usewindowstats`` pass, a per-point
+  Python loop (~5 s per 10 000 x 79 plane with ``both``), reduces strided
+  window views instead.  On a 430k-row, 79-channel synthetic MS: 82 s before,
+  8.4 s after, with identical written flags (``BENCHMARKS.md``).  A plane of
+  exact constants no longer has a column flagged by ``lstsq`` rounding.
+
 ### Fixed
 
 - **rflag's time step no longer goes blind on flagged data.**  The window
@@ -86,22 +102,6 @@
   smaller sample per lane: on the synthetic bench MS, whose pre-flagged
   samples happen to be clean noise, false positives on clean data went from
   0.71 % to 1.19 % of the live samples, with all injected RFI still caught.
-
-### Changed
-
-- **``tfcrop`` is about 10x faster.**  The per-row and per-column flagging
-  (``flag_1d``, looped over every row and column of a block with two
-  ``np.median`` calls per iteration) is vectorised as ``flag_lanes`` on the
-  sort-based median, bit for bit the same.  The time-direction baselines are
-  fitted for all columns at once (``robust_fit_columns``), solving each piece's
-  weighted least squares through its normal equations instead of one SVD
-  ``lstsq`` per column and piece; results agree to rounding.  That work was
-  interpreter-bound and serialised dask's threads on the GIL, so the run now
-  also scales with ``--workers``.  The ``usewindowstats`` pass, a per-point
-  Python loop (~5 s per 10 000 x 79 plane with ``both``), reduces strided
-  window views instead.  On a 430k-row, 79-channel synthetic MS: 82 s before,
-  8.4 s after, with identical written flags (``BENCHMARKS.md``).  A plane of
-  exact constants no longer has a column flagged by ``lstsq`` rounding.
 
 ## [1.0.6]
 
