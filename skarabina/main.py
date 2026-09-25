@@ -262,7 +262,22 @@ def main(**kw):
         print(f"scan selection: {opts.scan!r}")
         ms.select_scans(opts.scan)
 
-    flag_ops.run(ms, ops)
+    flag_ops.run(ms, ops, flush=False)
+
+    # One pass for the whole list.  FLAG is now a lazy graph over what the
+    # verbs read -- DATA, for nan and clip -- and every later step (summary,
+    # averaging, the write) would evaluate it again, a read of DATA each.
+    # When one of them follows, the flags are materialised once, with every
+    # queued report computed in the same pass; otherwise only the reports.
+    downstream = (
+        opts.summary or opts.msout or opts.apply or opts.optimize
+        or (opts.frequency_average_factor or 1) > 1
+        or (opts.time_average_factor or 1) > 1
+    )
+    if ops and downstream:
+        ms.materialise_flags()
+    else:
+        ms.flush_reports()
 
     # --- Row removal / averaging (MUST be last before writing) ---
 

@@ -113,6 +113,12 @@ def _flags_to_spill(block_function):
     return run
 
 
+def _save_flag_block(flags, path):
+    """Write one block of flags to ``path``, packed to one bit per visibility."""
+    np.save(path, np.packbits(np.asarray(flags, dtype=bool), axis=None),
+            allow_pickle=False)
+
+
 def _load_spilled_flags(path, shape):
     """One block of flags written by :func:`_flags_to_spill`."""
     packed = np.load(path, allow_pickle=False)
@@ -705,6 +711,88 @@ class DaskMS:
             f" rows, scans {scans}"
         )
 
+    #: When set (flag_ops.run sets it for a run), a step's statistics are
+    #: queued rather than computed on the spot, and computed together in the
+    #: next pass over the data (see :meth:`_report`).
+    defer_reports = False
+
+    def _report(self, reductions, report):
+        """Compute ``reductions`` and call ``report(*values)`` -- now, or later.
+
+        Printing a step's counts needs a pass over what the step depends on,
+        and a pass per step is a read of the MS per step: DATA, for nan and
+        clip.  With :attr:`defer_reports` set the reductions are queued, and
+        the next pass that reads the data anyway -- rflag/tfcrop's, the one
+        that materialises the flags (:meth:`materialise_flags`), or
+        :meth:`flush_reports` -- computes them in the same ``dask.compute``,
+        where dask shares the reads between them.  Reports keep their order.
+        """
+        if not self.defer_reports:
+            report(*dask.compute(*reductions))
+            return
+        if "_pending" not in self.__dict__:
+            self._pending = []
+        self._pending.append((list(reductions), report))
+
+    def _take_pending(self):
+        """The queued reductions (flat) and a callback that prints them."""
+        pending = self.__dict__.pop("_pending", [])
+        flat = [r for reductions, _ in pending for r in reductions]
+
+        def report(values):
+            values = iter(values)
+            for reductions, callback in pending:
+                callback(*[next(values) for _ in reductions])
+        return flat, report
+
+    def flush_reports(self):
+        """Compute and print every queued report, in one pass."""
+        flat, report = self._take_pending()
+        if flat:
+            report(dask.compute(*flat))
+
+    def materialise_flags(self):
+        """One pass for the whole flag list: the final flags and every report.
+
+        After the ``--flag`` list, FLAG is a lazy graph over everything the
+        verbs read (DATA, for nan and clip), and each later step -- the
+        summary, averaging, the write -- would evaluate it again: a read of
+        DATA per step.  This evaluates it once, block by block, writing the
+        flags to the spill directory at one bit per visibility (as rflag and
+        tfcrop do) and FLAG_ROW to memory (a bool per row), and computes the
+        queued reports in the same ``dask.compute``.  Later steps read the
+        spilled flags.
+        """
+        flag = self.ds.FLAG.data
+        spill = self._spill_directory("flags")
+        paths, saves = [], []
+        for index in range(flag.numblocks[0]):
+            path = os.path.join(spill, "block%06d.npy" % index)
+            paths.append(path)
+            saves.append(delayed(_save_flag_block)(flag.blocks[index], path))
+        flat, report = self._take_pending()
+        # optimize_graph=False: dask optimises delayed and array collections
+        # separately, and fusing renames their shared tasks, so the spill
+        # writes and the reports would each read DATA -- two passes in one
+        # compute.  Unoptimised, the read tasks keep their keys and are shared.
+        _, flag_row, *values = dask.compute(
+            saves, self.ds.FLAG_ROW.data, *flat, optimize_graph=False
+        )
+        row_chunks = flag.chunks[0]
+        shapes = ((rows,) + flag.shape[1:] for rows in row_chunks)
+        self.ds["FLAG"] = (self.ds.FLAG.dims, da.concatenate([
+            da.from_array(np.empty((0,) + flag.shape[1:], dtype=bool))
+            if not rows else
+            da.from_delayed(delayed(_load_spilled_flags)(path, shape),
+                            shape=shape, dtype=bool)
+            for path, shape, rows in zip(paths, shapes, row_chunks)
+        ], axis=0) if paths else flag)
+        self.ds["FLAG_ROW"] = (
+            self.ds.FLAG_ROW.dims, da.from_array(np.asarray(flag_row), chunks=(row_chunks,))
+        )
+        self._refresh_cached_columns()
+        report(values)
+
     def flag_autocorrelations(self):
         """Flag autocorrelation visibilities (``ANTENNA1 == ANTENNA2``).
 
@@ -729,28 +817,26 @@ class DaskMS:
         new_flags = da.logical_or(flags, auto_flags)
         new_flag_row = da.logical_or(self.ds.FLAG_ROW.data, auto_row)
 
-        n_auto_rows, n_auto_vis, n_vis, n_flag_rows = dask.compute(
-            da.sum(auto_row),
-            da.sum(auto_flags),
-            da.prod(da.array(flags.shape)),
-            da.sum(new_flag_row),
-        )
-
         self.ds["FLAG"].data = new_flags
         self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, new_flag_row)
         self.changed["FLAG"] = True
         self.changed["FLAG_ROW"] = True
 
-        print(
-            "flag_autocorrelations: %d auto-baseline rows, %d visibilities"
-            " flagged (%.2f%% of all); %d rows now flagged in total"
-            % (
-                int(n_auto_rows),
-                int(n_auto_vis),
-                100.0 * int(n_auto_vis) / int(n_vis) if int(n_vis) else 0.0,
-                int(n_flag_rows),
+        n_vis = int(np.prod(flags.shape))
+
+        def report(n_auto_rows, n_flag_rows):
+            n_auto_vis = int(n_auto_rows) * int(np.prod(flags.shape[1:]))
+            print(
+                "flag_autocorrelations: %d auto-baseline rows, %d visibilities"
+                " flagged (%.2f%% of all); %d rows now flagged in total"
+                % (
+                    int(n_auto_rows),
+                    n_auto_vis,
+                    100.0 * n_auto_vis / n_vis if n_vis else 0.0,
+                    int(n_flag_rows),
+                )
             )
-        )
+        self._report([da.sum(auto_row), da.sum(new_flag_row)], report)
 
     def flag_uv_above(self, uv_limit):
         """
@@ -770,14 +856,14 @@ class DaskMS:
         n_uv = da.sum(uv_flag_mask)
         max_uv = da.sqrt(da.max(abs_uv))
 
-        n_old_v, n_new_v, n_uv_v, max_uv_v = dask.compute(n_old, n_new, n_uv, max_uv)
-
-        n_added = int(n_new_v) - int(n_old_v)
-        print("flag_uv_above: max UV distance = %.1f m" % max_uv_v)
-        print(
-            "flag_uv_above: %d rows above uv limit, %d newly flagged (total: %d)"
-            % (int(n_uv_v), n_added, int(n_new_v))
-        )
+        def report(n_old_v, n_new_v, n_uv_v, max_uv_v):
+            n_added = int(n_new_v) - int(n_old_v)
+            print("flag_uv_above: max UV distance = %.1f m" % max_uv_v)
+            print(
+                "flag_uv_above: %d rows above uv limit, %d newly flagged (total: %d)"
+                % (int(n_uv_v), n_added, int(n_new_v))
+            )
+        self._report([n_old, n_new, n_uv, max_uv], report)
 
         self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, new_flag_row)
         self.changed["FLAG_ROW"] = True
@@ -876,7 +962,13 @@ class DaskMS:
                     params, path, *rows,
                 )
             )
-        (counts,) = dask.compute(counts)
+        # The reports queued by earlier verbs read the same data (nan and clip
+        # read DATA, as this pass does), so they are computed in this pass.
+        pending, report_pending = self._take_pending()
+        # Unoptimised for the reason given in materialise_flags: the blocks are
+        # delayed, the reports arrays, and fusion would give each its own read.
+        counts, *pending_values = dask.compute(counts, *pending, optimize_graph=False)
+        report_pending(pending_values)
         counts = np.concatenate(counts) if counts else np.zeros((0, 2), int)
         new_count, already = (int(n) for n in counts.sum(axis=0))
         total = int(np.prod(shape))
@@ -1089,24 +1181,27 @@ class DaskMS:
                     defer[("clip", clip_min, clip_max)] = abs_vis, clip_flag_mask
                 return
 
-            total_vis = da.prod(da.array(self.ds.FLAG.shape))
-            n_nan_v, n_clip_v, total_v = dask.compute(n_nan, n_clip, total_vis)
-            if "NAN" in operations:
-                print(
-                    "flag_data (NaN): flagged %d / %d visibilities (%.2f%%)"
-                    % (int(n_nan_v), int(total_v), 100.0 * int(n_nan_v) / int(total_v))
-                )
-            if "CLIP" in operations:
-                print(
-                    "flag_data (clip [%s, %s]): flagged %d / %d visibilities (%.2f%%)"
-                    % (
-                        clip_min,
-                        clip_max,
-                        int(n_clip_v),
-                        int(total_v),
-                        100.0 * int(n_clip_v) / int(total_v),
+            total_v = int(np.prod(self.ds.FLAG.shape))
+
+            def report(n_nan_v, n_clip_v):
+                if "NAN" in operations:
+                    print(
+                        "flag_data (NaN): flagged %d / %d visibilities (%.2f%%)"
+                        % (int(n_nan_v), total_v, 100.0 * int(n_nan_v) / total_v)
                     )
-                )
+                if "CLIP" in operations:
+                    print(
+                        "flag_data (clip [%s, %s]): flagged %d / %d visibilities (%.2f%%)"
+                        % (
+                            clip_min,
+                            clip_max,
+                            int(n_clip_v),
+                            total_v,
+                            100.0 * int(n_clip_v) / total_v,
+                        )
+                    )
+            # Queued with the other steps' reports when a run defers them.
+            self._report([da.asarray(n_nan), da.asarray(n_clip)], report)
 
     def report_data_flags(self, defer):
         """Evaluate and print the reductions collected by ``flag_data(defer=...)``.
@@ -1119,29 +1214,30 @@ class DaskMS:
         """
         if not defer:
             return
-        reductions = [da.sum(mask) for _, mask in defer.values()]
-        total = da.prod(da.array(self.ds.FLAG.shape))
-        results = dask.compute(*reductions, total)
-        total_v = int(results[-1])
-        for (label, _), count in zip(defer.items(), results[:-1]):
-            kind = label[0]
-            if kind == "nan":
-                print(
-                    "flag_data (NaN): flagged %d / %d visibilities (%.2f%%)"
-                    % (int(count), total_v, 100.0 * int(count) / total_v)
-                )
-            else:
-                _, clip_min, clip_max = label
-                print(
-                    "flag_data (clip [%s, %s]): flagged %d / %d visibilities (%.2f%%)"
-                    % (
-                        clip_min,
-                        clip_max,
-                        int(count),
-                        total_v,
-                        100.0 * int(count) / total_v,
+        entries = list(defer.items())
+        total_v = int(np.prod(self.ds.FLAG.shape))
+
+        def report(*counts):
+            for (label, _), count in zip(entries, counts):
+                kind = label[0]
+                if kind == "nan":
+                    print(
+                        "flag_data (NaN): flagged %d / %d visibilities (%.2f%%)"
+                        % (int(count), total_v, 100.0 * int(count) / total_v)
                     )
-                )
+                else:
+                    _, clip_min, clip_max = label
+                    print(
+                        "flag_data (clip [%s, %s]): flagged %d / %d visibilities (%.2f%%)"
+                        % (
+                            clip_min,
+                            clip_max,
+                            int(count),
+                            total_v,
+                            100.0 * int(count) / total_v,
+                        )
+                    )
+        self._report([da.sum(mask) for _, (_, mask) in entries], report)
 
     def _report_integrations(self):
         """Report the integration structure of the MS, gap-tolerantly.
@@ -1195,8 +1291,12 @@ class DaskMS:
                     )
 
     def summary(self):
-        num_flagged = da.sum(self.ds.FLAG)
-        rows_flagged = da.sum(self.ds.FLAG_ROW)
+        # The dask arrays, not the xarray DataArrays: da.sum of a DataArray
+        # goes through its __array__, which evaluates the whole column
+        # eagerly -- a separate pass over everything FLAG depends on (DATA, for
+        # nan/clip), holding the whole flag cube in memory at once.
+        num_flagged = da.sum(self.ds.FLAG.data)
+        rows_flagged = da.sum(self.ds.FLAG_ROW.data)
         total = da.prod(da.array(self.ds.FLAG.shape))
         rows_total = da.prod(da.array(self.ds.FLAG_ROW.shape))
         percent = 100.0 * (num_flagged / total)
@@ -1738,15 +1838,17 @@ class DaskMS:
         self.changed["FLAG"] = True
         self.changed["FLAG_ROW"] = True
         self._refresh_cached_columns()
-        flagged = int(flag.sum().compute())
-        print(
-            "flag version '%s' restored: %.2f%% of visibilities and %d rows flagged"
-            % (
-                versionname,
-                100.0 * flagged / flag.size if flag.size else 0.0,
-                int(flag_row.sum()),
+
+        def report(flagged):
+            print(
+                "flag version '%s' restored: %.2f%% of visibilities and %d rows flagged"
+                % (
+                    versionname,
+                    100.0 * int(flagged) / flag.size if flag.size else 0.0,
+                    int(flag_row.sum()),
+                )
             )
-        )
+        self._report([flag.sum()], report)
 
     def list_flag_versions(self):
         """The saved flag versions of this MS as ``[(name, comment), ...]``."""
