@@ -5,6 +5,20 @@
 
 ### Added
 
+- **A run reads DATA and FLAG once, however many ``--flag`` verbs it has.**
+  Each verb used to compute its own counts, so "nan, clip 0 100, autos" with
+  ``--write-changed-only`` read DATA twice and the stage-0 list with
+  ``--summary`` four times (one of them through an xarray ``__array__`` that
+  also held the whole flag cube in memory).  The counts are now queued and
+  computed in one pass that also materialises the final flags to the
+  bit-packed spill -- or in rflag/tfcrop's own pass -- and the summary,
+  averaging and the write read the spilled flags.  On a 143 716-row,
+  2511-channel MeerKAT scan, the stage-0 list with ``--summary`` and
+  ``--write-changed-only`` went from 22.0 GB of DATA read (4 passes), 27.3 s
+  and 6.3 GB peak to 5.5 GB (1 pass), 10.0 s and 3.2 GB.  Measured with a
+  probe on dask-ms's column reads; ``tests/test_single_pass.py`` counts them.
+  The per-verb report lines now print when that pass completes.
+
 - **``--memory-limit-GB`` and a memory plan per run.**  Without
   ``--row-chunk``, skarabina picks the largest row chunk that keeps every step
   of the ``--flag`` list within the limit -- by default the RAM available now
