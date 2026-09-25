@@ -124,12 +124,14 @@ has this half).  **The rflag half was stopped** because the machine was
 loaded.  When `uptime` shows it idle (load < 2):
 
 ```sh
-ssh tim@schmalzburg
-cd ~/github/skarabina && git pull --ff-only
-bench/compare_versions.sh .bench/scan1.ms v1.0.7 \
-  "autos, uv-above 8000, nan, clip 0 100, spectral-window bench/spectral-flags-L.yml, rflag" \
-  --workers 12 --summary --msout OUT --clobber --write-changed-only
+ssh tim@schmalzburg uptime          # go ahead only if the load is < 2
+ssh tim@schmalzburg 'cd ~/github/skarabina && git pull --ff-only &&
+  bench/compare_versions.sh .bench/scan1.ms v1.0.7 \
+    "autos, uv-above 8000, nan, clip 0 100, spectral-window bench/spectral-flags-L.yml, rflag" \
+    --workers 12 --summary --msout OUT --clobber --write-changed-only' 2>&1 | tee cmp.log
 ```
+
+(~10 minutes; if it is interrupted, run `git worktree prune` there.)
 
 (`compare_versions.sh` makes a temporary worktree of the old ref, runs both
 through `bench/io_probe.py`, writes only to `.bench/cmp_out.ms` and deletes
