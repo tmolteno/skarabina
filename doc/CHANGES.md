@@ -5,15 +5,19 @@
 
 ### Added
 
-- **``--memory-limit-GB``: the row chunk is sized from memory.**  Without
-  ``--row-chunk``, skarabina now picks the largest row chunk whose chunked
-  phases fit the limit -- by default the RAM available now (MemAvailable,
-  capped by a container's cgroup limit) -- from the worker count and the MS's
-  channels x correlations, at a measured ~36 bytes per visibility per worker
-  plus a 3.5 GB base, and never so large that a worker goes idle.  An explicit
-  ``--row-chunk`` is used as given (with a warning if it plans past an
-  explicit limit).  ``save:<name>`` is not governed by it.  The stimela cab
+- **``--memory-limit-GB`` and a memory plan per run.**  Without
+  ``--row-chunk``, skarabina picks the largest row chunk that keeps every step
+  of the ``--flag`` list within the limit -- by default the RAM available now
+  (MemAvailable, capped by a container's cgroup limit) -- so a list of cheap
+  verbs gets a large chunk and one with rflag or tfcrop a smaller one, and
+  never so large that a worker goes idle.  Each verb's cost is measured
+  (``doc/RFLAG.md`` §7.4).  ``save:<name>`` and a full ``--msout`` write hold a
+  whole table whatever the chunk (casacure buffers what it writes); the plan
+  estimates them and warns when they do not fit.  The run prints the plan.  An
+  explicit ``--row-chunk`` is used as given, and checked.  The stimela cab
   gains ``memory-limit-GB``, ``row-chunk`` and ``workers``.
+- **``restore:`` reads the flag version lazily**, in the data's row chunks,
+  instead of holding the whole flag cube for the rest of the run.
 
 ### Changed
 
