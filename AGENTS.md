@@ -148,7 +148,8 @@ not persist their result: each block's flags are spilled at one bit per
 visibility to `.skarabina-spill-*` in `$TMPDIR` if set, else beside the input
 MS (never `/tmp` by default — often tmpfs), and read back by later passes.  The
 directory is removed with the `DaskMS` instance.  Inside a block,
-`rflag.GROUP_VALUES` caps the vectorised temporaries.
+`rflag.GROUP_VALUES` / `tfcrop.GROUP_VALUES` cap the vectorised temporaries
+(the per-lane medians come from `skarabina/nanstats.py`).
 
 The row chunk is applied at read time in `DaskMS.__init__`
 (`xds_from_ms(..., chunks={"row": row_chunk})`) and the pool is set in
