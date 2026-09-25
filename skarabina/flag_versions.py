@@ -170,6 +170,15 @@ def read_ms_flags(ms_path):
     return flag, flag_row
 
 
+def _check_version_name(versionname):
+    """Reject a version name CASA could not use, or that would escape the
+    ``.flagversions`` directory (``../x``)."""
+    if not versionname or versionname != versionname.strip():
+        raise ValueError("version name must be non-empty without surrounding blanks")
+    if os.sep in versionname or "/" in versionname:
+        raise ValueError(f"invalid version name: {versionname!r}")
+
+
 def save_version_streaming(ms_path, versionname, comment=""):
     """Back up the MS's FLAG/FLAG_ROW as a CASA flag version, streaming.
 
@@ -183,6 +192,7 @@ def save_version_streaming(ms_path, versionname, comment=""):
 
     Returns the path of the written version.
     """
+    _check_version_name(versionname)
     _rename_existing(ms_path, versionname)
 
     path = version_path(ms_path, versionname)
@@ -195,7 +205,6 @@ def save_version_streaming(ms_path, versionname, comment=""):
         # Channel count of the FLAG cube (1 row read just to learn the shape).
         nchan = int(src.getcol("FLAG", startrow=0, nrow=1).shape[1]) if nrow else 1
         flag_desc = _flag_column_description((nchan, 0))
-        flag_row = np.asarray(src.getcol("FLAG_ROW")) if nrow else np.zeros(0, bool)
     finally:
         src.close()
 
@@ -208,7 +217,6 @@ def save_version_streaming(ms_path, versionname, comment=""):
     t = table(path, tabdesc, nrow=0, readonly=False, dminfo=_dminfo(nchan))
     try:
         t.addrows(nrow)
-        t.putcol("FLAG_ROW", flag_row)
         src = table(ms_path, ack=False, readonly=True)
         try:
             for start in range(0, nrow, CHUNK_ROWS):
@@ -217,6 +225,17 @@ def save_version_streaming(ms_path, versionname, comment=""):
                     src.getcol("FLAG", startrow=start, nrow=n), dtype=bool
                 )
                 t.putcol("FLAG", chunk, startrow=start, nrow=n)
+                row_chunk = np.asarray(
+                    src.getcol("FLAG_ROW", startrow=start, nrow=n), dtype=bool
+                )
+                t.putcol("FLAG_ROW", row_chunk, startrow=start, nrow=n)
+                # Flush per chunk, so the write buffer holds one chunk: a
+                # table backend that buffers writes (casacure) otherwise
+                # keeps the whole flag cube until close -- 18-19 GB on
+                # mergA_tim.ms.  casacure grows the table in place, so each
+                # flush costs the chunk, not the table (the first one also
+                # gives the shape-less FLAG column its cell shape).
+                t.flush()
         finally:
             src.close()
     finally:
@@ -249,11 +268,7 @@ def save_version(ms_path, versionname, flag, flag_row, comment=""):
     ``<name>.old.<timestamp>`` rather than silently overwritten, matching CASA's
     behaviour, and the version list is updated accordingly.
     """
-    if not versionname or versionname != versionname.strip():
-        raise ValueError("version name must be non-empty without surrounding blanks")
-    if os.sep in versionname or "/" in versionname:
-        raise ValueError(f"invalid version name: {versionname!r}")
-
+    _check_version_name(versionname)
     _rename_existing(ms_path, versionname)
 
     path = version_path(ms_path, versionname)
@@ -275,10 +290,11 @@ def save_version(ms_path, versionname, flag, flag_row, comment=""):
     t = table(path, tabdesc, nrow=0, readonly=False, dminfo=_dminfo(nchan))
     try:
         t.addrows(nrow)
-        t.putcol("FLAG_ROW", flag_row)
         for start in range(0, nrow, CHUNK_ROWS):
             n = min(CHUNK_ROWS, nrow - start)
             t.putcol("FLAG", _freeze(flag[start:start + n]), startrow=start, nrow=n)
+            t.putcol("FLAG_ROW", flag_row[start:start + n], startrow=start, nrow=n)
+            t.flush()  # one chunk buffered at a time (see save_version_streaming)
     finally:
         t.close()
 
