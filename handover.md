@@ -3,25 +3,37 @@
 
 Read this, then `AGENTS.md` (repo conventions, release checklist, benchmark
 notes) and `doc/RFLAG.md` (the algorithms, every measurement and its method).
-Everything below is committed and pushed to `origin/main`.
+Everything below is committed and pushed to `origin/main` of both repos
+(`tmolteno/skarabina`, `tmolteno/casacure`).
 
 ## 1. State
 
 | | |
 |---|---|
-| released | **1.0.9** (tag `v1.0.9`): `--frequency-average-factor` / `--time-average-factor` / `--optimize` applied again (1.0.8 silently ignored them), `save:` flushes per chunk, memory plan knows a streaming backend, requires **casacure >= 3.8.8** (released 2026-09-26: tables grow in place on write, ISM writer fix) |
-| unreleased on `main` | nothing (1.0.10 = 1.0.9 + the `casacure>=3.8.9` pin, see §3.2b) |
-| branches | only `main`; `baseline-aware-flagging` and `tfcrop-local-scatter` were merged and deleted (local, `origin`, schmalzburg) |
-| test suite | all pass (458; the old `test_save_rejects_a_path_like_name` failure was a real bug, fixed in `ca9264e`).  Under casacure (`DASK_MS_BACKEND=casacure`, the casacure dev venv) 14 tests in `test_single_pass`, `test_write_changed_only`, `test_analyze_contract` fail identically before and after the casacure change: they assume python-casacore storage-manager layouts / read counting |
+| released skarabina | **1.0.10** (tag `v1.0.10`; PyPI `skarabina` + `skarabina-cargo`, Docker `1.0.10`).  Requires `casacure>=3.8.9`.  1.0.9 restored `--frequency-average-factor` / `--time-average-factor` / `--optimize` (1.0.8 silently ignored them), made `save:` flush per chunk and taught the memory plan about streaming backends |
+| released casacure | **3.8.9** (tag `v3.8.9`; PyPI, crates.io).  3.8.8: tables grow in place on write (dask-ms writes are chunk-bounded), IncrementalStMan writer fix.  3.8.9: StandardStMan Direct arrays (ANTENNA POSITION/OFFSET) in casacore's inline layout, zero-length array cells |
+| unreleased on `main` | nothing, in either repo |
+| branches | only `main` in both repos |
+| skarabina tests | moist (python-casacore): 458 pass, 2 skipped.  schmalzburg (casacure 3.8.9, `DASK_MS_BACKEND=casacure`): 455 pass, **5 fail**, all in `tests/test_write_changed_only.py` (§3.4) |
+| casacure tests | `cargo test --release --workspace` (157 lib + 15 + 5 + 6) and `PYTHONPATH=tests/shim python -m pytest tests` (152 pass, 1 skipped) in `~/.venvs/ccdev` on moist; fmt/clippy clean |
 
 **Working agreements** (as practised with the user in this work):
 
 - Commit straight to `main` and push; no PRs.  Conventional subjects
-  (`perf(io):`, `feat(memory):`, `fix(tfcrop):`, `docs:`, `bench:`), a body
-  that says what was measured, and the trailer
-  `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+  (`perf(io):`, `feat(memory):`, `fix(tfcrop):`, `docs:`, `bench:`), and a
+  body that says what was measured.  (Commit trailers: follow the current
+  session's instructions; the user's later sessions asked for none.)
 - **Release only when the user asks** ("release it as X"); then follow the
-  `AGENTS.md` checklist without further questions.
+  `AGENTS.md` checklist without further questions.  casacure releases follow
+  the same pattern: bump `Cargo.toml` (workspace version and the `casacure`
+  dependency), `pyproject.toml` and `Cargo.lock`; move `CHANGELOG.md`
+  [Unreleased] under `## [X.Y.Z] - date`; commit `release: bump to X.Y.Z (...)`;
+  make an annotated tag `vX.Y.Z` with message `casacure X.Y.Z (...)`; push main,
+  then the tag.  CI publishes to PyPI (~8 min) and crates.io.
+  **Wait for all the cp3xx wheels on PyPI before tagging a skarabina release
+  that raises the casacure pin.**  1.0.9's Docker build failed on the first
+  try because PyPI served casacure 3.8.8 without its cp313 wheel yet; a
+  `gh run rerun --failed` fixed it.
 - Ask before deleting branches, remote files, or anything under
   `~/github/meerkat_imaging`.
 - Every performance claim comes with a measurement: numbers, host, load,
@@ -29,9 +41,14 @@ Everything below is committed and pushed to `origin/main`.
   not alter results.
 
 **Running the tests** (moist, local): `.venv/bin/python -m pytest -q` from the
-repo root — no environment variable needed (python-casacore); ~17 s; all pass.  `.venv/bin/flake8 skarabina tests/test_*.py
-bench` for lint (pre-existing warnings in `tests/test_frequency_average.py`).
-The cab schema: `cd cargo && .venv/bin/python -m pytest -q tests`.
+repo root — no environment variable needed (python-casacore); ~17 s; all pass.
+`.venv/bin/flake8 skarabina tests/test_*.py bench` for lint (two pre-existing
+E501s in `bench/baseline_noise.py` and `bench/mem_block.py`).  The cab schema:
+`cd cargo && ../.venv/bin/python -m pytest -q tests`.  With casacure on moist:
+`DASK_MS_BACKEND=casacure PYTHONPATH=../casacure/tests/shim
+~/.venvs/ccdev/bin/python -m pytest -q tests`.  That venv has the casacure dev
+build, python-casacore 3.8.1, `../dask-ms` and skarabina, all editable.  It
+fails 14 tests that assume python-casacore storage layouts or read counts.
 
 **How the single pass fits together** (read `DaskMS._report`'s docstring and
 the comment block before `ms.materialise_flags()` in `skarabina/main.py`):
@@ -40,56 +57,65 @@ rflag/tfcrop (`_defer_autofit`) queue their reductions through `_report`
 instead of computing; whichever compute comes last takes the queue with
 `_take_pending` — the write (`write_new_ms` full path, or `_write_columns`
 for `--write-changed-only`/`--apply`), `materialise_flags` (only with
-`--optimize`/`--barber`), or `flush_reports` at the end of `main`.
+`--optimize`/`--barber`), or `flush_reports` at the end of `main`.  The
+averaging and `--optimize` calls in `main()` come after it, lazily (removing
+them is what broke 1.0.8; `tests/test_cli_transforms.py` guards them).
 
-What 1.0.7 contains is in `doc/CHANGES.md`.  In short:
+**What the work so far achieved** (details in `doc/CHANGES.md`,
+`BENCHMARKS.md`, `../casacure/BENCHMARK.md`, `../casacure/MEMORY.md`):
 
-- **tfcrop** ~10x faster (vectorised lane flagging, batched time fits, window
-  views); pre-existing flags left out of its scatter.
-- **Baseline-aware chunks** (`skarabina/baselines.py`, `dask_ms.AUTOFIT_BASELINES`,
-  default on): a dask row chunk is ~1900 interleaved baselines per integration,
-  not one baseline's time series.  Rows are grouped by (scan, baseline); rflag's
-  windows stay inside a baseline; tfcrop fits a bandpass per baseline; both use
-  a per-antenna noise model (`noise_ij ~ s_i s_j`, fits every baseline to 1.5 %
-  on MeerKAT).  tfcrop's flagging of the RFI-free band on mergA_tim scan 1 fell
-  from 30 % to 4-6 %.
-- **rflag bug fixes**: complex masking (`nan+0j`, 1.0.6); window count divided
-  by window length so flagged samples counted as zeros; single-sample windows
-  gave scatter 0.
-- **Memory**: `--memory-limit-GB` (0 = available RAM, cgroup-aware) and a
-  printed per-run plan (`skarabina/memory.py`): the row chunk is the largest
-  keeping every verb of the `--flag` list within the limit; `save:` and a full
-  write are whole-table steps and only warned about.  `restore:` reads lazily.
-- **I/O**: a run reads DATA once.  Every verb's statistics go through
-  `DaskMS._report` (queued in a run), and the last step is the pass.
+- **Flaggers:** tfcrop ~10x faster, rflag ~2.5x faster
+  (bit-identical), baseline-aware chunks with a per-antenna noise model
+  (`doc/RFLAG.md`).
+- **I/O:** a run reads DATA once, whatever the verbs, averaging and write.
+- **Memory:** a printed per-run plan (`skarabina/memory.py`,
+  `--memory-limit-GB`).  Since casacure 3.8.8 every write is chunk-bounded:
+  on mergA_tim scan 1, stage-0 + `save:` + 32x-averaged `--msout` went from
+  74.4 s / 21.7 GB to 17.2 s / 7.4 GB.  A full-resolution 11 GB `--msout`
+  peaks at 4.1 GB.
+- **casacure against python-casacore** (casacure's time / casacore's time):
+  - skarabina on scan 1: 0.80x for the averaged write and 0.62x for
+    `--write-changed-only`, in 23-46 % less memory.
+  - dask-ms chunked reads: at parity, or 0.40x at 1000-row chunks.
+  - Small cached-table calls (`casacure-bench`): 3-5x slower.
+  - Correctness: an MS written through casacure reads back in casacore
+    identically to python-casacore's own output, in all 132 columns of main
+    and subtables.
 
 ## 2. Machines
 
 **schmalzburg** (`ssh tim@schmalzburg`, passwordless) — Ryzen 5 5600G, 12
-threads, 62 GB, casacure 3.8.7, numpy 2.5, dask-ms 0.2.32.  **Shared and often
-heavily loaded** (DDFacet imaging); check `uptime` before timing anything and
-quote the load with every number.  At handover it was loaded: an I/O comparison
-was stopped half way (§3.1).
+threads, 62 GB.  **Shared and often heavily loaded** (DDFacet imaging); check
+`uptime` before timing anything and quote the load with every number.
 
-- repo: `~/github/skarabina` (on `main`, `.venv` with casacure); always
-  `export DASK_MS_BACKEND=casacure` — without it nothing imports.
+- repo: `~/github/skarabina` (on `main`).  Two venvs:
+  - `.venv`: casacure **editable** from `~/github/casacure` (3.8.9,
+    `f9e19e0`), dask-ms 0.2.32.  Always `export DASK_MS_BACKEND=casacure`,
+    or nothing imports.  After a casacure change, rebuild it with
+    `export PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH; cd ~/github/casacure
+    && source ~/github/skarabina/.venv/bin/activate && maturin develop --uv
+    --release` (plain `maturin develop` fails: the venv has no pip).
+  - `.venv-casacore`: real python-casacore 3.8.1, for casacure-vs-casacore
+    comparisons.  Run skarabina **without** `DASK_MS_BACKEND` there; it also
+    holds a PyPI casacure 3.8.7 (the lock at creation), which is unused.
+  - The editable skarabina metadata in both reports an old version (1.0.5 /
+    1.0.8); the code is the checkout.
 - data: `~/github/meerkat_imaging/ms-orig/mergA_tim.ms` (124 GB, 1 639 497 rows
   x 2511 chan x 2 corr, MeerKAT L band; scan 1 = 143 716 rows, the bandpass
   calibrator).  **Never write to it**: `save:` puts flag versions beside it,
   `--apply` rewrites it.
 - `~/github/skarabina/.bench/scan1.ms` (11 GB, gitignored): a written copy of
   scan 1, for anything that writes.  `scan1.ms.flagversions` holds test
-  versions `memtest` and `imported` (625 MB) — deletable.
-- `.bench/iocmp3.log`: output of the interrupted comparison (§3.1);
-  `.bench/iocmp3.sh` was its ad-hoc driver, superseded by
-  `bench/compare_versions.sh` (it needed `/tmp/ioprobe.py`, now gone).
-- the tests there: run with `DASK_MS_BACKEND=casacure`; tests that import
-  `casacore.tables` before `daskms` fail with `No module named casacore`
-  (import order), and 15 write-path tests fail with casacure `PoisonError`
-  panics — both happen on 1.0.6 too; the flagging tests pass.
+  versions `memtest`, `imported` and a few `imported.old.*` — all deletable
+  (edit `FLAG_VERSION_LIST` too when removing one).
+- `.bench/*.sh`, `*.log`, `*.out` are ad-hoc drivers and their output from
+  this work (`run_grow.sh`: the canonical benchmark; `ab.sh`: casacure vs
+  casacore, alternating); deletable.
 
-**moist** (the local workstation, `/home/tim/github/skarabina`) — 8 cores,
-30 GB, python-casacore 3.8.1 (not casacure), numpy 2.4.6, dask-ms 0.2.23.
+**moist** (the local workstation, `/home/tim/github/skarabina`) — Intel Core
+Ultra 7 258V, 8 cores, 30 GB.  `.venv`: python-casacore 3.8.1 (not casacure),
+numpy 2.4.6.  `~/.venvs/ccdev`: the casacure dev venv (see §1); build casacure
+into it with `maturin develop --release` in `../casacure`.
 `/tmp` is tmpfs.  No MeerKAT data; `bench/make_synthetic_ms.py` writes a
 bpcal-shaped MS (79 x 2 fixed); `tests/ms_fixture.make_synthetic_ms(path,
 nchan=, nrow=, ncorr=)` makes any shape.  The bench scripts set
@@ -108,160 +134,134 @@ killed process (SIGKILL, OOM) leaves one behind; check
 
 ## 3. Next steps, in order
 
-### 3.1 ~~Finish verifying `760e0ee` on real data, release 1.0.8~~ -- done (1.0.8 released)
+### 3.1 Recalibrate the memory plan now that writes stream
 
-**Done after the handover** (schmalzburg idle, load 0.00): the rflag list with
-`--summary --write-changed-only` read DATA once in both versions; v1.0.7
-233.1 s / 25.7 GB, `760e0ee` 232.6 s / 25.5 GB
-(`~/github/skarabina/.bench/cmp-760e0ee-rflag.log`).  The numbers are in
-`doc/CHANGES.md`.  What remains is the release, when the user asks.
+With casacure >= 3.8.9 installed, `memory.writes_stream()` is true.  `save:`
+and the writes are then per-chunk steps, and `TABLE_COST` only applies to
+casacure <= 3.8.7.  Two constants need measuring against this:
 
-The original instructions, kept for re-running:
+- `CONCURRENT_WRITE_COST["write"]` (8 B/vis, measured when casacure still
+  buffered).  The averaged run planned 9.7 GB and peaked at 7.4 GB (scan 1,
+  12 workers x 11 977 rows).  The full-resolution write peaked at 4.1 GB.
+  Measure both, with `bench/mem_run.py` or `/usr/bin/time -v` on
+  `.bench/scan1.ms`, at two chunk sizes (e.g. 5 000 and 12 000 rows), and
+  refit.  The averaged output is smaller than the input, so the cost may
+  need splitting into input-side and output-side parts.
+- The streamed `save:` estimate (`SAVE_CHUNK_ROWS` x `SAVE_CHUNK_COST` = 3 B/vis)
+  was measured on a synthetic 256 x 4 cube only; check it on scan 1 (2511 x 2)
+  with `--flag save:x` alone.
 
-`760e0ee` makes `--write-changed-only` and `--apply` write every changed
-column in one `dask.compute` with the run's queued reports
-(`DaskMS._write_columns`), instead of materialising the flags first.  Already
-verified on synthetic data: output and reports identical to v1.0.7
-(write-changed-only and apply, with `--summary`, for nan/clip/autos/uv-above,
-rflag and tfcrop lists) and DATA read once (`tests/test_single_pass.py`).
-On schmalzburg, stage-0 list with `--summary --write-changed-only`: 1.0.7
-5.82 s, `760e0ee` 4.98 s, both 1 DATA pass (1.0.7 read it once too, via the
-materialising pass), both 3.2 GB peak (`~/github/skarabina/.bench/iocmp3.log`
-has this half).  **The rflag half was stopped** because the machine was
-loaded.  When `uptime` shows it idle (load < 2):
+**Done when** the plan is at or above the measured peak and within ~25 % of
+it for these runs.  Say in the plan's printout which casacure was assumed.
 
-```sh
-ssh tim@schmalzburg uptime          # go ahead only if the load is < 2
-ssh tim@schmalzburg 'cd ~/github/skarabina && git pull --ff-only &&
-  bench/compare_versions.sh .bench/scan1.ms v1.0.7 \
-    "autos, uv-above 8000, nan, clip 0 100, spectral-window bench/spectral-flags-L.yml, rflag" \
-    --workers 12 --summary --msout OUT --clobber --write-changed-only' 2>&1 | tee cmp.log
-```
-
-(~10 minutes; if it is interrupted, run `git worktree prune` there.)
-
-(`compare_versions.sh` makes a temporary worktree of the old ref, runs both
-through `bench/io_probe.py`, writes only to `.bench/cmp_out.ms` and deletes
-it; it never writes to the input.)  **Done when**: both versions read DATA
-once (`IOPROBE TOTAL DATA=5506` MB), the new one is not slower beyond the
-machine's noise (a few %), and its peak RSS is within ~10 % of 1.0.7's (the
-plan counts the flags-only write at 1 B/vis/worker,
-`memory.CONCURRENT_WRITE_COST["write-flags"]`).  Then put the rflag numbers
-into the `## [Unreleased]` entry of `doc/CHANGES.md` (it already describes
-`760e0ee` and says the rflag list is pending).  Release 1.0.8 only when the
-user asks, with the `AGENTS.md` checklist.
-
-### 3.2 ~~casacure buffers whole tables on write~~ -- done in casacure `d016b8d`, not yet released
-
-Before: `save:<name>` peaked at ~2.2 B per MS visibility (18-19 GB for
-mergA_tim), and a full `--msout` at ~56 B per output visibility, because every
-flush of a table larger than its files regenerated the whole table.  Now
-`WritableTable::flush` grows the files in place (`../casacure/crates/casacure/src/grow.rs`):
-- TSM tile files are zero-extended.
-- StandardStMan appends buckets and rewrites its index chain.
-- IncrementalStMan re-encodes its last bucket and appends new ones.
-
-The chunk just written is then patched in.  skarabina's `save:` flushes per
-chunk (`ca9264e`).  Results are in `BENCHMARKS.md` (2026-09-26) and
-`../casacure/MEMORY.md`.  On scan 1, the stage-0 + averaged `--msout` run went
-from 74.4 s / 21.7 GB to 17.2 s / 7.4 GB.  A full-resolution 11 GB write
-peaks at 4.1 GB.
-
-Remaining:
-1. ~~A casacure release~~ -- casacure 3.8.8 released and pinned
-   (`casacure>=3.8.8`) in skarabina 1.0.9; `memory.writes_stream()` is now
-   true for an installed release.
-2. Re-measure `CONCURRENT_WRITE_COST["write"]` (8 B/vis) now that the write is
-   per-chunk.  The averaged run above peaked at 7.4 GB against a plan of
-   9.7 GB, so the constant is not low.
-3. schmalzburg: `~/github/skarabina/.venv` has an **editable** casacure from
-   `~/github/casacure` (now `d016b8d`; it was `63556a5`, not the PyPI
-   wheel).  Rebuild it with `PATH=$HOME/.cargo/bin:$PATH maturin develop
-   --uv --release` in `~/github/casacure` with that venv active.
-
-### 3.2b ~~casacure cannot read StandardStMan Direct arrays~~ -- fixed in casacure 3.8.9, required by skarabina 1.0.10
-
-An MS built by python-casacore's `default_ms` (e.g. `bench/make_synthetic_ms.py`)
-keeps UVW in StandardStMan with option 5 (Direct | FixedShape): the cells are
-inline in the bucket.  casacure (3.8.7 and 3.8.8) reads them as array-file
-references ("array reference 4647503709213818880 falls outside the array index
-file" -- that number is 500.0's bit pattern), so `bench/flag_timing.py` on the
-synthetic MS fails under casacure.  Real MeerKAT MSes keep UVW tiled.  Fix in
-`../casacure/crates/casacure/src/ssm.rs` (read), `table.rs` `build_ssm_data`
-and `grow.rs` (write: casacure writes f0i references for such a column, which
-casacore would misread).  Recorded in casacure's CHANGELOG (3.8.8 Known issues)
-and ARE_WE_CURED.md.
-
-### 3.3 Validate the memory model on other shapes
+### 3.2 Validate the memory model on other shapes
 
 `skarabina/memory.py` constants were measured on one MS shape (2511 chan x 2
-corr, 12 workers) — `CHUNK_COST` per verb, `TABLE_COST`, `BASE_BYTES`,
+corr, 12 workers) — `CHUNK_COST` per verb, `BASE_BYTES`,
 `CONCURRENT_WRITE_COST`.  Check a 4k/32k-channel MS, 4 correlations, a few
 workers, and averaging -- under casacure (schmalzburg), which is what the
 constants describe.  Make shapes with `tests/ms_fixture.make_synthetic_ms`
-plus noise (as `bench/make_synthetic_ms.py` does for 79 x 2); no real MS of
-another shape is known locally -- ask the user.  Tools: `bench/mem_run.py`
-(end-to-end peak RSS of a flag list at a given chunk/workers) and
-`bench/mem_block.py` (per-block working memory; must stay linear in rows).
-**Done when** the plan's estimate is at or above the measured peak and within
-~25 % of it for each shape tried; if not, refit the constant for the verb that
-misses (they are per visibility, so a new shape should not change them).  Checked so far: the plan predicted
-27.2 GB / 12.8 GB against 26.5 / 11.6 GB measured (stage-0 + rflag), and 33.8
+plus noise (as `bench/make_synthetic_ms.py` does for 79 x 2).  That works
+under casacure since 3.8.9, whose Direct-array fix lets it read the UVW
+`default_ms` makes.  No real MS of another shape is known locally -- ask the
+user.  Tools: `bench/mem_run.py` (end-to-end peak RSS of a flag list at a
+given chunk/workers) and `bench/mem_block.py` (per-block working memory;
+must stay linear in rows).  **Done when** the plan's estimate is at or above
+the measured peak and within ~25 % of it for each shape tried; if not, refit
+the constant for the verb that misses.  Checked so far (scan 1): stage-0 +
+rflag planned 27.2 / 12.8 GB against 26.5 / 11.6 GB measured, and 33.8
 against 31.0 GB with the full write in the pass.
 
-### 3.4 Performance improvements not yet done
+### 3.3 Re-run the flag bench casacure vs casacore on the synthetic MS
+
+`bench/flag_timing.py --ms .bench/data/synth.ms --backend casacure|casacore`
+(moist; `.bench/data/synth.ms`, 430 000 rows, is there).  It failed under
+casacure before 3.8.9 (the UVW Direct array); with 3.8.9 it should run.
+python-casacore took 7.8 s / 2.8 GB for the stage-0 list + rflag (2026-09-26,
+load < 1).  Build casacure 3.8.9 into `~/.venvs/ccdev`, pass
+`--python ~/.venvs/ccdev/bin/python`, and add both rows to `BENCHMARKS.md`.
+
+### 3.4 The 5 `test_write_changed_only.py` failures under casacure
+
+On schmalzburg (casacure 3.8.9) these fail:
+- `test_the_fixture_has_sharable_columns`
+- `test_unchanged_columns_are_shared_with_the_input`
+- `test_shared_blocks_are_read_only_so_the_input_cannot_be_edited`
+- `test_a_block_left_read_only_by_an_earlier_run_can_still_be_rewritten`
+- `test_a_copied_shared_block_is_left_writable`
+
+They say the fixture MS has no column in a storage manager of its own
+("expected at least one non-FLAG column in its own storage manager"), so the
+block sharing of `--write-changed-only` has nothing to hard-link.  The fixture
+is built by the backend under test, and casacure's `default_ms`/`maketabdesc`
+path seems to put the columns into shared managers.  Confirm that first.  The
+flags themselves are written correctly; only the hard links are missing.  Two ways to go:
+- **(a)** have casacure honour the per-column `dataManagerGroup`s that
+  casacore's `default_ms` assigns (compare `getdminfo()` of the same fixture
+  under both backends).  Then the sharing works under casacure too.
+- **(b)** mark the tests as python-casacore-layout tests.
+
+(a) is the real fix; agree it with the user, it is casacure work.
+
+### 3.5 casacure's per-call overhead on small tables
+
+`casacure-bench` (20k-row cached table): putcol 3.0x, getcol 3.5x, taql 4.8x
+python-casacore.  Invisible in skarabina, whose reads and writes are large and
+chunked, but it matters to anything that makes many small calls, such as
+subtable edits and TaQL-heavy tools.  The cost is the per-cell `RecordValue`
+packaging in `crates/casacure-python/src/table.rs` (putcol/getcol of scalar
+columns) and TaQL result materialisation; the typed `getcol_raw` path
+already exists for reads.  See `../casacure/BENCHMARK.md` "Where the
+remaining gap lives".  casacure work; agree with the user first.
+
+### 3.6 Outputs written with old casacure
+
+Users of skarabina <= 1.0.9 with casacure <= 3.8.8 may hold `--msout` outputs
+with:
+- **(1)** wrong SCAN_NUMBER / FIELD_ID (the IncrementalStMan writer bug fixed
+  in 3.8.8), where a value recurred after the first bucket, e.g. FIELD_ID
+  alternating calibrator/target;
+- **(2)** an ANTENNA (and FEED) table casacore misreads (the Direct layout).
+  casacure 3.8.9 still reads it correctly and converts it on its first write.
+
+A small check command could compare an output's SCAN_NUMBER / FIELD_ID /
+TIME with its input, and rewrite the subtables through casacure 3.8.9.  A
+`skarabina-check` entry point, or a `bench/` script, would do.  Only if the
+user wants it.
+
+### 3.7 Performance improvements not yet done
 
 Roughly by expected value:
 
-1. **rflag CPU** dominates any run with rflag.  *After the handover:* the
-   spectral step's neighbour medians were 80 % of it and are fixed (width 1
-   direct, wider spans only where needed; bit-identical): scan 1 with the
-   stage-0 list went 232 s -> 95 s.  A plane is now ~4 s single-threaded,
-   split evenly between the spectral step and the time step's prefix sums;
-   the rest below is what remains.  Originally: ~260-300 s for scan 1 on 12
-   threads, vs ~10 s for the other verbs.  Profile a real block (use
-   `bench/mem_block.py` rows + cProfile).  Candidates: the spectral step's
-   three neighbour-median widths (`rflag._neighbour_residual_rows`) — only
-   unresolved samples need the wider ones; the time step's per-channel-group
-   `local_rms` (prefix sums; could run in float32); `baseline_noise`'s
-   strided medians.
+1. **rflag CPU** dominates any run with rflag: scan 1 with the stage-0 list +
+   rflag is ~95 s (was 232 s before the neighbour-median fix), against ~10 s
+   for the other verbs.  A plane is ~4 s single-threaded, split evenly
+   between the spectral step and the time step's prefix sums.  Profile a real
+   block (`bench/mem_block.py` rows + cProfile).  Candidates: the time step's
+   per-channel-group `local_rms` (prefix sums; could run in float32);
+   `baseline_noise`'s strided medians.
 2. **tfcrop baseline-aware path** (~90 s for scan 1): `robust_fit_columns`
    over ~1900 baselines per chunk is the bulk; the fit per baseline could be
    cached across the two correlations, or fewer attempts used for the
    time-averaged spectra (already smooth).
-3. **`--optimize` still costs a second DATA pass** (it must see the flags to
-   choose rows/channels before the write).  Possible: compute the row/channel
-   keep-masks inside the materialising pass and write from spilled flags plus
-   one DATA pass — the second DATA read is the write itself, so this is
-   already minimal unless DATA is spilled too.  `--barber` likewise.
+3. **`--optimize` / `--barber` cost a second DATA pass** (they must see the
+   flags before the write).  Already minimal unless DATA is spilled too.
 4. **Time series per baseline are short**: ~5 integrations of each MeerKAT
-   baseline in a 10 000-row chunk; rflag's `winsize=3` sees little.  The
-   memory plan now picks larger chunks when RAM allows (21k rows on
-   schmalzburg); a chunking that follows baselines across integrations (sort
-   by baseline, or read with dask-ms `group_cols`/`index_cols`) would remove
-   the limit — a big change to `DaskMS.__init__` and every writer.
+   baseline in a 10 000-row chunk; rflag's `winsize=3` sees little.  A
+   chunking that follows baselines across integrations (sort by baseline, or
+   dask-ms `group_cols`/`index_cols`) would remove the limit — a big change
+   to `DaskMS.__init__` and every writer.
 5. **Global thresholds** as CASA (one per field/spw over the whole selection,
    `computeThreshold` in `FlagAgentRFlag.cc`, see RFLAG.md §2): skarabina
-   measures per chunk.  A two-pass mode would cost a second DATA pass; an
-   alternative is to pool per-chunk statistics in the single pass and apply
-   them in the write pass (needs the flags to be decided after the pool).
-6. ~~`flag_spectral_window` computes `uv_dist` eagerly~~ -- done after the
-   handover: the gates are lazy, which also removed a table-sized numpy
-   array per YAML entry (`doc/CHANGES.md`).  Re-measured with
-   `bench/mem_run.py` on scan 1, 12 workers: 1.06 / 1.81 GB at 5 000 /
-   10 000 rows (was 1.84 / 2.59 GB), the same as `nan`;
-   `memory.CHUNK_COST["spectral-window"]` lowered from 5 to 4 B/vis.
-7. **Graph size**: `materialise_flags` and `_run_autofit` compute with
-   `optimize_graph=False`, because they mix delayed and array collections and
-   dask optimises those separately, renaming the shared read tasks (DATA was
-   read twice).  The writes (`write_new_ms`, `_write_columns`) compute
-   optimised: everything there is a dask array (rflag/tfcrop's delayed blocks
-   enter as `from_delayed` arrays), so it is optimised together and the reads
-   stay shared -- `tests/test_single_pass.py` checks both write paths read DATA
-   once.  Fine at 15-150 chunks; check task-scheduling overhead on a whole
-   1.6M-row MS at small chunks.
+   measures per chunk.  Pooling per-chunk statistics in the single pass and
+   applying them in the write pass would avoid a second DATA pass.
+6. **Graph size**: `materialise_flags` and `_run_autofit` compute with
+   `optimize_graph=False` (mixed delayed/array collections; optimising them
+   separately renamed the shared read tasks and read DATA twice).  Fine at
+   15-150 chunks; check task-scheduling overhead on the whole 1.6M-row MS at
+   small chunks.
 
-### 3.5 Open algorithm questions (need the user's decision)
+### 3.8 Open algorithm questions (need the user's decision)
 
 - **Short-lane scatter fallback** (`tfcrop.MIN_LANE_SAMPLES`, `LANE_POOL`,
   `POOL_SAMPLES`; default off): helps narrow-band data only; on mergA_tim no
@@ -308,6 +308,12 @@ has no rflag.
   xarray DataArray evaluated the whole column eagerly (fixed in `summary`).
 - Old-vs-new comparisons: compare DATA with `equal_nan=True`; `pkill -f` over
   ssh can match the ssh command itself — kill by PID.
-- `BENCHMARKS.md` has not been refreshed since the 3.8.6/3.8.7 comparison;
-  `bench/flag_timing.py` on `echo` (bpcal.ms) would give the before/after for
-  1.0.7 on the original bench host.
+- A new CLI option must be exercised through the CLI (`click.testing.CliRunner`
+  on `skarabina.main.main`), not only through `DaskMS` methods: 1.0.8 shipped
+  with three options silently disconnected (`tests/test_cli_transforms.py`).
+- Measuring peak RSS of a child process: poll `/proc/<pid>/status` VmHWM from
+  the parent.  The child's `ru_maxrss` inherits the parent's peak across
+  fork+exec, and made every chunk size of casacure's
+  `bench_daskms_chunking.py` report the same number.
+- `bench/flag_timing.py` on `echo` (bpcal.ms) would give before/after numbers
+  on the original bench host; not run in this work.
