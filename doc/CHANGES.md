@@ -3,6 +3,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Requires casacure >= 3.8.9.  casacure 3.8.8 could not read the ANTENNA
+  POSITION/OFFSET (StandardStMan Direct arrays) of a casacore-written MS.
+  It also wrote them in a layout casacore misreads, so the ANTENNA table of
+  an ``--msout`` written with casacure <= 3.8.8 reads wrongly in casacore.
+  casacure 3.8.9 reads such a table correctly and rewrites it on its first
+  write.
+
 ## [1.0.9]
 
 ### Fixed
