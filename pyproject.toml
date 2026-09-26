@@ -13,8 +13,11 @@ dependencies = [
     "dask-ms[casacure,xarray,zarr]",
     # 3.8.8: tables grow in place on write (save: and --msout are
     # chunk-bounded) and the IncrementalStMan writer no longer loses
-    # SCAN_NUMBER / FIELD_ID values.
-    "casacure>=3.8.8",
+    # SCAN_NUMBER / FIELD_ID values.  3.8.9: Direct array columns (the MS's
+    # ANTENNA POSITION/OFFSET, FEED POSITION) in casacore's inline layout --
+    # 3.8.8 could not read them from a casacore MS and wrote them in a form
+    # casacore misreads.
+    "casacure>=3.8.9",
     "zarr>=2.0",
     "angle-parser>=0.1.0",
 ]
@@ -30,7 +33,7 @@ skarabina-analyze = "skarabina.analyze:main"
 # way to ask for the Rust backend: pip install skarabina[casacure].  Runs select
 # it with DASK_MS_BACKEND=casacure; without casacure installed, dask-ms falls
 # back to real python-casacore.
-casacure = ["casacure>=3.8.8"]
+casacure = ["casacure>=3.8.9"]
 
 [dependency-groups]
 dev = [
