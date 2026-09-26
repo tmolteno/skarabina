@@ -134,25 +134,40 @@ killed process (SIGKILL, OOM) leaves one behind; check
 
 ## 3. Next steps, in order
 
-### 3.1 Recalibrate the memory plan now that writes stream
+### 3.1 Recalibrate the memory plan now that writes stream — done 2026-09-26
 
-With casacure >= 3.8.9 installed, `memory.writes_stream()` is true.  `save:`
-and the writes are then per-chunk steps, and `TABLE_COST` only applies to
-casacure <= 3.8.7.  Two constants need measuring against this:
+Re-measured on `.bench/scan1.ms` with the new `bench/mem_recal.py` (one
+skarabina process per case at a fixed `--row-chunk`, the child's peak from
+`wait4`, 2-3 runs per case; the box was at load 5-13 throughout, so read the
+medians and the spread in BENCHMARKS.md).  Results:
 
-- `CONCURRENT_WRITE_COST["write"]` (8 B/vis, measured when casacure still
-  buffered).  The averaged run planned 9.7 GB and peaked at 7.4 GB (scan 1,
-  12 workers x 11 977 rows).  The full-resolution write peaked at 4.1 GB.
-  Measure both, with `bench/mem_run.py` or `/usr/bin/time -v` on
-  `.bench/scan1.ms`, at two chunk sizes (e.g. 5 000 and 12 000 rows), and
-  refit.  The averaged output is smaller than the input, so the cost may
-  need splitting into input-side and output-side parts.
-- The streamed `save:` estimate (`SAVE_CHUNK_ROWS` x `SAVE_CHUNK_COST` = 3 B/vis)
-  was measured on a synthetic 256 x 4 cube only; check it on scan 1 (2511 x 2)
-  with `--flag save:x` alone.
+- `CONCURRENT_WRITE_COST["write"]` 8 -> **4.5** B per input visibility in
+  flight; a new `CONCURRENT_AVERAGING_COST` **4** is charged on top when the
+  output is smaller than the input (the averaging holds the input chunk it
+  reads -- the split the note above asked for, though it is the *averaged*
+  write that turns out to cost more, not less).
+- `write-flags` 1 -> 0.5 (measured ~0), `read` 1 -> 0.5 (`save:` alone planned
+  1 229 MiB and peaked at 805).
+- The streamed `save:` chunk (20 000 rows x 3 B/vis) needed no change: 800 MiB
+  planned against 805 MiB measured on scan 1 (5 runs).
+- The plan prints the backend it assumed now: `backend  casacure 3.8.9
+  (>3.8.7): each write is a per-chunk step`.
 
-**Done when** the plan is at or above the measured peak and within ~25 % of
-it for these runs.  Say in the plan's printout which casacure was assumed.
+Against the worst run of each of the five runs the task named, the plan lands
+at 0.97-1.07, except the full-resolution write at 12 000 rows (1.39); against
+the medians, 1.00-1.54.  BENCHMARKS.md has the table, the constants and the
+residuals.
+
+**Left over, and it needs a form change rather than a constant.**  The measured
+peak grows sublinearly with the row chunk (2 384 MiB at 12 000 rows against
+4 997 at 40 000 for the same list) and is far less sensitive to `--workers`
+than `workers x row_chunk x bytes_per_vis` implies -- halving the workers cut
+the peak's increment by 7-30 %, not 50 % -- so the plan still over-predicts by
+up to 2.7x at large chunks (the canonical master-MS run plans 46.4 GB against
+27.9 GB measured) and under-predicts by up to 30 % with `--workers` lowered or
+at chunks well below `nrow / workers`.  A per-chunk term alongside the
+per-worker one would fit both; measure it on a quiet machine, since these runs
+had ±20-50 % run-to-run spread.
 
 ### 3.2 Validate the memory model on other shapes
 

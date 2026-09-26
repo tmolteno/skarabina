@@ -62,6 +62,7 @@ tracked; the measurement set it runs on is not.
 | `bench/spectral-flags-L.yml` | copy of `../meerkat_imaging/spectral-flags-L.yml`, used by the `spectral-window` entry |
 | `bench/run_stage.py` | child process: fixes the casacure/casacore import order, then runs the CLI |
 | `bench/make_synthetic_ms.py` | writes a bpcal-shaped synthetic MS (79 chan x 2 corr, ~69 % pre-flagged) for hosts without `bpcal.ms` |
+| `bench/mem_recal.py` | times a flag list at fixed row chunks, beside the plan's estimate, to re-fit `skarabina.memory`'s constants |
 
 The workload is the stage-0 flag sequence of `../meerkat_imaging`
 (`white-belt-0-flagging.yml`, step `flag-average`) — `save:imported`, `autos`,
@@ -153,9 +154,13 @@ options control the concurrent-chunk working set (mirroring tricolour's
   (default 0 = the RAM available): the largest chunk keeping every verb's
   `fixed + workers * N * nchan * ncorr * bytes_per_vis` within 80 % of the
   limit.  The per-verb constants (`CHUNK_COST`, `TABLE_COST`) are measured
-  (doc/RFLAG.md §7.3-7.4); re-measure them when a change alters a verb's
-  working set.  `save:` and a full `--msout` write are whole-table steps
-  (casacure buffers the written table) and are only warned about.
+  (doc/RFLAG.md §7.3-7.4) and were re-measured on 2026-09-26 for casacure
+  3.8.9's streamed writes (`bench/mem_recal.py`; BENCHMARKS.md has the table
+  and the residuals -- the plan over-predicts at large chunks and
+  under-predicts when `--workers` is lowered); re-measure them when a change
+  alters a verb's working set.  `save:` and a full `--msout` write are
+  whole-table steps only on a backend that buffers a written table (casacure
+  <= 3.8.7); the plan prints which backend it assumed.
 - A run reads DATA once: every verb's statistics are queued (`DaskMS._report`)
   and computed in the run's single pass -- the full write when there is one
   (averaging and the summary included), else `materialise_flags`, else

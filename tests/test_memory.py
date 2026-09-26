@@ -73,10 +73,41 @@ def test_a_write_in_the_same_pass_costs_the_flaggers_room():
     apart = memory.plan(STAGE0 + ["rflag"], 62 * GB, 12, **kw)
     together = memory.plan(STAGE0 + ["rflag"], 62 * GB, 12, concurrent_write=True, **kw)
     assert together.row_chunk < apart.row_chunk
-    fits = memory.chunk_bytes("rflag", together.row_chunk, 12, 2511, 2,
-                              memory.CONCURRENT_WRITE_COST["write"])
+    extra = memory.write_extra("write", MEERKAT["nrow"] * 2511 * 2,
+                               kw["out_visibilities"])
+    fits = memory.chunk_bytes("rflag", together.row_chunk, 12, 2511, 2, extra)
     assert fits + memory.TABLE_COST["write"] * kw["out_visibilities"] \
         <= memory.SAFETY * 62 * GB
+
+
+def test_an_averaging_write_costs_more_than_a_plain_one():
+    """The averaging step holds the input chunk it is reading while the
+    averaged chunk is written, so the plan charges more for it."""
+    plain = memory.write_extra("write", 1000, 1000)
+    averaged = memory.write_extra("write", 1000, 100)
+    assert averaged > plain
+    assert memory.write_extra("write-flags", 1000, 1000) < plain
+    assert memory.write_extra(None, 1000, 1000) == 0
+
+
+def test_the_plan_says_which_backend_it_assumed(monkeypatch):
+    from importlib import metadata
+
+    monkeypatch.setenv("DASK_MS_BACKEND", "casacure")
+    monkeypatch.setattr(metadata, "version", lambda _name: "3.8.9")
+    streamed = memory.plan(["nan"], 62 * GB, 12, write="write", **MEERKAT)
+    line = [ln for ln in streamed.lines if ln.strip().startswith("backend")]
+    assert line and "casacure 3.8.9" in line[0] and "per-chunk" in line[0]
+
+    monkeypatch.setattr(metadata, "version", lambda _name: "3.8.7")
+    buffered = memory.plan(["nan"], 16 * GB, 12, write="write", **MEERKAT)
+    line = [ln for ln in buffered.lines if ln.strip().startswith("backend")]
+    assert line and "casacure 3.8.7" in line[0] and "buffered whole" in line[0]
+
+    monkeypatch.delenv("DASK_MS_BACKEND")
+    plain = memory.plan(["nan"], 62 * GB, 12, **MEERKAT)
+    line = [ln for ln in plain.lines if ln.strip().startswith("backend")]
+    assert line and "python-casacore" in line[0]
 
 
 def test_an_explicit_chunk_is_kept_and_checked():

@@ -8,7 +8,12 @@ the meerkat stage-0 list with rflag peaked at 21.1 GB, rflag alone at
 
 * **per chunk**: the step holds about one row chunk per dask worker, so it
   costs ``fixed + workers x row_chunk x nchan x ncorr x b``, and a smaller
-  chunk bounds it.  Reading and every flag verb are of this kind.
+  chunk bounds it.  Reading and every flag verb are of this kind.  The count
+  is the workers even when the table has fewer chunks than that: measured on
+  scan 1 (2026-09-26), a 40 000-row chunk of a 143 716-row table -- four
+  chunks -- peaked *above* four chunks' worth of the per-visibility cost, so
+  capping the count at the table's own chunk count under-predicts exactly
+  where the working set is largest.
 * **per table**: the step holds the whole table whatever the chunk.  casacure
   up to 3.8.7 buffers what it writes into a new table until the table is
   complete, so ``save:<name>`` holds the whole flag cube and a full
@@ -34,9 +39,12 @@ GB = 2**30
 #: Per-chunk steps: ``(bytes per visibility of one row chunk in flight per
 #: worker, fixed bytes)``.  Measured as peak RSS over rows in flight at 5000-
 #: and 10 000-row chunks x 12 workers on a 2511-channel, 2-correlation MS;
-#: tfcrop and rflag are the linear fits of doc/RFLAG.md §7.3.
+#: tfcrop and rflag are the linear fits of doc/RFLAG.md §7.3.  The cheap verbs
+#: were re-checked with bench/mem_recal.py on casacure 3.8.9 (2026-09-26): the
+#: stage-0 list without a write measured 2.7-5.5 B per input visibility in
+#: flight, depending on the chunk, so 4 still carries headroom.
 CHUNK_COST = {
-    "read": (1, 0),
+    "read": (0.5, 0),
     "autos": (2, 0),
     "uv-above": (1, 0),
     "nan": (4, 0),
@@ -55,12 +63,26 @@ CHUNK_COST = {
 #: averaging) holds DATA, WEIGHT_SPECTRUM and SIGMA_SPECTRUM -- measured: the
 #: stage-0 list + rflag peaked 5.4 GB above the same run with a separate write
 #: pass, at 12 workers x 11 977 rows x 2511 x 2, 7.5 B per visibility; a
-#: flags-only write holds FLAG and FLAG_ROW.
-CONCURRENT_WRITE_COST = {"write": 8, "write-flags": 1}
+#: flags-only write holds FLAG and FLAG_ROW.  Re-measured on casacure 3.8.9,
+#: which streams the write, with bench/mem_recal.py (2026-09-26): a full write
+#: adds 5.7-9.3 B per input visibility in flight on scan 1 (the spread is the
+#: chunk sizes measured, see BENCHMARKS.md), a flags-only write ~0, so 4.5
+#: keeps the plan above the smaller-chunk runs and a flags write stays cheap.
+CONCURRENT_WRITE_COST = {"write": 4.5, "write-flags": 0.5}
+
+#: Added on top of a full write when the output is smaller than the input: the
+#: averaging step holds the input chunk it is averaging while the averaged
+#: chunk is written, which a write of the same shape does not.  Measured 3.0-6.6
+#: B per input visibility in flight above the un-averaged write on scan 1 (the
+#: spread is the chunk size: the averaged 5 000- and 12 000-row runs need 11.1
+#: and 9.3 B/vis in total, 40 000-row ones less).  4 leaves the plan at the
+#: measured peaks of the runs the constants were fitted on; see BENCHMARKS.md
+#: for the residuals, which are largest at the largest chunks.
+CONCURRENT_AVERAGING_COST = 4
 
 #: Per-table steps: bytes per visibility of the whole table they hold --
 #: ``save`` per visibility of the input MS, the writes per visibility of the
-#: output (after averaging).
+#: output (after averaging).  Only a backend that buffers its writes has them.
 TABLE_COST = {
     "save": 2.5,
     "write": 56.0,          # --msout, every column
@@ -157,6 +179,35 @@ def writes_stream():
         return False
 
 
+def backend_note():
+    """Which backend and write behaviour the plan assumed, as one phrase.
+
+    Printed with the plan: a peak measured against the plan is only meaningful
+    next to the casacure (or python-casacore) it was planned for.
+    """
+    last = ".".join(str(part) for part in BUFFERING_CASACURE)
+    if os.environ.get("DASK_MS_BACKEND", "").lower() != "casacure":
+        return "python-casacore: writes through bounded bucket caches"
+    try:
+        from importlib.metadata import version
+        installed = version("casacure")
+    except Exception:
+        return "casacure (version unknown): writes assumed buffered"
+    if _version_tuple(installed) > BUFFERING_CASACURE:
+        return f"casacure {installed} (>{last}): each write is a per-chunk step"
+    return f"casacure {installed} (<= {last}): a written table is buffered whole"
+
+
+def write_extra(write, in_visibilities, out_visibilities):
+    """Per-visibility cost a write that shares the pass adds to every step."""
+    if write not in CONCURRENT_WRITE_COST:
+        return 0
+    extra = CONCURRENT_WRITE_COST[write]
+    if write == "write" and out_visibilities < in_visibilities:
+        extra += CONCURRENT_AVERAGING_COST
+    return extra
+
+
 def effective_workers(workers):
     """The dask thread count a ``--workers`` value means (0: all cores)."""
     return workers if workers and workers > 0 else (os.cpu_count() or 1)
@@ -165,8 +216,8 @@ def effective_workers(workers):
 def chunk_bytes(step, row_chunk, workers, nchan, ncorr, extra=0):
     """Estimated peak of a per-chunk step, in bytes (base included).
 
-    ``extra`` is added to the step's bytes per visibility and ``reserve`` --
-    see :func:`plan` -- is how a concurrent write enters.
+    ``extra`` is added to the step's bytes per visibility; ``workers`` chunks
+    are assumed to be in flight, for the reason the module docstring gives.
     """
     per_vis, fixed = CHUNK_COST[step]
     return BASE_BYTES + fixed + workers * row_chunk * nchan * ncorr * (per_vis + extra)
@@ -220,7 +271,7 @@ def plan(steps, memory_bytes, workers, nrow, nchan, ncorr,
     nvis = nrow * nchan * ncorr
     out = nvis if out_visibilities is None else out_visibilities
     concurrent = concurrent_write and write in CONCURRENT_WRITE_COST
-    extra = CONCURRENT_WRITE_COST[write] if concurrent else 0
+    extra = write_extra(write, nvis, out) if concurrent else 0
     reserve = TABLE_COST[write] * out if concurrent and not streamed_writes else 0
     budget = SAFETY * memory_bytes - reserve
     if row_chunk is None:
@@ -234,11 +285,14 @@ def plan(steps, memory_bytes, workers, nrow, nchan, ncorr,
     else:
         chosen, limiting, too_small = row_chunk, "--row-chunk", False
 
+    # The chunk search and the estimates both assume every worker has a chunk
+    # in flight (the module docstring says why the count is not capped).
     result = Plan(chosen, limiting)
     result.lines.append(
         f"Memory plan: limit {memory_bytes / GB:.1f} GB, {workers} workers,"
         f" {nrow} rows x {nchan} chan x {ncorr} corr;"
         f" row chunk {chosen} rows, set by {limiting}")
+    result.lines.append(f"  {'backend':<16} {backend_note()}")
     suffix = "  per chunk, with the write in the same pass" if concurrent else "  per chunk"
     for step in chunked:
         estimate = chunk_bytes(step, chosen, workers, nchan, ncorr, extra) + reserve

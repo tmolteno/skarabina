@@ -11,6 +11,109 @@ and keep `bench/meerkat-flags.yml` in step with the `flag-average` step of
 
 ---
 
+## Recalibrating the memory plan for streamed writes, 2026-09-26
+
+**Why** — handover §3.1.  `CONCURRENT_WRITE_COST["write"]` (8 B per input
+visibility) was measured while casacure buffered a whole written table, and the
+plan charged a write's cost per *input* visibility whether or not averaging
+shrank the output.  With 3.8.9's in-place writes those constants needed
+re-measuring: the same day's canonical 15-scan run planned 46.4 GB and peaked
+at 27.9 GB, 1.66x over.
+
+**Method** — `bench/mem_recal.py`, new here.  One skarabina process per case
+over `.bench/scan1.ms` (143 716 rows x 2511 channels x 2 correlations) with the
+stage-0 list, or a single verb, at a fixed `--row-chunk`; the child's true peak
+comes from `wait4`'s rusage and is printed beside the plan's own estimate for
+that same run.  Peak RSS varies run to run, so every case was repeated 2-3
+times and the median is quoted; the `plan` columns are what
+`skarabina.memory` said for that configuration, before and after the refit.
+
+Host schmalzburg (12 cores, 62 GiB), casacure 3.8.9, **load 5-13 throughout**
+(a shared box -- most of the spread below is that), skarabina 1.0.10 plus the
+refit.  `runs` is the number of skarabina runs behind each row.
+
+| case | rows/chunk | workers | runs | peak min | median | max | plan before | ratio | plan after | ratio |
+|---|---|---|---|---|---|---|---|---|---|---|
+| verbs, no write | 5 000 | 12 | 3 | 2 020 | 2 122 | 2 161 | 1 638 | 0.77 | 1 638 | 0.77 |
+| verbs, no write | 12 000 | 12 | 5 | 1 672 | 2 384 | 2 728 | 3 277 | 1.37 | 3 277 | 1.37 |
+| verbs, no write | 40 000 | 12 | 3 | 4 562 | 4 997 | 5 310 | 9 728 | 1.95 | 9 728 | 1.95 |
+| verbs, no write | 12 000 | 6 | 2 | 2 158 | 2 242 | 2 327 | 1 843 | 0.82 | 1 843 | 0.82 |
+| verbs + flags write | 5 000 | 12 | 1 | 2 032 | 2 032 | 2 032 | 1 946 | 0.96 | 1 843 | 0.91 |
+| verbs + flags write | 12 000 | 12 | 3 | 2 297 | 2 397 | 2 469 | 3 994 | 1.67 | 3 584 | 1.50 |
+| verbs + flags write | 40 000 | 12 | 1 | 4 950 | 4 950 | 4 950 | 11 981 | 2.42 | 10 854 | 2.19 |
+| verbs + full write | 5 000 | 12 | 4 | 2 938 | 2 975 | 3 078 | 3 994 | 1.34 | 2 970 | 1.00 |
+| verbs + full write | 12 000 | 12 | 4 | 3 823 | 4 118 | 4 584 | 8 806 | 2.14 | 6 349 | 1.54 |
+| verbs + full write | 40 000 | 12 | 3 | 6 862 | 7 594 | 8 447 | 28 058 | 3.69 | 20 070 | 2.64 |
+| verbs + full write | 5 000 | 6 | 2 | 2 526 | 2 571 | 2 615 | 2 253 | 0.88 | 1 741 | 0.68 |
+| verbs + full write | 12 000 | 6 | 2 | 3 591 | 4 148 | 4 705 | 4 608 | 1.11 | 3 482 | 0.84 |
+| verbs + 32x average + full write | 5 000 | 12 | 4 | 3 336 | 3 704 | 4 141 | 3 994 | 1.08 | 4 096 | 1.11 |
+| verbs + 32x average + full write | 12 000 | 12 | 4 | 5 612 | 6 919 | 8 538 | 8 806 | 1.27 | 9 114 | 1.32 |
+| verbs + 32x average + full write | 40 000 | 12 | 3 | 9 072 | 10 072 | 13 065 | 28 058 | 2.79 | 29 286 | 2.91 |
+| verbs + 32x average + full write | 12 000 | 6 | 2 | 5 403 | 5 686 | 5 970 | 4 608 | 0.81 | 4 813 | 0.85 |
+| `save:imported` alone | 5 000 | 12 | 1 | 705 | 705 | 705 | 819 | 1.16 | 819 | 1.16 |
+| `save:imported` alone | 12 000 | 12 | 5 | 775 | 805 | 855 | 1 229 | 1.53 | 819 | 1.02 |
+| `save:imported` alone | 40 000 | 12 | 1 | 1 213 | 1 213 | 1 213 | 2 765 | 2.28 | 1 638 | 1.35 |
+
+Peaks and plans in MiB.
+
+### What the refit changed
+
+| constant | was | now | why |
+|---|---|---|---|
+| `CONCURRENT_WRITE_COST["write"]` | 8 | 4.5 | the measured increment over the same run without a write is 5.7-9.3 B per input visibility in flight at 5 000 rows and 5.9-10.4 at 40 000, but only 5.2-5.9 at 12 000; 8 fitted the shape it was measured on |
+| `CONCURRENT_AVERAGING_COST` | — (the write's 8 covered it) | 4 | an averaging write costs 3.0-6.6 B/vis in flight *more* than an un-averaged one: the averaging step holds the input chunk it reads while the averaged chunk is written.  Charged only when the output is smaller than the input |
+| `CONCURRENT_WRITE_COST["write-flags"]` | 1 | 0.5 | a flags-only write measured at or slightly below the flagging pass alone |
+| `CHUNK_COST["read"]` | 1 | 0.5 | `save:imported` alone is that read: 1 229 MiB planned, 805 measured |
+| `save:`'s streamed chunk | 20 000 rows x 3 B/vis | unchanged | checked on scan 1 with `save:` alone: 800 MiB planned, 805 MiB measured |
+
+The plan now also prints the backend it assumed, so a peak can be read against
+the constants that were in force:
+
+```
+Memory plan: limit (available RAM) 52.4 GB, 12 workers, 143716 rows x 2511 chan x 2 corr; row chunk 11977 rows, set by 12 workers over 143716 rows
+  backend          casacure 3.8.9 (>3.8.7): each write is a per-chunk step
+  read                 5.9 GB  per chunk, with the write in the same pass
+  nan                  8.9 GB  per chunk, with the write in the same pass
+```
+
+### Reading the result
+
+- **The five runs §3.1 names are now bracketed.**  Against the *worst* run
+  measured for each configuration, the plan after the refit is 0.97-1.07 for
+  the full write at 5 000 rows (2 970 vs 3 078), the full write at 12 000
+  (6 349 vs 4 584 -- 1.39, the one that misses), the averaged write at 5 000
+  (4 096 vs 4 141), at 12 000 (9 114 vs 8 538) and `save:` alone (819 vs 855).
+  Against the medians those are 1.00, 1.54, 1.11, 1.32 and 1.02.  Three of the
+  five sit within 5 % *below* the worst observed run; the run-to-run spread
+  (up to ±50 % on the averaged 12 000-row case: 5 612-8 538 MiB in one sitting)
+  is wider than the ±25 % the refit was asked to hit, so the constants are
+  calibrated to the medians and `SAFETY`'s 20 % covers the rest.
+- **Over-prediction is now the main error, and it grows with the chunk**: 1.5x
+  at 12 000 rows, 2.6-2.9x at 40 000.  The measured peak grows *sublinearly*
+  with the chunk (2 384 MiB at 12 000 rows, 4 997 at 40 000 for the same list),
+  which a `workers x row_chunk x bytes_per_visibility` form cannot represent;
+  capping the count of resident chunks at `ceil(nrow / row_chunk)` makes it
+  worse (the 40 000-row runs then plan *below* what they measure: 4 chunks'
+  worth is not what a run holds).  A per-chunk term alongside the per-worker
+  one is what would fit both, and is not in yet.
+- **The worker scaling the model assumes is wrong for these verbs.**  Halving
+  `--workers` (12 -> 6) at 12 000 rows cut the peak's increment over the base
+  by 7-30 % where the model expects 50 % (2 384 -> 2 242 MiB with no write,
+  4 412 -> 4 148 with a full write, 6 919 -> 5 686 with an averaging write).
+  That is why the plan under-predicts the 6-worker rows above (0.68-0.85) and
+  why `--workers` is not the memory lever the constants imply.
+- **This does not fix the canonical run's over-prediction.**  On the master MS
+  (1 622 478 rows, 32x average, 12 workers) the plan still says 46.4 GB against
+  the 27.9 GB measured -- the same 1.66x as before, with a slightly smaller
+  chunk (65 425 rows against 68 151).  Its chunk is memory-limit-driven, and at
+  that size the measured cost per visibility is roughly half what the 12 000-row
+  scan-1 runs show, which is the same sublinearity as above.  Treat the plan as
+  an upper bound there, not a prediction.
+- The suite is unaffected: 457 tests pass under casacure, with the same 5
+  `test_write_changed_only.py` failures handover §3.4 lists.
+
+---
+
 ## Flagging the bandpass calibrator on schmalzburg, 2026-09-26
 
 **Why** — the list of 2026-09-24 re-measured on the desktop with the current

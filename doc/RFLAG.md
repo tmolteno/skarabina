@@ -317,13 +317,15 @@ for the whole 124 GB MS, so a full write of a large MS is only possible
 averaged or as flags alone.
 
 `skarabina.memory.plan` turns this into the run's plan: per-chunk costs
-(bytes per visibility per worker: read and `uv-above` 1, `autos` 2, `nan` and
-`clip` 4, `spectral-window` 4 (5 before 1.0.8), `restore:` 3, tfcrop 30 + 3.5 GB, rflag
-36 + 2.5 GB), per-table costs (`save:` 2.5 B per MS visibility, full write
-56 B and flags-only write 1.5 B per output visibility), and the largest row
+(bytes per visibility per worker: read 0.5 and `uv-above` 1, `autos` 2, `nan`
+and `clip` 4, `spectral-window` 4 (5 before 1.0.8), `restore:` 3, tfcrop 30 +
+3.5 GB, rflag 36 + 2.5 GB), per-table costs (`save:` 2.5 B per MS visibility,
+full write 56 B and flags-only write 1.5 B per output visibility -- these
+apply only to a backend that buffers the table it writes), and the largest row
 chunk keeping every per-chunk step of the `--flag` list within 80 % of
-`--memory-limit-GB` (default: the RAM available).  The run prints the plan
-and warns about a whole-table step that does not fit.  Checked on the scan-1
+`--memory-limit-GB` (default: the RAM available).  The run prints the plan --
+naming the backend and casacure version it assumed -- and warns about a
+whole-table step that does not fit.  Checked on the scan-1
 copy with the stage-0 list and rflag:
 
 | limit | chosen chunk (set by) | planned rflag peak | measured peak |
@@ -336,9 +338,22 @@ read of DATA), so its chunks -- DATA, WEIGHT_SPECTRUM, SIGMA_SPECTRUM -- are in
 flight with the flaggers'.  The same scan with the stage-0 list, rflag,
 `--frequency-average-factor 32`, `--summary` and a full write peaked at
 31.0 GB against 25.6 GB with the write as a second pass: 7.5 bytes per
-visibility per worker more.  The plan adds 8 (`CONCURRENT_WRITE_COST`) to every
-per-chunk step and reserves the write's whole-table estimate when the write
-shares the pass; it predicts 33.8 GB for that run.
+visibility per worker more, which is where `CONCURRENT_WRITE_COST`'s 8 came
+from.  That measurement was made while casacure buffered a written table, so
+the plan reserved the write's whole-table estimate as well.
+
+**Re-measured 2026-09-26** (casacure 3.8.9, which streams its writes, so
+nothing is buffered) with `bench/mem_recal.py`; the numbers and the residuals
+are in `BENCHMARKS.md`.  A full write now costs 4.5 B per input visibility in
+flight, a flags-only write 0.5, and a write whose output is *smaller* than the
+input -- an averaging write -- pays `CONCURRENT_AVERAGING_COST` 4 on top,
+because the averaging step holds the input chunk it is reading while the
+averaged chunk is written.  `save:`'s streamed estimate (20 000 rows x 3 B per
+visibility) was checked on scan 1 alone: 800 MiB planned, 784 MiB measured.
+The plan's linear form over-predicts at large chunks (up to 2.7x at 40 000
+rows, where a run's transients are bigger than the chunks it has) and
+under-predicts by ~25 % at chunks well below `nrow / --workers`; a per-chunk
+term rather than only a per-worker one would fit both, and is not in yet.
 
 ## 8. Bugs found on the way
 
