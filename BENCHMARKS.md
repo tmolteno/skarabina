@@ -11,6 +11,152 @@ and keep `bench/meerkat-flags.yml` in step with the `flag-average` step of
 
 ---
 
+## Flagging the bandpass calibrator on schmalzburg, 2026-09-26
+
+**Why** — the list of 2026-09-24 re-measured on the desktop with the current
+stack: skarabina 1.0.10 (whose `rflag` was reworked in `7d1433a`) and casacure
+3.8.9 (editable build of `../casacure`: tables grow in place on write).
+
+**Workload** — `.bench/data/bpcal.ms`, the same copy of the real MeerKAT L-band
+bandpass-calibrator MS the 2026-09-24 section used: 429,257 rows, 79 channels
+(6,687.5 kHz each, 901.0–1420.9 MHz), 2 correlations, one field
+(`J0408-6545`), 1.56 GiB, 67,822,606 visibilities, 227 integrations at 8 s
+cadence.  It arrives **71.21 % flagged** (48,296,656 visibilities, 158,528 rows
+or 36.93 % row-flagged).  No averaging, so the run sees the data as they
+arrived.  (A second copy of this MS — the pipeline's 2026-09-24
+`bpcal_mergA_tim_fast_ave.ms` — arrives only 62.91 % flagged; the bench keeps
+the 71.21 % copy so these tables stay comparable.)
+
+**Flag list** — unchanged from 2026-09-24 (`meerkat-flags.yml`, the stage-0
+sequence plus the `rflag` verb): `save:imported, autos, uv-above 8000, nan,
+clip 0 100, spectral-window (spectral-flags-L.yml), rflag`.
+
+**Host** — schmalzburg: AMD Ryzen 5 5600G, 12 cores, 62.2 GiB RAM, NVMe;
+skarabina 1.0.10 (git `8c918ea`), Python 3.13.5, numpy 2.5.0, dask 2024.10.0,
+dask-ms 0.2.32, casacure 3.8.9.  Single measurement, load 1.18 at the start and
+2.85 at the end.
+
+**Command**
+
+```
+python bench/flag_timing.py --ms .bench/data/bpcal.ms --mode both \
+    --tag bpcal-casacure-389
+```
+
+### Results
+
+| mode | operation(s) | wall (s) | peak RSS (MiB) | flags reported | rc |
+|---|---|---|---|---|---|
+| seq | all 7, one process | 13.2 | 3060 | 71.88% | 0 |
+| per-op | `save:imported` | 1.6 | 318 | 71.21% | 0 |
+| per-op | `autos` | 1.4 | 336 | 71.21% | 0 |
+| per-op | `uv-above 8000` | 1.2 | 291 | 71.21% | 0 |
+| per-op | `nan` | 1.6 | 560 | 71.21% | 0 |
+| per-op | `clip 0 100` | 1.6 | 684 | 71.21% | 0 |
+| per-op | `spectral-window` (L band) | 1.4 | 400 | 71.21% | 0 |
+| per-op | `rflag` (CASA defaults) | 12.2 | 2786 | 71.88% | 0 |
+
+### Reading the result
+
+- **The pass costs 13 s here against 957 s on `echo`** (2026-09-24), and the
+  shape of the cost is the same: `rflag` is 12.2 s of the 13.2 s (92 %), the
+  other six operations 1.2–1.6 s each.  Host, skarabina and casacure all
+  changed, so read the ~72× as a stack difference, not a code gain.
+- **Part of the `rflag` gain is that it now does less work.**  On this same
+  input skarabina 1.0.5 flagged *everything* — 19.5 M visibilities, ending at
+  100.00 % — where 1.0.10 flags **452,236 visibilities, 0.67 % of all**, ending
+  at 71.88 %: it adds no row flags at all (158,528 rows before and after) and
+  leaves 28.12 % of the visibilities unflagged.  The old run also emitted
+  `RuntimeWarning: All-NaN slice encountered` for every window whose samples
+  were already flagged; this one emits none.  Same MS, same CASA-default
+  parameters, so the outcome changed with the code — the neighbour-median
+  rework (`7d1433a`) and the fixes between 1.0.5 and 1.0.10 — and it no longer
+  shows the coarse-grid collapse `doc/NEW_FLAGGING.md` §10.5 warns about.
+  Which change did it is not isolated here: 1.0.5 was not run on this host.
+- The six stage-0 operations still change nothing on this MS: each ends at the
+  input's own 71.21 % (48,296,656 / 67,822,606), because `uv-above 8000` cannot
+  fire (the longest baseline is 7,652.7 m) and the others' hits are already
+  covered by the imported flags.
+- The seven isolated runs sum to 21.0 s against the 13.2 s single-process
+  total: each per-op process reads the MS again, and `save:imported`'s 1.6 s is
+  that floor (read 1.56 GiB of MS, write the flag columns back).  7 × ~1.5 s of
+  it dwarfs the flagging arithmetic itself.
+- The write is `--write-changed-only`: the run reports `13 block(s) shared with
+  the input, 20 copied or written`.  The bench restored owner-write on the
+  input's blocks before 7 of the 8 runs (the first, seq, ran on the fresh
+  copy) — see the issue section at the end.
+- Peak RSS is 3.0 GiB for the pass, 2.8 GiB of it inside `rflag` (whose plan
+  asks 5.3 GB per chunk), against 2.6 GiB on the laptop.
+- Do not set this table against the 2026-09-24/25 ones without care: those are
+  the `echo` laptop (8-core i5-8365U, SATA, 15.4 GiB), skarabina 1.0.5 and a
+  locally built casacure.  The 2026-09-25 section's own warning applies — the
+  same code ran ~1.3× slower on `echo` a day later, which is larger than most
+  of the effects being measured.
+
+---
+
+## The canonical pipeline run on the master MS, 2026-09-26
+
+**Why** — AGENTS.md's canonical end-to-end command, recorded here for the first
+time over the full scan list (the rows in AGENTS.md are the *scan-1* input,
+11× smaller) and the first with casacure's in-place writes.
+
+**Workload** — `../meerkat_imaging/ms-orig/mergA_tim.ms`, the 124 GiB master
+MS, scans `1,12,14,19,21,28,29,33,41,43,53,54,56,58,63`: 1,622,478 of its
+1,639,497 rows, flagged and 32× frequency-averaged into `bench_ave.ms`.  The
+flag list is the recipe's stage-0 list without `rflag` (the autoflag step the
+recipe runs separately).
+
+**Host** — schmalzburg as above, skarabina 1.0.10 (git `8c918ea`), casacure
+3.8.9.  Load 0.87 at the start (a quiet box, unusually) and 6.07 when the run
+ended, which is the run's own 12 workers.
+
+**Command** — run from `../meerkat_imaging`:
+
+```
+DASK_MS_BACKEND=casacure /usr/bin/time -v \
+  /home/tim/github/skarabina/.venv/bin/skarabina --ms ms-orig/mergA_tim.ms \
+  --scan 1,12,14,19,21,28,29,33,41,43,53,54,56,58,63 \
+  --summary --time-average-factor 1 --frequency-average-factor 32 --clobber \
+  --flag save:imported --flag autos --flag "uv-above 2500" --flag nan \
+  --flag "clip 0 100" --flag "spectral-window spectral-flags-L.yml" \
+  --field-of-view 3.3deg --msout bench_ave.ms
+```
+
+### Results
+
+| quantity | value |
+|---|---|
+| wall | **4:15.80** (255.8 s) |
+| user / sys | 689.5 s / 413.8 s (431 % CPU) |
+| peak RSS | **27.9 GB** |
+| output | 1,622,478 rows, 79 channels, 2 correlations, 4.2 GB |
+| input read | 133 GB — one pass over the 124 GiB input |
+| exit status | 0 |
+
+Checks: every selected scan keeps its row count and its TIME, ANTENNA1/2, UVW,
+INTERVAL, EXPOSURE and FIELD_ID values; the output holds exactly the 15
+requested scans; `SPECTRAL_WINDOW` is rewritten for 79 channels and the missing
+`SOURCE` keyword copied.
+
+### Reading the result
+
+- 431 % CPU over 255.8 s means the pass is not CPU-saturated even here: it
+  reads 133 GB — one pass, as designed — so it is partly I/O-bound.
+- **The memory plan over-predicts this workload by 1.66×.**  It projected
+  46.4 GB for `nan`/`clip`/`spectral-window` by taking the largest chunk that
+  keeps every verb inside 80 % of the 58 GB it saw as available — a 68,205-row
+  chunk, "set by nan" — and the measured peak was 27.9 GB.  Those constants
+  were fitted when casacure still buffered a whole written table; with 3.8.9's
+  in-place writes this is exactly the gap handover §3.1 asks to close.
+- `save:imported` rotated the master's flag version the way the pipeline's own
+  stage-0 run does: `flags.imported` became `imported.old.20260926162539` and
+  `<ms>.flagversions` grew from 14 GB to 15 GB.
+- The averaged output is deleted after the run (AGENTS.md asks for that);
+  `bench_ave.ms` is 4.2 GB while it exists.
+
+---
+
 ## Writing: casacure grows tables in place, 2026-09-26
 
 Host schmalzburg (12 cores, 62 GB), load 6-8 (shared: timings are
