@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.10]
+
 ### Changed
 
 - Requires casacure >= 3.8.9.  casacure 3.8.8 could not read the ANTENNA

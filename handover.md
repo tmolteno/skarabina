@@ -10,7 +10,7 @@ Everything below is committed and pushed to `origin/main`.
 | | |
 |---|---|
 | released | **1.0.9** (tag `v1.0.9`): `--frequency-average-factor` / `--time-average-factor` / `--optimize` applied again (1.0.8 silently ignored them), `save:` flushes per chunk, memory plan knows a streaming backend, requires **casacure >= 3.8.8** (released 2026-09-26: tables grow in place on write, ISM writer fix) |
-| unreleased on `main` | the `casacure>=3.8.9` pin (Direct arrays: ANTENNA POSITION/OFFSET; see §3.2b) -- worth a 1.0.10 |
+| unreleased on `main` | nothing (1.0.10 = 1.0.9 + the `casacure>=3.8.9` pin, see §3.2b) |
 | branches | only `main`; `baseline-aware-flagging` and `tfcrop-local-scatter` were merged and deleted (local, `origin`, schmalzburg) |
 | test suite | all pass (458; the old `test_save_rejects_a_path_like_name` failure was a real bug, fixed in `ca9264e`).  Under casacure (`DASK_MS_BACKEND=casacure`, the casacure dev venv) 14 tests in `test_single_pass`, `test_write_changed_only`, `test_analyze_contract` fail identically before and after the casacure change: they assume python-casacore storage-manager layouts / read counting |
 
@@ -179,7 +179,7 @@ Remaining:
    wheel).  Rebuild it with `PATH=$HOME/.cargo/bin:$PATH maturin develop
    --uv --release` in `~/github/casacure` with that venv active.
 
-### 3.2b ~~casacure cannot read StandardStMan Direct arrays~~ -- fixed in casacure 3.8.9 (pinned on `main`, not yet in a skarabina release)
+### 3.2b ~~casacure cannot read StandardStMan Direct arrays~~ -- fixed in casacure 3.8.9, required by skarabina 1.0.10
 
 An MS built by python-casacore's `default_ms` (e.g. `bench/make_synthetic_ms.py`)
 keeps UVW in StandardStMan with option 5 (Direct | FixedShape): the cells are
