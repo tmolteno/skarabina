@@ -297,13 +297,17 @@ def main(**kw):
         ms.time_average(opts.time_average_factor)
 
     if opts.optimize:
-        if opts.msout is None and not opts.apply:
+        if opts.msout is None:
             raise RuntimeError(
-                "--optimize has no effect without --msout or --apply:"
+                "--optimize has no effect without --msout:"
                 " it only removes fully-flagged rows and channels in"
                 " memory, so the result is discarded unless written."
-                " Add --msout PATH to write a new MS or --apply to"
-                " update the input MS in place."
+                " Add --msout PATH to write a new, smaller MS. --apply"
+                " cannot take its place: an in-place update overwrites"
+                " columns of the existing table and can remove nothing"
+                " (dask-ms writes each row back where it came from, so"
+                " optimize's removals would silently not happen, or"
+                " leave SPECTRAL_WINDOW describing removed channels)."
             )
         ms.optimize(keep_fully_flagged_channels=opts.keep_fully_flagged_channels)
 

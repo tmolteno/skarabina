@@ -174,8 +174,11 @@ rows are still optimized away.
 
 ### Cost
 
-`--optimize` is in-memory until the MS is written (`--msout` or `--apply`).
-Removing *rows* leaves the row chunking intact, so writing is cheap.  Removing
+`--optimize` is in-memory until the MS is written, and that now requires
+`--msout`: an in-place `--apply` cannot remove rows or channels (it
+overwrites columns at their existing rows and channel widths), so
+`--optimize --apply` and averaging with `--apply` are refused.  Removing
+*rows* leaves the row chunking intact, so writing is cheap.  Removing
 non-contiguous *channels* forces the data array to be re-chunked and rewritten
 in full, which on a large MS costs a complete pass over DATA — another reason to
 consider `--keep-fully-flagged-channels` when the band would otherwise be split.

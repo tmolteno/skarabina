@@ -716,6 +716,18 @@ class DaskMS:
     #: next pass over the data (see :meth:`_report`).
     defer_reports = False
 
+    #: Set by a pass that *reduces* the dataset -- ``optimize()``,
+    #: ``time_average()``, ``frequency_average()`` -- to a description of what
+    #: it removed, and None while the dataset still matches the input's shape.
+    #: ``update_ms`` refuses to write such a dataset in place: an in-place
+    #: update overwrites columns at their existing rows and channel widths, so
+    #: it cannot honour a reduction (removed rows would remain, and cells
+    #: written at a reduced channel count would desynchronise
+    #: SPECTRAL_WINDOW).  A row *selection* (``select_scans``) does not set
+    #: it: writing the selected rows back at their original positions is
+    #: exactly what ``--apply`` should do for one.
+    shape_reduction = None
+
     def _report(self, reductions, report):
         """Compute ``reductions`` and call ``report(*values)`` -- now, or later.
 
@@ -1665,6 +1677,11 @@ class DaskMS:
                 arr = arr.rechunk(tuple(chunks))
             self.ds[col] = (self.ds[col].dims, arr)
             self.changed[col] = True
+        # Fewer rows than the input: record it so update_ms cannot write the
+        # averaged dataset back into the full-length table in place.
+        self.shape_reduction = (
+            f"time-averaging at factor {factor} reduced {nrow} rows to {n_new}"
+        )
 
     def frequency_average(self, factor):
         """
@@ -1811,6 +1828,12 @@ class DaskMS:
             if n_rem > 0:
                 avg_width = np.append(avg_width, np.sum(values[trim:]))
             self.chan_axis_hz[col] = avg_width
+        # Fewer channels than the input: record it so update_ms cannot write
+        # the narrowed cells back over the input's full-width ones in place.
+        self.shape_reduction = (
+            f"frequency-averaging at factor {factor} reduced {nchan}"
+            f" channels to {n_new}"
+        )
 
     def save_flag_version(self, versionname, comment=""):
         """Back up the flags of the MS as a CASA-compatible flag version.
@@ -1997,6 +2020,16 @@ class DaskMS:
             isel_indexers = {row_dim: keep_row_idx}
 
         self.ds = self.ds.isel(isel_indexers)
+
+        # Remember what left the table's shape, so update_ms can refuse to
+        # write this dataset in place (it cannot remove rows or channels).
+        removed = []
+        if int(n_combined):
+            removed.append(f"{int(n_combined)} fully-flagged row(s)")
+        if drop_channels:
+            removed.append(f"{int(n_chan_flagged)} fully-flagged channel(s)")
+        if removed:
+            self.shape_reduction = "optimize removed " + " and ".join(removed)
 
         # Removing channels must also drop them from the SPECTRAL_WINDOW
         # bookkeeping, otherwise the subtable written by write_new_ms() would
@@ -2549,6 +2582,16 @@ class DaskMS:
         if not clobber:
             raise RuntimeError(
                 f"Measurement set {name} can't be changed. Use --clobber to overwrite"
+            )
+        if self.shape_reduction:
+            raise RuntimeError(
+                "--apply cannot write the reduced dataset:"
+                f" {self.shape_reduction}. An in-place update overwrites"
+                " columns at their existing rows and channel widths, so it"
+                " cannot remove rows or channels: the removed rows would"
+                " remain, and cells written at a reduced channel count would"
+                " leave SPECTRAL_WINDOW describing channels the data no"
+                " longer has. Use --msout PATH to write a new MS instead."
             )
         logger.warning(f"Updating {name}")
 

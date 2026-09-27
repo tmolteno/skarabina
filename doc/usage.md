@@ -42,7 +42,8 @@
                                 Must run after --time-average-factor and
                                 --frequency-average-factor (averaging
                                 precedes optimization), and requires
-                                --msout or --apply to write the result
+                                --msout to write the result (an in-place
+                                --apply cannot remove rows or channels)
   --keep-fully-flagged-channels Keep dead channels instead of removing them,
                                 so the band stays contiguous (see AVERAGING.md)
   --apply / --no-apply          Modify input MS in place. Writes ONLY the

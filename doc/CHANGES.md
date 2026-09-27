@@ -3,6 +3,33 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **``--optimize`` and the averaging factors now refuse ``--apply`` when they
+  change the shape.**  ``--optimize`` accepted ``--apply`` as an alternative
+  to ``--msout`` (its error message recommended it), but an in-place update
+  cannot remove anything: dask-ms writes each row back where it came from, so
+  with rows removed the input table was silently left unchanged (exit 0,
+  "Optimize complete"), and with channels removed the cells were rewritten at
+  the reduced width while ``SPECTRAL_WINDOW`` still described the input's --
+  an inconsistent MS.  ``--time-average-factor``/``--frequency-average-factor``
+  with ``--apply`` were broken the same way: time-averaging wrote each
+  averaged row into the group's first slot and left the others stale.  The CLI
+  now refuses ``--optimize`` without ``--msout``, and ``DaskMS.update_ms``
+  refuses any dataset a reducing pass touched (the new ``shape_reduction``
+  marker, set by ``optimize``/``time_average``/``frequency_average``).
+  ``--scan`` is unaffected: a row *selection* still writes back at the
+  original rows, which is correct for ``--apply``.
+
+### Added
+
+- ``tests/test_optimize.py``: unit and CLI tests for the ``--optimize`` path
+  -- the two row-removal conditions (``FLAG_ROW`` vs all of ``FLAG``), the
+  statistics block's overlap and extra-row counts, rows and channels dropped
+  in one pass, the ``changed`` bookkeeping, the band-warning guards, the CLI
+  wiring (``--flag`` output reaching optimize, ``--keep-fully-flagged-
+  channels``), and the ``--apply`` refusals above.
+
 ## [1.0.10]
 
 ### Changed
