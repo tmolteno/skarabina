@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.11]
+
 ### Fixed
 
 - **``--optimize`` and the averaging factors now refuse ``--apply`` when they

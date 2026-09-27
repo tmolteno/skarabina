@@ -10,11 +10,11 @@ Everything below is committed and pushed to `origin/main` of both repos
 
 | | |
 |---|---|
-| released skarabina | **1.0.10** (tag `v1.0.10`; PyPI `skarabina` + `skarabina-cargo`, Docker `1.0.10`).  Requires `casacure>=3.8.9`.  1.0.9 restored `--frequency-average-factor` / `--time-average-factor` / `--optimize` (1.0.8 silently ignored them), made `save:` flush per chunk and taught the memory plan about streaming backends |
+| released skarabina | **1.0.11** (tag `v1.0.11`; PyPI `skarabina` + `skarabina-cargo`, Docker `1.0.11`).  Requires `casacure>=3.8.9`.  `--optimize` / averaging now refuse `--apply` when they change the shape (it was a silent no-op, or left an inconsistent MS); `DaskMS.shape_reduction` is the marker `update_ms` checks, and `--scan` + `--apply` still works.  New: `tests/test_optimize.py` (17 tests) |
 | released casacure | **3.8.9** (tag `v3.8.9`; PyPI, crates.io).  3.8.8: tables grow in place on write (dask-ms writes are chunk-bounded), IncrementalStMan writer fix.  3.8.9: StandardStMan Direct arrays (ANTENNA POSITION/OFFSET) in casacore's inline layout, zero-length array cells |
 | unreleased on `main` | nothing, in either repo |
 | branches | only `main` in both repos |
-| skarabina tests | moist (python-casacore): 458 pass, 2 skipped.  schmalzburg (casacure 3.8.9, `DASK_MS_BACKEND=casacure`): 455 pass, **5 fail**, all in `tests/test_write_changed_only.py` (§3.4) |
+| skarabina tests | moist (python-casacore): 475 pass, 2 skipped.  schmalzburg (casacure 3.8.9, `DASK_MS_BACKEND=casacure`): 455 pass, **5 fail**, all in `tests/test_write_changed_only.py` (§3.4) -- that count predates the 17 tests added in 1.0.11 |
 | casacure tests | `cargo test --release --workspace` (157 lib + 15 + 5 + 6) and `PYTHONPATH=tests/shim python -m pytest tests` (152 pass, 1 skipped) in `~/.venvs/ccdev` on moist; fmt/clippy clean |
 
 **Working agreements** (as practised with the user in this work):
