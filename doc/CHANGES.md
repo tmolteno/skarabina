@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.13]
+
 ### Fixed
 
 - **``extend`` can be applied in place.**  1.0.12's ``--flag extend ... --apply``

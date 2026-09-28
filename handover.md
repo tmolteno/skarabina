@@ -10,11 +10,11 @@ Everything below is committed and pushed to `origin/main` of both repos
 
 | | |
 |---|---|
-| released skarabina | **1.0.12** (tag `v1.0.12`; PyPI `skarabina` + `skarabina-cargo`, Docker `1.0.12`).  Requires `casacure>=3.8.9`.  The CASA-cab-replacement set: `extend` (`flagdata mode=extend`), `--field` (`field=` scoping of the flag verbs), `--data-column` (residual flagging), `--data-from` (mstransform `datacolumn` for the splits), and `skarabina-analyze`'s `ms_content` summary (replaces the quartical-summary/listobs cabs).  1.0.11 made `--optimize`/averaging refuse `--apply` on shape changes |
+| released skarabina | **1.0.13** (tag `v1.0.13`; PyPI `skarabina` + `skarabina-cargo`, Docker `1.0.13`).  Requires `casacure>=3.8.9`.  Fixes on 1.0.12: `extend` + `--apply` wrote nothing (`ROWID shape and/or chunking does not match that of FLAG`, #6 -- FLAG rechunked after the growth) and the cab's `flag` input is optional.  1.0.12 was the CASA-cab-replacement set (`extend`, `--field`, `--data-column`, `--data-from`, `ms_content`) |
 | released casacure | **3.8.9** (tag `v3.8.9`; PyPI, crates.io).  3.8.8: tables grow in place on write (dask-ms writes are chunk-bounded), IncrementalStMan writer fix.  3.8.9: StandardStMan Direct arrays (ANTENNA POSITION/OFFSET) in casacore's inline layout, zero-length array cells |
 | unreleased on `main` | nothing, in either repo |
 | branches | only `main` in both repos |
-| skarabina tests | moist (python-casacore): 528 pass, 2 skipped.  schmalzburg (casacure 3.8.9, `DASK_MS_BACKEND=casacure`): 455 pass, **5 fail**, all in `tests/test_write_changed_only.py` (§3.4) -- that count predates the 54 tests added in 1.0.11/1.0.12 |
+| skarabina tests | moist (python-casacore): 528 pass, 2 skipped; the local run for 1.0.13: 517 pass, 2 skipped.  schmalzburg (casacure 3.8.9, `DASK_MS_BACKEND=casacure`): 455 pass, **5 fail**, all in `tests/test_write_changed_only.py` (§3.4) -- that count predates the 54 tests added in 1.0.11/1.0.12 |
 | casacure tests | `cargo test --release --workspace` (157 lib + 15 + 5 + 6) and `PYTHONPATH=tests/shim python -m pytest tests` (152 pass, 1 skipped) in `~/.venvs/ccdev` on moist; fmt/clippy clean |
 
 **Working agreements** (as practised with the user in this work):
