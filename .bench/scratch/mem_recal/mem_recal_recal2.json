@@ -1,0 +1,362 @@
+{
+  "ms": "/home/tim/github/skarabina/.bench/scan1.ms",
+  "rows": 143716,
+  "nchan": 2511,
+  "ncorr": 2,
+  "workers": 12,
+  "runs": [
+    {
+      "case": "write-5000",
+      "ops": [
+        "save:imported",
+        "autos",
+        "uv-above 2500",
+        "nan",
+        "clip 0 100",
+        "spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml"
+      ],
+      "mode": "full",
+      "factor": 1,
+      "row_chunk": 5000,
+      "workers": 12,
+      "rc": 0,
+      "wall_s": 40.05,
+      "peak_mib": 2969.5,
+      "planned_mib": 3993.6,
+      "planned_step": "nan",
+      "plan_header": "Memory plan: limit (available RAM) 41.9 GB, 12 workers, 143716 rows x 2511 chan x 2 corr; row chunk 5000 rows, set by --row-chunk",
+      "plan_steps": [
+        [
+          "read",
+          3072.0
+        ],
+        [
+          "autos",
+          3379.2
+        ],
+        [
+          "uv-above",
+          3072.0
+        ],
+        [
+          "nan",
+          3993.6
+        ],
+        [
+          "clip",
+          3993.6
+        ],
+        [
+          "spectral-window",
+          3993.6
+        ],
+        [
+          "save",
+          819.2
+        ]
+      ],
+      "repaired_blocks": 0,
+      "load_before": 7.83,
+      "load_after": 7.3,
+      "log": ".bench/scratch/mem_recal/write-5000.log",
+      "repeat": 3,
+      "peak_min_mib": 2937.8,
+      "peak_max_mib": 3077.7,
+      "chunks_in_flight": 12,
+      "input_vis_in_flight": 301320000,
+      "implied_per_vis": 8.55,
+      "ratio": 1.34,
+      "ratio_worst": 1.36
+    },
+    {
+      "case": "avg-5000",
+      "ops": [
+        "save:imported",
+        "autos",
+        "uv-above 2500",
+        "nan",
+        "clip 0 100",
+        "spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml"
+      ],
+      "mode": "full",
+      "factor": 32,
+      "row_chunk": 5000,
+      "workers": 12,
+      "rc": 0,
+      "wall_s": 12.64,
+      "peak_mib": 4071.5,
+      "planned_mib": 3993.6,
+      "planned_step": "nan",
+      "plan_header": "Memory plan: limit (available RAM) 56.6 GB, 12 workers, 143716 rows x 2511 chan x 2 corr; row chunk 5000 rows, set by --row-chunk",
+      "plan_steps": [
+        [
+          "read",
+          3072.0
+        ],
+        [
+          "autos",
+          3379.2
+        ],
+        [
+          "uv-above",
+          3072.0
+        ],
+        [
+          "nan",
+          3993.6
+        ],
+        [
+          "clip",
+          3993.6
+        ],
+        [
+          "spectral-window",
+          3993.6
+        ],
+        [
+          "save",
+          819.2
+        ]
+      ],
+      "repaired_blocks": 0,
+      "load_before": 6.46,
+      "load_after": 6.92,
+      "log": ".bench/scratch/mem_recal/avg-5000.log",
+      "repeat": 3,
+      "peak_min_mib": 3744.1,
+      "peak_max_mib": 4141.2,
+      "chunks_in_flight": 12,
+      "input_vis_in_flight": 301320000,
+      "implied_per_vis": 12.39,
+      "ratio": 0.98,
+      "ratio_worst": 1.07
+    },
+    {
+      "case": "nowrite-12000",
+      "ops": [
+        "save:imported",
+        "autos",
+        "uv-above 2500",
+        "nan",
+        "clip 0 100",
+        "spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml"
+      ],
+      "mode": "none",
+      "factor": 1,
+      "row_chunk": 12000,
+      "workers": 12,
+      "rc": 0,
+      "wall_s": 5.4,
+      "peak_mib": 2383.7,
+      "planned_mib": 3276.8,
+      "planned_step": "nan",
+      "plan_header": "Memory plan: limit (available RAM) 56.9 GB, 12 workers, 143716 rows x 2511 chan x 2 corr; row chunk 12000 rows, set by --row-chunk",
+      "plan_steps": [
+        [
+          "read",
+          1228.8
+        ],
+        [
+          "autos",
+          1843.2
+        ],
+        [
+          "uv-above",
+          1228.8
+        ],
+        [
+          "nan",
+          3276.8
+        ],
+        [
+          "clip",
+          3276.8
+        ],
+        [
+          "spectral-window",
+          3276.8
+        ],
+        [
+          "save",
+          819.2
+        ]
+      ],
+      "repaired_blocks": 0,
+      "load_before": 6.17,
+      "load_after": 6.72,
+      "log": ".bench/scratch/mem_recal/nowrite-12000.log",
+      "repeat": 3,
+      "peak_min_mib": 2326.5,
+      "peak_max_mib": 2728.5,
+      "chunks_in_flight": 12,
+      "input_vis_in_flight": 723168000,
+      "implied_per_vis": 2.71,
+      "ratio": 1.37,
+      "ratio_worst": 1.41
+    },
+    {
+      "case": "write-12000",
+      "ops": [
+        "save:imported",
+        "autos",
+        "uv-above 2500",
+        "nan",
+        "clip 0 100",
+        "spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml"
+      ],
+      "mode": "full",
+      "factor": 1,
+      "row_chunk": 12000,
+      "workers": 12,
+      "rc": 0,
+      "wall_s": 28.43,
+      "peak_mib": 4411.9,
+      "planned_mib": 8806.4,
+      "planned_step": "nan",
+      "plan_header": "Memory plan: limit (available RAM) 52.2 GB, 12 workers, 143716 rows x 2511 chan x 2 corr; row chunk 12000 rows, set by --row-chunk",
+      "plan_steps": [
+        [
+          "read",
+          6758.4
+        ],
+        [
+          "autos",
+          7372.8
+        ],
+        [
+          "uv-above",
+          6758.4
+        ],
+        [
+          "nan",
+          8806.4
+        ],
+        [
+          "clip",
+          8806.4
+        ],
+        [
+          "spectral-window",
+          8806.4
+        ],
+        [
+          "save",
+          819.2
+        ]
+      ],
+      "repaired_blocks": 0,
+      "load_before": 5.29,
+      "load_after": 5.94,
+      "log": ".bench/scratch/mem_recal/write-12000.log",
+      "repeat": 3,
+      "peak_min_mib": 3934.3,
+      "peak_max_mib": 4583.5,
+      "chunks_in_flight": 12,
+      "input_vis_in_flight": 723168000,
+      "implied_per_vis": 5.65,
+      "ratio": 2.0,
+      "ratio_worst": 2.24
+    },
+    {
+      "case": "avg-12000",
+      "ops": [
+        "save:imported",
+        "autos",
+        "uv-above 2500",
+        "nan",
+        "clip 0 100",
+        "spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml"
+      ],
+      "mode": "full",
+      "factor": 32,
+      "row_chunk": 12000,
+      "workers": 12,
+      "rc": 0,
+      "wall_s": 15.25,
+      "peak_mib": 7846.8,
+      "planned_mib": 8806.4,
+      "planned_step": "nan",
+      "plan_header": "Memory plan: limit (available RAM) 46.3 GB, 12 workers, 143716 rows x 2511 chan x 2 corr; row chunk 12000 rows, set by --row-chunk",
+      "plan_steps": [
+        [
+          "read",
+          6758.4
+        ],
+        [
+          "autos",
+          7372.8
+        ],
+        [
+          "uv-above",
+          6758.4
+        ],
+        [
+          "nan",
+          8806.4
+        ],
+        [
+          "clip",
+          8806.4
+        ],
+        [
+          "spectral-window",
+          8806.4
+        ],
+        [
+          "save",
+          819.2
+        ]
+      ],
+      "repaired_blocks": 0,
+      "load_before": 11.8,
+      "load_after": 13.26,
+      "log": ".bench/scratch/mem_recal/avg-12000.log",
+      "repeat": 3,
+      "peak_min_mib": 5612.5,
+      "peak_max_mib": 8537.7,
+      "chunks_in_flight": 12,
+      "input_vis_in_flight": 723168000,
+      "implied_per_vis": 10.64,
+      "ratio": 1.12,
+      "ratio_worst": 1.57
+    },
+    {
+      "case": "save-12000",
+      "ops": [
+        "save:imported"
+      ],
+      "mode": "none",
+      "factor": 1,
+      "row_chunk": 12000,
+      "workers": 12,
+      "rc": 0,
+      "wall_s": 2.2,
+      "peak_mib": 783.6,
+      "planned_mib": 1228.8,
+      "planned_step": "read",
+      "plan_header": "Memory plan: limit (available RAM) 45.2 GB, 12 workers, 143716 rows x 2511 chan x 2 corr; row chunk 12000 rows, set by --row-chunk",
+      "plan_steps": [
+        [
+          "read",
+          1228.8
+        ],
+        [
+          "save",
+          819.2
+        ]
+      ],
+      "repaired_blocks": 0,
+      "load_before": 12.76,
+      "load_after": 12.76,
+      "log": ".bench/scratch/mem_recal/save-12000.log",
+      "repeat": 3,
+      "peak_min_mib": 774.9,
+      "peak_max_mib": 855.2,
+      "chunks_in_flight": 12,
+      "input_vis_in_flight": 723168000,
+      "implied_per_vis": 0.39,
+      "ratio": 1.57,
+      "ratio_worst": 1.59
+    }
+  ]
+}

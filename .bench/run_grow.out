@@ -1,0 +1,86 @@
+Mupati (skarabina): The 1GC flagger
+Memory plan: limit (available RAM) 45.6 GB, 12 workers, 143716 rows x 2511 chan x 2 corr; row chunk 11977 rows, set by 12 workers over 143716 rows
+  read                 7.7 GB  per chunk, with the write in the same pass
+  autos                8.4 GB  per chunk, with the write in the same pass
+  uv-above             7.7 GB  per chunk, with the write in the same pass
+  nan                  9.7 GB  per chunk, with the write in the same pass
+  clip                 9.7 GB  per chunk, with the write in the same pass
+  spectral-window      9.7 GB  per chunk, with the write in the same pass
+  save                 2.2 GB  whole table
+  write                1.7 GB  whole table
+Getting Data from MS file: scan1.ms
+Row chunk: 11977 rows
+save:imported
+flag version 'imported' already existed; moved to 'imported.old.20260926093854'
+flag version 'imported' saved to /home/tim/github/skarabina/.bench/scan1.ms.flagversions/flags.imported
+autos
+uv-above 2500
+flag_uv_above: 2500.0 m
+nan
+clip 0 100
+spectral-window ../bench/spectral-flags-L.yml
+Writing ['FIELD_ID', 'OBSERVATION_ID', 'UVW', 'INTERVAL', 'ANTENNA2', 'DATA', 'FEED1', 'SIGMA', 'SIGMA_SPECTRUM', 'EXPOSURE', 'ANTENNA1', 'PROCESSOR_ID', 'TIME_CENTROID', 'FLAG', 'FLAG_ROW', 'STATE_ID', 'WEIGHT', 'TIME', 'ARRAY_ID', 'FEED2', 'WEIGHT_SPECTRUM', 'SCAN_NUMBER'] to bench_ave.ms
+[                                        ] | 0% Completed | 444.65 us[                                        ] | 1% Completed | 105.81 ms[                                        ] | 1% Completed | 206.13 ms[                                        ] | 1% Completed | 655.76 ms[                                        ] | 1% Completed | 1.60 s[#                                       ] | 3% Completed | 1.70 s[#                                       ] | 4% Completed | 2.00 s[#                                       ] | 4% Completed | 2.53 s[##                                      ] | 5% Completed | 2.70 s[##                                      ] | 5% Completed | 3.21 s[######                                  ] | 15% Completed | 3.32 s[######                                  ] | 15% Completed | 3.42 s[######                                  ] | 15% Completed | 3.77 s[######                                  ] | 16% Completed | 4.71 s[######                                  ] | 17% Completed | 4.84 s[#######                                 ] | 18% Completed | 5.01 s[#######                                 ] | 19% Completed | 5.47 s[#######                                 ] | 19% Completed | 5.62 s[########                                ] | 20% Completed | 5.98 s[########                                ] | 21% Completed | 6.08 s[########                                ] | 21% Completed | 6.18 s[########                                ] | 21% Completed | 6.35 s[########                                ] | 21% Completed | 7.25 s[#########                               ] | 22% Completed | 7.35 s[#########                               ] | 22% Completed | 7.45 s[#########                               ] | 22% Completed | 7.58 s[#########                               ] | 22% Completed | 7.93 s[#########                               ] | 23% Completed | 8.04 s[#########                               ] | 23% Completed | 8.18 s[#########                               ] | 24% Completed | 8.55 s[##########                              ] | 25% Completed | 8.65 s[##########                              ] | 25% Completed | 8.75 s[##########                              ] | 25% Completed | 8.93 s[##########                              ] | 25% Completed | 9.87 s[##########                              ] | 26% Completed | 9.97 s[##########                              ] | 26% Completed | 10.07 s[##########                              ] | 26% Completed | 10.20 s[##########                              ] | 26% Completed | 10.58 s[###########                             ] | 28% Completed | 10.68 s[###########                             ] | 28% Completed | 10.81 s[###########                             ] | 28% Completed | 11.16 s[###########                             ] | 29% Completed | 11.26 s[###########                             ] | 29% Completed | 11.36 s[###########                             ] | 29% Completed | 11.53 s[###########                             ] | 29% Completed | 12.43 s[############                            ] | 31% Completed | 12.53 s[############                            ] | 31% Completed | 12.63 s[############                            ] | 31% Completed | 12.74 s[############                            ] | 32% Completed | 13.21 s[############                            ] | 32% Completed | 13.36 s[############                            ] | 32% Completed | 13.73 s[#############                           ] | 33% Completed | 13.83 s[#############                           ] | 33% Completed | 13.93 s[#############                           ] | 33% Completed | 14.12 s[#############                           ] | 33% Completed | 15.05 s[##############                          ] | 35% Completed | 15.15 s[##############                          ] | 35% Completed | 15.25 s[##############                          ] | 35% Completed | 15.36 s[##############                          ] | 35% Completed | 15.75 s[##############                          ] | 36% Completed | 15.85 s[##############                          ] | 36% Completed | 16.00 s[##############                          ] | 36% Completed | 16.36 s[###############                         ] | 37% Completed | 16.46 s[###############                         ] | 37% Completed | 16.56 s[###############                         ] | 37% Completed | 16.76 s[###############                         ] | 37% Completed | 17.69 s[###############                         ] | 38% Completed | 17.80 s[###############                         ] | 39% Completed | 17.90 s[###############                         ] | 39% Completed | 18.42 s[################                        ] | 40% Completed | 18.52 s[################                        ] | 40% Completed | 18.67 s[################                        ] | 40% Completed | 19.05 s[################                        ] | 42% Completed | 19.15 s[################                        ] | 42% Completed | 19.25 s[################                        ] | 42% Completed | 19.47 s[#################                       ] | 42% Completed | 20.43 s[#################                       ] | 43% Completed | 20.54 s[#################                       ] | 43% Completed | 20.64 s[#################                       ] | 43% Completed | 20.80 s[##################                      ] | 45% Completed | 21.29 s[##################                      ] | 45% Completed | 21.45 s[##################                      ] | 45% Completed | 21.82 s[##################                      ] | 47% Completed | 21.92 s[##################                      ] | 47% Completed | 22.02 s[##################                      ] | 47% Completed | 22.24 s[###################                     ] | 47% Completed | 23.13 s[###################                     ] | 48% Completed | 23.23 s[###################                     ] | 48% Completed | 23.33 s[###################                     ] | 49% Completed | 23.51 s[###################                     ] | 49% Completed | 23.91 s[####################                    ] | 50% Completed | 24.01 s[####################                    ] | 50% Completed | 24.17 s[####################                    ] | 50% Completed | 24.56 s[####################                    ] | 52% Completed | 24.66 s[####################                    ] | 52% Completed | 24.76 s[####################                    ] | 52% Completed | 24.99 s[####################                    ] | 52% Completed | 25.96 s[#####################                   ] | 52% Completed | 26.06 s[#####################                   ] | 53% Completed | 26.16 s[#####################                   ] | 53% Completed | 26.26 s[#####################                   ] | 54% Completed | 26.77 s[#####################                   ] | 54% Completed | 26.87 s[#####################                   ] | 54% Completed | 27.03 s[######################                  ] | 55% Completed | 27.41 s[######################                  ] | 56% Completed | 27.51 s[######################                  ] | 56% Completed | 27.61 s[######################                  ] | 56% Completed | 27.83 s[######################                  ] | 56% Completed | 28.76 s[#######################                 ] | 57% Completed | 28.87 s[#######################                 ] | 58% Completed | 28.97 s[#######################                 ] | 58% Completed | 29.16 s[#######################                 ] | 58% Completed | 29.54 s[#######################                 ] | 59% Completed | 29.65 s[#######################                 ] | 59% Completed | 29.83 s[#######################                 ] | 59% Completed | 30.21 s[########################                ] | 61% Completed | 30.31 s[########################                ] | 61% Completed | 30.41 s[########################                ] | 61% Completed | 30.51 s[########################                ] | 61% Completed | 30.64 s[########################                ] | 61% Completed | 31.59 s[########################                ] | 62% Completed | 31.70 s[#########################               ] | 63% Completed | 31.81 s[#########################               ] | 64% Completed | 31.91 s[##########################              ] | 65% Completed | 32.01 s[##########################              ] | 65% Completed | 32.39 s[###########################             ] | 67% Completed | 32.50 s[###########################             ] | 67% Completed | 32.67 s[###########################             ] | 67% Completed | 33.05 s[############################            ] | 72% Completed | 33.16 s[#############################           ] | 72% Completed | 33.26 s[#############################           ] | 73% Completed | 33.36 s[#############################           ] | 73% Completed | 33.46 s[##############################          ] | 75% Completed | 33.56 s[##############################          ] | 75% Completed | 33.66 s[##############################          ] | 76% Completed | 33.76 s[##############################          ] | 76% Completed | 33.94 s[##############################          ] | 76% Completed | 34.11 s[##############################          ] | 76% Completed | 34.22 s[###############################         ] | 77% Completed | 34.43 s[###############################         ] | 79% Completed | 34.56 s[################################        ] | 82% Completed | 34.69 s[#################################       ] | 83% Completed | 34.83 s[##################################      ] | 85% Completed | 34.97 s[########################################] | 100% Completed | 35.07 s
+flag_autocorrelations: 4636 auto-baseline rows, 23281992 visibilities flagged (3.23% of all); 4636 rows now flagged in total
+flag_uv_above: max UV distance = 7584.3 m
+flag_uv_above: 22234 rows above uv limit, 22234 newly flagged (total: 26870)
+flag_data (NaN): flagged 0 / 721741752 visibilities (0.00%)
+flag_data (clip [0.0, 100.0]): flagged 36403674 / 721741752 visibilities (5.04%)
+flag_spectral_window[0]: 18 channels in 3 range(s), flagged 5173776 visibilities
+flag_spectral_window[1]: 909 channels in 15 range(s), flagged 118959012 visibilities, UV < 600 m
+Flagging Summary (scan1.ms): 21.337964524463317 % - 154004999/721741752.
+    flags: 21.34 % - 154004999/721741752.
+    rows: 18.70 % - 26870/143716.
+    max-uv: 7584.26
+    UV-Percentiles: 
+        25.000000: 	 286.93
+        33.000000: 	 399.96
+        50.000000: 	 776.01
+        75.000000: 	1971.55
+        95.000000: 	3861.87
+        100.000000: 	7584.26
+    Row flagging histogram (% of visibilities unflagged):
+           0%:     6466 (  4.5%) ##
+         1-25%:        0 (  0.0%) #
+        26-50%:        0 (  0.0%) #
+        51-75%:    59998 ( 41.7%) ####################
+        76-99%:    77252 ( 53.8%) ##########################
+          100%:        0 (  0.0%) #
+    Visibilities per row: 5022 total (unflagged: min=0, max=4981; flagged: min=41, max=5022)
+    Row size check: all rows consistent (5022 elements each)
+    Spectral windows: 1 (channels: 2511, 897.797–1422.348 MHz, 209.0 kHz each, 524.8 MHz of spectrum)
+    Max integration time (fringe-rotation limit, FOV=3.30 deg full width):
+        1% loss:    1.0 s
+        3% loss:    1.8 s
+        5% loss:    2.3 s
+        10% loss:    3.3 s
+    Current integration time: 8.0 s
+    Integrations: 78
+    Integration cadence: 7.997 s
+    Incomplete integration groups: 3/78 (fewer than 1891 baselines)
+    Fields:
+        0: J0408-6545             143716 rows
+Copied 1 missing keyword(s) to bench_ave.ms: ['SOURCE']
+	Command being timed: "../.venv/bin/skarabina --ms scan1.ms --summary --time-average-factor 1 --frequency-average-factor 32 --clobber --flag save:imported --flag autos --flag uv-above 2500 --flag nan --flag clip 0 100 --flag spectral-window ../bench/spectral-flags-L.yml --field-of-view 3.3deg --msout bench_ave.ms"
+	User time (seconds): 27.70
+	System time (seconds): 27.97
+	Percent of CPU this job got: 147%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:37.80
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 4174832
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2046930
+	Voluntary context switches: 20581
+	Involuntary context switches: 3307
+	Swaps: 0
+	File system inputs: 1264
+	File system outputs: 23020864
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1,0 +1,179 @@
+START Sat 26 Sep 2026 17:07:12 NZST
+........................................................................ [ 15%]
+........................................................................ [ 31%]
+........................................................................ [ 46%]
+........................................................................ [ 62%]
+........................................................................ [ 77%]
+........................................................................ [ 93%]
+...........F.F..F.FF..........                                           [100%]
+=================================== FAILURES ===================================
+____________________ test_the_fixture_has_sharable_columns _____________________
+
+ms = '/tmp/pytest-of-tim/pytest-25/test_the_fixture_has_sharable_0/in.ms'
+
+    def test_the_fixture_has_sharable_columns(ms):
+        """Guard the guard: if the template ever loses its tiled columns, the
+        sharing tests below would pass vacuously."""
+        ds = DaskMS(ms)
+>       assert _shareable_blocks(ms, ds), (
+            "expected at least one non-FLAG column in its own storage manager"
+        )
+E       AssertionError: expected at least one non-FLAG column in its own storage manager
+E       assert set()
+E        +  where set() = _shareable_blocks('/tmp/pytest-of-tim/pytest-25/test_the_fixture_has_sharable_0/in.ms', <skarabina.dask_ms.DaskMS object at 0x7ff2957aae40>)
+
+tests/test_write_changed_only.py:151: AssertionError
+----------------------------- Captured stdout call -----------------------------
+Getting Data from MS file: /tmp/pytest-of-tim/pytest-25/test_the_fixture_has_sharable_0/in.ms
+Row chunk: 10000 rows
+_______________ test_unchanged_columns_are_shared_with_the_input _______________
+
+ms = '/tmp/pytest-of-tim/pytest-25/test_unchanged_columns_are_sha0/in.ms'
+tmp_path = PosixPath('/tmp/pytest-of-tim/pytest-25/test_unchanged_columns_are_sha0')
+
+    def test_unchanged_columns_are_shared_with_the_input(ms, tmp_path):
+        """Sharing is the point: the bulk columns must not be duplicated."""
+        out = str(tmp_path / "out.ms")
+        ds = DaskMS(ms)
+        ds.flag_data({"NAN": True})
+        ds.write_new_ms(out, clobber=True, changed_only=True)
+    
+        shared = 0
+        for member in _shareable_blocks(ms, ds):
+            target = os.path.join(out, member)
+            if os.path.exists(target):
+                if os.stat(os.path.join(ms, member)).st_ino == os.stat(target).st_ino:
+                    shared += 1
+>       assert shared, "no unchanged column block was shared with the input"
+E       AssertionError: no unchanged column block was shared with the input
+E       assert 0
+
+tests/test_write_changed_only.py:200: AssertionError
+----------------------------- Captured stdout call -----------------------------
+Getting Data from MS file: /tmp/pytest-of-tim/pytest-25/test_unchanged_columns_are_sha0/in.ms
+Row chunk: 10000 rows
+flag_data (NaN): flagged 0 / 192 visibilities (0.00%)
+Writing /tmp/pytest-of-tim/pytest-25/test_unchanged_columns_are_sha0/out.ms (changed only): sharing 0 unchanged column group(s), rewriting 1: FLAG
+Updating table: FLAG in /tmp/pytest-of-tim/pytest-25/test_unchanged_columns_are_sha0/out.ms
+[                                        ] | 0% Completed | 275.28 us[########################################] | 100% Completed | 101.25 ms
+  0 block(s) shared with the input (0 column group(s), left read-only), 2 copied or written
+________ test_shared_blocks_are_read_only_so_the_input_cannot_be_edited ________
+
+ms = '/tmp/pytest-of-tim/pytest-25/test_shared_blocks_are_read_on0/in.ms'
+tmp_path = PosixPath('/tmp/pytest-of-tim/pytest-25/test_shared_blocks_are_read_on0')
+
+    def test_shared_blocks_are_read_only_so_the_input_cannot_be_edited(ms, tmp_path):
+        """A write to a shared column must fail rather than alter the input.
+    
+        The protection is the file mode of the shared blocks, and a hard link has
+        one inode, so *both* paths lose write access to them.  That is what makes
+        the sharing safe: without it, writing the output's DATA would silently
+        rewrite the input's DATA through the shared block.
+    
+        The refusal can surface as early as opening a read/write table, so the whole
+        attempt -- open, read, write -- is what must fail.
+        """
+        before = _read(ms, "DATA")
+        out = str(tmp_path / "out.ms")
+        ds = DaskMS(ms)
+        ds.flag_data({"NAN": True})
+        ds.write_new_ms(out, clobber=True, changed_only=True)
+    
+        # Sharing must not cost readability: both paths still return the data.
+        assert np.array_equal(_read(out, "DATA"), before)
+        assert _read(out, "FLAG").shape == before.shape
+    
+        def try_to_overwrite(path):
+            t = table(path, readonly=False)
+            try:
+                t.putcol("DATA", np.zeros_like(before))
+            finally:
+                t.close()
+    
+        for path in (out, ms):
+>           with pytest.raises(Exception):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE Exception
+
+tests/test_write_changed_only.py:257: Failed
+----------------------------- Captured stdout call -----------------------------
+Getting Data from MS file: /tmp/pytest-of-tim/pytest-25/test_shared_blocks_are_read_on0/in.ms
+Row chunk: 10000 rows
+flag_data (NaN): flagged 0 / 192 visibilities (0.00%)
+Writing /tmp/pytest-of-tim/pytest-25/test_shared_blocks_are_read_on0/out.ms (changed only): sharing 0 unchanged column group(s), rewriting 1: FLAG
+Updating table: FLAG in /tmp/pytest-of-tim/pytest-25/test_shared_blocks_are_read_on0/out.ms
+[                                        ] | 0% Completed | 102.93 us[########################################] | 100% Completed | 100.60 ms
+  0 block(s) shared with the input (0 column group(s), left read-only), 2 copied or written
+_____ test_a_block_left_read_only_by_an_earlier_run_can_still_be_rewritten _____
+
+ms = '/tmp/pytest-of-tim/pytest-25/test_a_block_left_read_only_by0/in.ms'
+tmp_path = PosixPath('/tmp/pytest-of-tim/pytest-25/test_a_block_left_read_only_by0')
+
+    def test_a_block_left_read_only_by_an_earlier_run_can_still_be_rewritten(ms, tmp_path):
+        """A run must survive an input that an earlier run made read-only (#3).
+    
+        Sharing makes the shared blocks read-only, and a hard link is one inode, so
+        a run that changes nothing leaves the *input's* blocks read-only too -- by
+        design, see ``test_shared_blocks_are_read_only_...`` above.  The next run
+        that has to change one of those columns copies the block into its output,
+        and ``shutil.copy2`` preserves the mode: the copy arrived read-only, and the
+        write that followed died with ``storage error: Permission denied``.  The
+        input is only usable once if that happens, which is what this pins down.
+        """
+        first = str(tmp_path / "first.ms")
+        DaskMS(ms).write_new_ms(first, clobber=True, changed_only=True)
+    
+        blocks = _flag_blocks(ms, DaskMS(ms))
+>       assert blocks, "expected FLAG in its own storage manager"
+E       AssertionError: expected FLAG in its own storage manager
+E       assert set()
+
+tests/test_write_changed_only.py:294: AssertionError
+----------------------------- Captured stdout call -----------------------------
+Getting Data from MS file: /tmp/pytest-of-tim/pytest-25/test_a_block_left_read_only_by0/in.ms
+Row chunk: 10000 rows
+Writing /tmp/pytest-of-tim/pytest-25/test_a_block_left_read_only_by0/first.ms (changed only): sharing 0 unchanged column group(s), rewriting 0: none
+  0 block(s) shared with the input (0 column group(s), left read-only), 2 copied or written
+Getting Data from MS file: /tmp/pytest-of-tim/pytest-25/test_a_block_left_read_only_by0/in.ms
+Row chunk: 10000 rows
+_________________ test_a_copied_shared_block_is_left_writable __________________
+
+ms = '/tmp/pytest-of-tim/pytest-25/test_a_copied_shared_block_is_0/in.ms'
+tmp_path = PosixPath('/tmp/pytest-of-tim/pytest-25/test_a_copied_shared_block_is_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7ff295833a80>
+
+    def test_a_copied_shared_block_is_left_writable(ms, tmp_path, monkeypatch):
+        """Across filesystems the block is copied, not shared, so nothing protects it.
+    
+        The read-only mode exists to keep a write to the *output* from reaching the
+        *input* through a shared inode.  A copy has no such link: the output owns it
+        outright, so carrying the input's read-only mode onto it only invents a
+        failure -- and the input here is read-only already, because the first run
+        shared its blocks.
+        """
+        first = str(tmp_path / "first.ms")
+        DaskMS(ms).write_new_ms(first, clobber=True, changed_only=True)
+    
+        ds = DaskMS(ms)
+        blocks = _shareable_blocks(ms, ds) | _flag_blocks(ms, ds)
+>       assert blocks, "expected columns in storage managers of their own"
+E       AssertionError: expected columns in storage managers of their own
+E       assert set()
+
+tests/test_write_changed_only.py:332: AssertionError
+----------------------------- Captured stdout call -----------------------------
+Getting Data from MS file: /tmp/pytest-of-tim/pytest-25/test_a_copied_shared_block_is_0/in.ms
+Row chunk: 10000 rows
+Writing /tmp/pytest-of-tim/pytest-25/test_a_copied_shared_block_is_0/first.ms (changed only): sharing 0 unchanged column group(s), rewriting 0: none
+  0 block(s) shared with the input (0 column group(s), left read-only), 2 copied or written
+Getting Data from MS file: /tmp/pytest-of-tim/pytest-25/test_a_copied_shared_block_is_0/in.ms
+Row chunk: 10000 rows
+=========================== short test summary info ============================
+FAILED tests/test_write_changed_only.py::test_the_fixture_has_sharable_columns
+FAILED tests/test_write_changed_only.py::test_unchanged_columns_are_shared_with_the_input
+FAILED tests/test_write_changed_only.py::test_shared_blocks_are_read_only_so_the_input_cannot_be_edited
+FAILED tests/test_write_changed_only.py::test_a_block_left_read_only_by_an_earlier_run_can_still_be_rewritten
+FAILED tests/test_write_changed_only.py::test_a_copied_shared_block_is_left_writable
+5 failed, 457 passed in 26.54s
+RC=1
+END Sat 26 Sep 2026 17:07:40 NZST

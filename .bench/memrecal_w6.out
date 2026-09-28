@@ -1,0 +1,29 @@
+START Sat 26 Sep 2026 16:56:22 NZST load=11.43 8.56 6.14
+[mem_recal] scan1.ms: 143716 rows x 2511 chan x 2 corr, 6 workers, load 11.43
+[mem_recal] write-5000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> full
+    rep 1/2: measured   2526.2 MiB, planned   2252.8 MiB (nan), rc=0, 28.24s, load 11.43
+    rep 2/2: measured   2614.9 MiB, planned   2252.8 MiB (nan), rc=0, 31.66s, load 11.01
+    median   2570.6 MiB (min 2526.2, max 2614.9), planned   2252.8 MiB (nan), ratio 0.88 (worst 0.89), implied 14.33 B/vis
+[mem_recal] nowrite-12000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> none
+    rep 1/2: measured   2157.6 MiB, planned   1843.2 MiB (nan), rc=0, 10.43s, load 10.57
+    rep 2/2: measured   2327.1 MiB, planned   1843.2 MiB (nan), rc=0, 6.43s, load 10.73
+    median   2242.3 MiB (min 2157.6, max 2327.1), planned   1843.2 MiB (nan), ratio 0.82 (worst 0.85), implied 5.02 B/vis
+[mem_recal] write-12000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> full
+    rep 1/2: measured   4705.0 MiB, planned   4608.0 MiB (nan), rc=0, 28.83s, load 10.75
+    rep 2/2: measured   3590.9 MiB, planned   4608.0 MiB (nan), rc=0, 35.49s, load 10.26
+    median   4147.9 MiB (min 3590.9, max 4705.0), planned   4608.0 MiB (nan), ratio 1.11 (worst 1.28), implied 10.54 B/vis
+[mem_recal] avg-12000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> full x32
+    rep 1/2: measured   5403.1 MiB, planned   4608.0 MiB (nan), rc=0, 22.22s, load 9.78
+    rep 2/2: measured   5969.7 MiB, planned   4608.0 MiB (nan), rc=0, 17.45s, load 9.26
+    median   5686.4 MiB (min 5403.1, max 5969.7), planned   4608.0 MiB (nan), ratio 0.81 (worst 0.85), implied 15.01 B/vis
+
+| case | mode | chunk | peak MiB | min | max | planned MiB | step | ratio | worst | in flight | implied B/vis | wall s | rc |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| write-5000 | full | 5000 | 2570.6 | 2526.2 | 2614.9 | 2252.8 | nan | 0.88 | 0.89 | 6 | 14.33 | 29.95 | 0 |
+| nowrite-12000 | none | 12000 | 2242.3 | 2157.6 | 2327.1 | 1843.2 | nan | 0.82 | 0.85 | 6 | 5.02 | 8.43 | 0 |
+| write-12000 | full | 12000 | 4147.9 | 3590.9 | 4705.0 | 4608.0 | nan | 1.11 | 1.28 | 6 | 10.54 | 32.16 | 0 |
+| avg-12000 | full/32 | 12000 | 5686.4 | 5403.1 | 5969.7 | 4608.0 | nan | 0.81 | 0.85 | 6 | 15.01 | 19.84 | 0 |
+
+[mem_recal] wrote .bench/scratch/mem_recal/mem_recal_recal_w6.json
+RC=0
+END Sat 26 Sep 2026 16:59:32 NZST load=8.71 8.84 6.72

@@ -1,0 +1,48 @@
+START Sat 26 Sep 2026 16:33:52 NZST load=1.18 1.94 1.83
+[flag_timing] seq: 7 operations
+[flag_timing] seq: 13.23s, 3060.1 MiB, rc=0
+[flag_timing] op1: save:imported
+[flag_timing] op1: restored write permission on 13 read-only block(s) of the input MS
+[flag_timing] op1: 1.6s, 318.0 MiB, rc=0
+[flag_timing] op2: autos
+[flag_timing] op2: restored write permission on 15 read-only block(s) of the input MS
+[flag_timing] op2: 1.4s, 335.6 MiB, rc=0
+[flag_timing] op3: uv-above 8000
+[flag_timing] op3: restored write permission on 13 read-only block(s) of the input MS
+[flag_timing] op3: 1.2s, 291.4 MiB, rc=0
+[flag_timing] op4: nan
+[flag_timing] op4: restored write permission on 15 read-only block(s) of the input MS
+[flag_timing] op4: 1.6s, 560.4 MiB, rc=0
+[flag_timing] op5: clip 0 100
+[flag_timing] op5: restored write permission on 13 read-only block(s) of the input MS
+[flag_timing] op5: 1.6s, 683.8 MiB, rc=0
+[flag_timing] op6: spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml
+[flag_timing] op6: restored write permission on 13 read-only block(s) of the input MS
+[flag_timing] op6: 1.4s, 399.8 MiB, rc=0
+[flag_timing] op7: rflag
+[flag_timing] op7: restored write permission on 13 read-only block(s) of the input MS
+[flag_timing] op7: 12.25s, 2786.1 MiB, rc=0
+
+# skarabina flag timing -- casacure backend
+
+- date: 2026-09-26 04:33 UTC
+- skarabina 1.0.10 (git 8c918ea), python 3.13.5
+- host: schmalzburg, AMD Ryzen 5 5600G with Radeon Graphics, 12 cores, 62.2 GiB RAM
+- workload: /home/tim/github/skarabina/.bench/data/bpcal.ms -- 429257 rows, 79 channels, 2 correlations, 232 integrations, 1 fields, 1.56 GiB
+- averaging: channel x1, time x1; write-changed-only=True; repeat=1
+- operations: `save:imported`, `autos`, `uv-above 8000`, `nan`, `clip 0 100`, `spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml`, `rflag`
+
+| mode | operation(s) | wall (s) | peak RSS (MiB) | flags reported | rc |
+|---|---|---|---|---|---|
+| seq | all 7, one process | 13.2 | 3060 | 71.88% | 0 |
+| per-op | save:imported | 1.6 | 318 | 71.21% | 0 |
+| per-op | autos | 1.4 | 336 | 71.21% | 0 |
+| per-op | uv-above 8000 | 1.2 | 291 | 71.21% | 0 |
+| per-op | nan | 1.6 | 560 | 71.21% | 0 |
+| per-op | clip 0 100 | 1.6 | 684 | 71.21% | 0 |
+| per-op | spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml | 1.4 | 400 | 71.21% | 0 |
+| per-op | rflag | 12.2 | 2786 | 71.88% | 0 |
+
+[flag_timing] wrote bench/results/bpcal-casacure-389.json and bench/results/bpcal-casacure-389.md
+RC=0
+END Sat 26 Sep 2026 16:34:28 NZST load=2.85 2.26 1.94

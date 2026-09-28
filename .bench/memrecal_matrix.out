@@ -1,0 +1,54 @@
+START Sat 26 Sep 2026 16:43:09 NZST load=5.31 4.68 3.10
+[mem_recal] scan1.ms: 143716 rows x 2511 chan x 2 corr, 12 workers, load 5.61
+[mem_recal] nowrite-5000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> none
+    measured   2160.9 MiB, planned   1638.4 MiB (nan), ratio 0.76, implied 5.74 B/vis, rc=0, 14.24s
+[mem_recal] flags-5000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> flags
+    measured   2032.5 MiB, planned   1945.6 MiB (nan), ratio 0.96, implied 5.29 B/vis, rc=0, 6.02s
+[mem_recal] write-5000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> full
+    measured   2979.8 MiB, planned   3993.6 MiB (nan), ratio 1.34, implied 8.59 B/vis, rc=0, 65.48s
+[mem_recal] avg-5000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> full x32
+    measured   3336.4 MiB, planned   3993.6 MiB (nan), ratio 1.2, implied 9.83 B/vis, rc=0, 39.45s
+[mem_recal] save-5000: save:imported -> none
+    measured    705.0 MiB, planned    819.2 MiB (read), ratio 1.16, implied 0.67 B/vis, rc=0, 2.4s
+[mem_recal] nowrite-12000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> none
+    measured   2451.3 MiB, planned   3276.8 MiB (nan), ratio 1.34, implied 2.81 B/vis, rc=0, 6.81s
+[mem_recal] flags-12000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> flags
+    measured   2469.3 MiB, planned   3993.6 MiB (nan), ratio 1.62, implied 2.84 B/vis, rc=0, 6.01s
+[mem_recal] write-12000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> full
+    measured   3823.1 MiB, planned   8806.4 MiB (nan), ratio 2.3, implied 4.8 B/vis, rc=0, 59.84s
+[mem_recal] avg-12000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> full x32
+    measured   5991.5 MiB, planned   8806.4 MiB (nan), ratio 1.47, implied 7.95 B/vis, rc=0, 39.84s
+[mem_recal] save-12000: save:imported -> none
+    measured    805.1 MiB, planned   1228.8 MiB (read), ratio 1.53, implied 0.42 B/vis, rc=0, 2.41s
+[mem_recal] nowrite-40000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> none
+    measured   5310.3 MiB, planned   9728.0 MiB (nan), ratio 1.83, implied 6.26 B/vis, rc=0, 6.82s
+[mem_recal] flags-40000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> flags
+    measured   4950.0 MiB, planned  11980.8 MiB (nan), ratio 2.42, implied 5.79 B/vis, rc=0, 7.62s
+[mem_recal] write-40000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> full
+    measured   7533.4 MiB, planned  28057.6 MiB (nan), ratio 3.72, implied 9.16 B/vis, rc=0, 47.24s
+[mem_recal] avg-40000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> full x32
+    measured   9072.5 MiB, planned  28057.6 MiB (nan), ratio 3.09, implied 11.17 B/vis, rc=0, 54.83s
+[mem_recal] save-40000: save:imported -> none
+    measured   1213.0 MiB, planned   2764.8 MiB (read), ratio 2.28, implied 0.91 B/vis, rc=0, 2.2s
+
+| case | mode | chunk | peak MiB | planned MiB | step | ratio | in flight | implied B/vis | wall s | rc |
+|---|---|---|---|---|---|---|---|---|---|---|
+| nowrite-5000 | none | 5000 | 2160.9 | 1638.4 | nan | 0.76 | 12 | 5.74 | 14.24 | 0 |
+| flags-5000 | flags | 5000 | 2032.5 | 1945.6 | nan | 0.96 | 12 | 5.29 | 6.02 | 0 |
+| write-5000 | full | 5000 | 2979.8 | 3993.6 | nan | 1.34 | 12 | 8.59 | 65.48 | 0 |
+| avg-5000 | full/32 | 5000 | 3336.4 | 3993.6 | nan | 1.2 | 12 | 9.83 | 39.45 | 0 |
+| save-5000 | none | 5000 | 705.0 | 819.2 | read | 1.16 | 12 | 0.67 | 2.4 | 0 |
+| nowrite-12000 | none | 12000 | 2451.3 | 3276.8 | nan | 1.34 | 12 | 2.81 | 6.81 | 0 |
+| flags-12000 | flags | 12000 | 2469.3 | 3993.6 | nan | 1.62 | 12 | 2.84 | 6.01 | 0 |
+| write-12000 | full | 12000 | 3823.1 | 8806.4 | nan | 2.3 | 12 | 4.8 | 59.84 | 0 |
+| avg-12000 | full/32 | 12000 | 5991.5 | 8806.4 | nan | 1.47 | 12 | 7.95 | 39.84 | 0 |
+| save-12000 | none | 12000 | 805.1 | 1228.8 | read | 1.53 | 12 | 0.42 | 2.41 | 0 |
+| nowrite-40000 | none | 40000 | 5310.3 | 9728.0 | nan | 1.83 | 4 | 6.26 | 6.82 | 0 |
+| flags-40000 | flags | 40000 | 4950.0 | 11980.8 | nan | 2.42 | 4 | 5.79 | 7.62 | 0 |
+| write-40000 | full | 40000 | 7533.4 | 28057.6 | nan | 3.72 | 4 | 9.16 | 47.24 | 0 |
+| avg-40000 | full/32 | 40000 | 9072.5 | 28057.6 | nan | 3.09 | 4 | 11.17 | 54.83 | 0 |
+| save-40000 | none | 40000 | 1213.0 | 2764.8 | read | 2.28 | 4 | 0.91 | 2.2 | 0 |
+
+[mem_recal] wrote .bench/scratch/mem_recal/mem_recal_recal1.json
+RC=0
+END Sat 26 Sep 2026 16:49:18 NZST load=5.94 6.75 4.71

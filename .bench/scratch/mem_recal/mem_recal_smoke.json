@@ -1,0 +1,102 @@
+{
+  "ms": "/home/tim/github/skarabina/.bench/scan1.ms",
+  "rows": 143716,
+  "nchan": 2511,
+  "ncorr": 2,
+  "workers": 12,
+  "runs": [
+    {
+      "case": "nowrite-12000",
+      "ops": [
+        "save:imported",
+        "autos",
+        "uv-above 2500",
+        "nan",
+        "clip 0 100",
+        "spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml"
+      ],
+      "mode": "none",
+      "factor": 1,
+      "row_chunk": 12000,
+      "workers": 12,
+      "rc": 0,
+      "wall_s": 35.83,
+      "peak_mib": 1671.9,
+      "planned_mib": 3276.8,
+      "planned_step": "nan",
+      "plan_header": "Memory plan: limit (available RAM) 43.8 GB, 12 workers, 143716 rows x 2511 chan x 2 corr; row chunk 12000 rows, set by --row-chunk",
+      "plan_steps": [
+        [
+          "read",
+          1228.8
+        ],
+        [
+          "autos",
+          1843.2
+        ],
+        [
+          "uv-above",
+          1228.8
+        ],
+        [
+          "nan",
+          3276.8
+        ],
+        [
+          "clip",
+          3276.8
+        ],
+        [
+          "spectral-window",
+          3276.8
+        ],
+        [
+          "save",
+          819.2
+        ]
+      ],
+      "repaired_blocks": 0,
+      "load_before": 6.65,
+      "load_after": 5.83,
+      "log": ".bench/scratch/mem_recal/nowrite-12000.log",
+      "chunks_in_flight": 12,
+      "input_vis_in_flight": 723168000,
+      "implied_per_vis": 1.68,
+      "ratio": 1.96
+    },
+    {
+      "case": "save-12000",
+      "ops": [
+        "save:imported"
+      ],
+      "mode": "none",
+      "factor": 1,
+      "row_chunk": 12000,
+      "workers": 12,
+      "rc": 0,
+      "wall_s": 3.4,
+      "peak_mib": 838.2,
+      "planned_mib": 1228.8,
+      "planned_step": "read",
+      "plan_header": "Memory plan: limit (available RAM) 43.2 GB, 12 workers, 143716 rows x 2511 chan x 2 corr; row chunk 12000 rows, set by --row-chunk",
+      "plan_steps": [
+        [
+          "read",
+          1228.8
+        ],
+        [
+          "save",
+          819.2
+        ]
+      ],
+      "repaired_blocks": 0,
+      "load_before": 5.83,
+      "load_after": 5.6,
+      "log": ".bench/scratch/mem_recal/save-12000.log",
+      "chunks_in_flight": 12,
+      "input_vis_in_flight": 723168000,
+      "implied_per_vis": 0.47,
+      "ratio": 1.47
+    }
+  ]
+}

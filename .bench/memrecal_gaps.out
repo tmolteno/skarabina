@@ -1,0 +1,34 @@
+START Sat 26 Sep 2026 16:59:57 NZST load=7.04 8.44 6.65
+[mem_recal] scan1.ms: 143716 rows x 2511 chan x 2 corr, 12 workers, load 7.04
+[mem_recal] nowrite-5000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> none
+    rep 1/2: measured   2019.8 MiB, planned   1638.4 MiB (nan), rc=0, 5.6s, load 7.04
+    rep 2/2: measured   2147.1 MiB, planned   1638.4 MiB (nan), rc=0, 5.4s, load 7.52
+    median   2083.4 MiB (min 2019.8, max 2147.1), planned   1638.4 MiB (nan), ratio 0.79 (worst 0.81), implied 5.47 B/vis
+[mem_recal] flags-12000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> flags
+    rep 1/2: measured   2352.5 MiB, planned   3993.6 MiB (nan), rc=0, 6.41s, load 7.47
+    rep 2/2: measured   2296.6 MiB, planned   3993.6 MiB (nan), rc=0, 6.0s, load 7.44
+    median   2324.6 MiB (min 2296.6, max 2352.5), planned   3993.6 MiB (nan), ratio 1.72 (worst 1.74), implied 2.63 B/vis
+[mem_recal] nowrite-40000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> none
+    rep 1/2: measured   4561.8 MiB, planned   9728.0 MiB (nan), rc=0, 15.02s, load 6.68
+    rep 2/2: measured   4806.7 MiB, planned   9728.0 MiB (nan), rc=0, 12.42s, load 6.71
+    median   4684.2 MiB (min 4561.8, max 4806.7), planned   9728.0 MiB (nan), ratio 2.08 (worst 2.13), implied 5.44 B/vis
+[mem_recal] write-40000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> full
+    rep 1/2: measured   6861.6 MiB, planned  28057.6 MiB (nan), rc=0, 75.47s, load 7.23
+    rep 2/2: measured   8446.8 MiB, planned  28057.6 MiB (nan), rc=0, 83.45s, load 7.85
+    median   7654.2 MiB (min 6861.6, max 8446.8), planned  28057.6 MiB (nan), ratio 3.67 (worst 4.09), implied 9.32 B/vis
+[mem_recal] avg-40000: save:imported + autos + uv-above 2500 + nan + clip 0 100 + spectral-window /home/tim/github/skarabina/bench/spectral-flags-L.yml -> full x32
+    rep 1/2: measured   9078.5 MiB, planned  28057.6 MiB (nan), rc=0, 51.24s, load 5.27
+    rep 2/2: measured  13065.1 MiB, planned  28057.6 MiB (nan), rc=0, 30.66s, load 7.12
+    median  11071.8 MiB (min 9078.5, max 13065.1), planned  28057.6 MiB (nan), ratio 2.53 (worst 3.09), implied 13.78 B/vis
+
+| case | mode | chunk | peak MiB | min | max | planned MiB | step | ratio | worst | in flight | implied B/vis | wall s | rc |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| nowrite-5000 | none | 5000 | 2083.4 | 2019.8 | 2147.1 | 1638.4 | nan | 0.79 | 0.81 | 12 | 5.47 | 5.5 | 0 |
+| flags-12000 | flags | 12000 | 2324.6 | 2296.6 | 2352.5 | 3993.6 | nan | 1.72 | 1.74 | 12 | 2.63 | 6.21 | 0 |
+| nowrite-40000 | none | 40000 | 4684.2 | 4561.8 | 4806.7 | 9728.0 | nan | 2.08 | 2.13 | 4 | 5.44 | 13.72 | 0 |
+| write-40000 | full | 40000 | 7654.2 | 6861.6 | 8446.8 | 28057.6 | nan | 3.67 | 4.09 | 4 | 9.32 | 79.46 | 0 |
+| avg-40000 | full/32 | 40000 | 11071.8 | 9078.5 | 13065.1 | 28057.6 | nan | 2.53 | 3.09 | 4 | 13.78 | 40.95 | 0 |
+
+[mem_recal] wrote .bench/scratch/mem_recal/mem_recal_recal3.json
+RC=0
+END Sat 26 Sep 2026 17:04:52 NZST load=8.78 7.87 6.86

@@ -1,0 +1,88 @@
+Mupati (skarabina): The 1GC flagger
+Memory plan: limit (available RAM) 45.6 GB, 12 workers, 143716 rows x 2511 chan x 2 corr; row chunk 11977 rows, set by 12 workers over 143716 rows
+  read                 7.7 GB  per chunk, with the write in the same pass
+  autos                8.4 GB  per chunk, with the write in the same pass
+  uv-above             7.7 GB  per chunk, with the write in the same pass
+  nan                  9.7 GB  per chunk, with the write in the same pass
+  clip                 9.7 GB  per chunk, with the write in the same pass
+  spectral-window      9.7 GB  per chunk, with the write in the same pass
+  save                 2.2 GB  whole table
+  write                1.7 GB  whole table
+Getting Data from MS file: scan1.ms
+Row chunk: 11977 rows
+save:imported
+flag version 'imported' already existed; moved to 'imported.old.20260926094212'
+flag version 'imported' saved to /home/tim/github/skarabina/.bench/scan1.ms.flagversions/flags.imported
+autos
+uv-above 2500
+flag_uv_above: 2500.0 m
+nan
+clip 0 100
+spectral-window ../bench/spectral-flags-L.yml
+Frequency-averaging: factor 32 → 79 channels (last channel from 15 trailing)
+Writing ['PROCESSOR_ID', 'SIGMA', 'ARRAY_ID', 'FLAG_ROW', 'FEED1', 'UVW', 'SCAN_NUMBER', 'TIME', 'ANTENNA2', 'SIGMA_SPECTRUM', 'INTERVAL', 'WEIGHT_SPECTRUM', 'ANTENNA1', 'FIELD_ID', 'TIME_CENTROID', 'FEED2', 'STATE_ID', 'WEIGHT', 'OBSERVATION_ID', 'EXPOSURE', 'FLAG', 'DATA'] to bench_ave.ms
+[                                        ] | 0% Completed | 183.11 us[                                        ] | 1% Completed | 106.22 ms[#                                       ] | 3% Completed | 207.68 ms[#                                       ] | 3% Completed | 307.94 ms[#                                       ] | 3% Completed | 408.17 ms[#                                       ] | 3% Completed | 508.50 ms[#                                       ] | 3% Completed | 608.91 ms[#                                       ] | 4% Completed | 709.30 ms[####                                    ] | 10% Completed | 810.47 ms[#####                                   ] | 13% Completed | 913.07 ms[######                                  ] | 15% Completed | 1.01 s[#######                                 ] | 17% Completed | 1.12 s[#######                                 ] | 19% Completed | 1.23 s[########                                ] | 20% Completed | 1.34 s[########                                ] | 22% Completed | 1.44 s[#########                               ] | 22% Completed | 1.55 s[#########                               ] | 23% Completed | 1.66 s[##########                              ] | 25% Completed | 1.79 s[###########                             ] | 28% Completed | 1.90 s[############                            ] | 30% Completed | 2.00 s[############                            ] | 32% Completed | 2.10 s[#############                           ] | 34% Completed | 2.21 s[##############                          ] | 36% Completed | 2.31 s[###############                         ] | 38% Completed | 2.41 s[################                        ] | 41% Completed | 2.51 s[#################                       ] | 44% Completed | 2.62 s[##################                      ] | 45% Completed | 2.72 s[##################                      ] | 45% Completed | 2.82 s[##################                      ] | 45% Completed | 2.96 s[##################                      ] | 45% Completed | 3.06 s[##################                      ] | 45% Completed | 3.16 s[##################                      ] | 46% Completed | 3.26 s[##################                      ] | 46% Completed | 3.36 s[##################                      ] | 46% Completed | 3.46 s[##################                      ] | 47% Completed | 3.56 s[##################                      ] | 47% Completed | 3.66 s[##################                      ] | 47% Completed | 3.76 s[##################                      ] | 47% Completed | 3.86 s[###################                     ] | 48% Completed | 3.96 s[###################                     ] | 48% Completed | 4.06 s[###################                     ] | 49% Completed | 4.16 s[###################                     ] | 49% Completed | 4.27 s[###################                     ] | 49% Completed | 4.37 s[####################                    ] | 50% Completed | 4.47 s[####################                    ] | 51% Completed | 4.57 s[####################                    ] | 51% Completed | 4.67 s[####################                    ] | 52% Completed | 4.77 s[####################                    ] | 52% Completed | 4.87 s[####################                    ] | 52% Completed | 4.97 s[#####################                   ] | 52% Completed | 5.08 s[#####################                   ] | 53% Completed | 5.18 s[#####################                   ] | 53% Completed | 5.28 s[#####################                   ] | 53% Completed | 5.38 s[#####################                   ] | 54% Completed | 5.52 s[######################                  ] | 55% Completed | 5.62 s[######################                  ] | 55% Completed | 5.72 s[######################                  ] | 55% Completed | 5.82 s[######################                  ] | 55% Completed | 5.92 s[######################                  ] | 55% Completed | 6.03 s[#######################                 ] | 57% Completed | 6.17 s[#######################                 ] | 58% Completed | 6.27 s[########################                ] | 60% Completed | 6.38 s[########################                ] | 60% Completed | 6.48 s[########################                ] | 60% Completed | 6.58 s[########################                ] | 60% Completed | 6.68 s[########################                ] | 60% Completed | 6.78 s[########################                ] | 61% Completed | 6.92 s[########################                ] | 61% Completed | 7.02 s[#########################               ] | 63% Completed | 7.13 s[#########################               ] | 63% Completed | 7.23 s[#########################               ] | 64% Completed | 7.33 s[##########################              ] | 65% Completed | 7.43 s[##########################              ] | 65% Completed | 7.53 s[##########################              ] | 65% Completed | 7.63 s[##########################              ] | 65% Completed | 7.73 s[##########################              ] | 66% Completed | 7.84 s[###########################             ] | 67% Completed | 7.94 s[###########################             ] | 67% Completed | 8.04 s[###########################             ] | 68% Completed | 8.14 s[###########################             ] | 68% Completed | 8.24 s[###########################             ] | 68% Completed | 8.34 s[###########################             ] | 69% Completed | 8.45 s[###########################             ] | 69% Completed | 8.55 s[###########################             ] | 69% Completed | 8.65 s[###########################             ] | 69% Completed | 8.75 s[############################            ] | 71% Completed | 8.89 s[############################            ] | 71% Completed | 8.99 s[############################            ] | 71% Completed | 9.09 s[############################            ] | 72% Completed | 9.19 s[############################            ] | 72% Completed | 9.29 s[############################            ] | 72% Completed | 9.39 s[#############################           ] | 72% Completed | 9.50 s[#############################           ] | 74% Completed | 9.60 s[#############################           ] | 74% Completed | 9.70 s[#############################           ] | 74% Completed | 9.83 s[##############################          ] | 75% Completed | 9.93 s[##############################          ] | 76% Completed | 10.03 s[##############################          ] | 76% Completed | 10.13 s[##############################          ] | 77% Completed | 10.23 s[##############################          ] | 77% Completed | 10.33 s[##############################          ] | 77% Completed | 10.43 s[###############################         ] | 77% Completed | 10.55 s[###############################         ] | 77% Completed | 10.65 s[###############################         ] | 78% Completed | 10.75 s[###############################         ] | 78% Completed | 10.85 s[###############################         ] | 78% Completed | 10.95 s[###############################         ] | 79% Completed | 11.05 s[###############################         ] | 79% Completed | 11.16 s[###############################         ] | 79% Completed | 11.26 s[################################        ] | 80% Completed | 11.37 s[################################        ] | 80% Completed | 11.47 s[################################        ] | 81% Completed | 11.57 s[################################        ] | 81% Completed | 11.67 s[################################        ] | 82% Completed | 11.77 s[#################################       ] | 82% Completed | 11.88 s[#################################       ] | 82% Completed | 12.00 s[#################################       ] | 83% Completed | 12.12 s[#################################       ] | 84% Completed | 12.22 s[##################################      ] | 85% Completed | 12.32 s[##################################      ] | 85% Completed | 12.42 s[##################################      ] | 85% Completed | 12.52 s[##################################      ] | 85% Completed | 12.66 s[###################################     ] | 87% Completed | 12.77 s[#####################################   ] | 92% Completed | 12.88 s[#####################################   ] | 93% Completed | 12.98 s[#####################################   ] | 93% Completed | 13.08 s[#####################################   ] | 93% Completed | 13.18 s[#####################################   ] | 93% Completed | 13.28 s[#####################################   ] | 94% Completed | 13.38 s[####################################### ] | 97% Completed | 13.49 s[####################################### ] | 97% Completed | 13.59 s[####################################### ] | 97% Completed | 13.70 s[####################################### ] | 98% Completed | 13.80 s[####################################### ] | 98% Completed | 13.90 s[####################################### ] | 98% Completed | 14.00 s[####################################### ] | 99% Completed | 14.10 s[####################################### ] | 99% Completed | 14.20 s[####################################### ] | 99% Completed | 14.30 s[####################################### ] | 99% Completed | 14.41 s[########################################] | 100% Completed | 14.51 s
+flag_autocorrelations: 4636 auto-baseline rows, 23281992 visibilities flagged (3.23% of all); 4636 rows now flagged in total
+flag_uv_above: max UV distance = 7584.3 m
+flag_uv_above: 22234 rows above uv limit, 22234 newly flagged (total: 26870)
+flag_data (NaN): flagged 0 / 721741752 visibilities (0.00%)
+flag_data (clip [0.0, 100.0]): flagged 36403674 / 721741752 visibilities (5.04%)
+flag_spectral_window[0]: 18 channels in 3 range(s), flagged 5173776 visibilities
+flag_spectral_window[1]: 909 channels in 15 range(s), flagged 118959012 visibilities, UV < 600 m
+Flagging Summary (scan1.ms): 29.69912795664868 % - 6743819/22707128.
+    flags: 29.70 % - 6743819/22707128.
+    rows: 18.70 % - 26870/143716.
+    max-uv: 7584.26
+    UV-Percentiles: 
+        25.000000: 	 286.93
+        33.000000: 	 399.96
+        50.000000: 	 776.01
+        75.000000: 	1971.55
+        95.000000: 	3861.87
+        100.000000: 	7584.26
+    Row flagging histogram (% of visibilities unflagged):
+           0%:     6466 (  4.5%) ##
+         1-25%:        0 (  0.0%) #
+        26-50%:        0 (  0.0%) #
+        51-75%:    59998 ( 41.7%) ####################
+        76-99%:    77252 ( 53.8%) ##########################
+          100%:        0 (  0.0%) #
+    Visibilities per row: 158 total (unflagged: min=0, max=151; flagged: min=7, max=158)
+    Row size check: all rows consistent (158 elements each)
+    Spectral windows: 1 (channels: 79, 901.036–1420.885 MHz, 6687.5 kHz each, 524.8 MHz of spectrum)
+    Max integration time (fringe-rotation limit, FOV=3.30 deg full width):
+        1% loss:    1.0 s
+        3% loss:    1.8 s
+        5% loss:    2.3 s
+        10% loss:    3.3 s
+    Current integration time: 8.0 s
+    Integrations: 78
+    Integration cadence: 7.997 s
+    Incomplete integration groups: 3/78 (fewer than 1891 baselines)
+    Fields:
+        0: J0408-6545             143716 rows
+Copied 1 missing keyword(s) to bench_ave.ms: ['SOURCE']
+SPECTRAL_WINDOW: rewrote ['CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'NUM_CHAN', 'RESOLUTION', 'TOTAL_BANDWIDTH'] for 79 channels in bench_ave.ms
+	Command being timed: "../.venv/bin/skarabina --ms scan1.ms --summary --time-average-factor 1 --frequency-average-factor 32 --clobber --flag save:imported --flag autos --flag uv-above 2500 --flag nan --flag clip 0 100 --flag spectral-window ../bench/spectral-flags-L.yml --field-of-view 3.3deg --msout bench_ave.ms"
+	User time (seconds): 69.13
+	System time (seconds): 23.07
+	Percent of CPU this job got: 537%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:17.15
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 7778720
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 462630
+	Voluntary context switches: 9665
+	Involuntary context switches: 9668
+	Swaps: 0
+	File system inputs: 8
+	File system outputs: 958232
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
