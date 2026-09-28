@@ -68,6 +68,13 @@
                                 save:/restore: stay whole-table, and
                                 averaging, --optimize and the write keep
                                 every field
+  --data-column TEXT            What nan/clip/rflag/tfcrop measure: DATA,
+                                CORRECTED (CORRECTED_DATA), MODEL
+                                (MODEL_DATA), RESIDUAL (CORRECTED_DATA -
+                                MODEL_DATA) or RESIDUAL_DATA (DATA -
+                                MODEL_DATA). CASA's flagdata datacolumn;
+                                the flags always land on FLAG [default:
+                                DATA]
   --debug / --no-debug          Verbose debug output
   --version                     Print version and exit
 ```

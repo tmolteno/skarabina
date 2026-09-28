@@ -782,6 +782,62 @@ class DaskMS:
             for start, rows in zip(starts, row_chunks)
         ]
 
+    #: The visibility source the data-reading verbs measure (``--data-column``):
+    #: a CASA ``datacolumn`` spelling -- DATA, CORRECTED, MODEL, RESIDUAL
+    #: (CORRECTED_DATA - MODEL_DATA) or RESIDUAL_DATA (DATA - MODEL_DATA).
+    #: Set by :meth:`set_data_column`; DATA is what everything fit before the
+    #: option existed.
+    data_column = "DATA"
+
+    #: CASA's datacolumn spellings -> (columns, operation).  The single-column
+    #: entries are used as they are; the two-column ones subtract.
+    _DATA_SOURCES = {
+        "DATA": (("DATA",), None),
+        "CORRECTED": (("CORRECTED_DATA",), None),
+        "CORRECTED_DATA": (("CORRECTED_DATA",), None),
+        "MODEL": (("MODEL_DATA",), None),
+        "MODEL_DATA": (("MODEL_DATA",), None),
+        "RESIDUAL": (("CORRECTED_DATA", "MODEL_DATA"), "sub"),
+        "RESIDUAL_DATA": (("DATA", "MODEL_DATA"), "sub"),
+    }
+
+    def set_data_column(self, spec):
+        """Choose what the data-reading verbs fit (``--data-column``).
+
+        ``nan``, ``clip``, ``rflag`` and ``tfcrop`` measure the source named
+        here instead of the DATA column, with CASA's spellings and meanings:
+        ``RESIDUAL`` is CORRECTED_DATA - MODEL_DATA and ``RESIDUAL_DATA`` is
+        DATA - MODEL_DATA.  The flags themselves always land on the MS's FLAG
+        column.
+        """
+        key = str(spec).strip().upper()
+        if key not in self._DATA_SOURCES:
+            raise RuntimeError(
+                f"unknown --data-column {spec!r}. Valid are DATA, CORRECTED"
+                " (CORRECTED_DATA), MODEL (MODEL_DATA), RESIDUAL"
+                " (CORRECTED_DATA - MODEL_DATA) and RESIDUAL_DATA"
+                " (DATA - MODEL_DATA)"
+            )
+        columns, _ = self._DATA_SOURCES[key]
+        for col in columns:
+            if col not in self.ds.data_vars:
+                raise RuntimeError(
+                    f"--data-column {spec!r} needs the {col} column,"
+                    f" which {self.name} does not have"
+                )
+        self.data_column = key
+        print(f"--data-column {key}: flagging on {self._visibilities_label()}")
+
+    def _visibilities_label(self):
+        columns, op = self._DATA_SOURCES[self.data_column]
+        return " - ".join(columns) if op == "sub" else columns[0]
+
+    def _visibilities(self):
+        """The visibilities the data-reading verbs measure, as a dask array."""
+        columns, op = self._DATA_SOURCES[self.data_column]
+        arrays = [da.asarray(self.ds[col].data) for col in columns]
+        return arrays[0] - arrays[1] if op == "sub" else arrays[0]
+
     #: When set (flag_ops.run sets it for a run), a step's statistics are
     #: queued rather than computed on the spot, and computed together in the
     #: next pass over the data (see :meth:`_report`).
@@ -1013,7 +1069,7 @@ class DaskMS:
                 return data
             return _da.rechunk(data, (chunk, n_chan, n_corr))
 
-        payload = cube(self.ds.DATA.data)
+        payload = cube(self._visibilities())
         existing = cube(self.ds.FLAG.data)
         # The blocks are paired by index, so the flags must be cut where the
         # data are.  They are not always: restore_flag_version sets FLAG from
@@ -1268,7 +1324,7 @@ class DaskMS:
             operations = {}
         # Read from the live dataset: self.data/self.flag are __init__
         # snapshots that go stale once rows have been selected.
-        abs_vis = da.abs(self.ds.DATA.data)
+        abs_vis = da.abs(self._visibilities())
         update = False
         n_nan = 0
         n_clip = 0

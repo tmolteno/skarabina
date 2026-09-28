@@ -176,6 +176,17 @@ def _row_chunk(opts, ops):
     " and averaging, --optimize and the write keep every field.",
 )
 @click.option(
+    "--data-column",
+    "data_column",
+    type=str,
+    default="DATA",
+    show_default=True,
+    help="What nan/clip/rflag/tfcrop measure: DATA, CORRECTED (CORRECTED_DATA),"
+    " MODEL (MODEL_DATA), RESIDUAL (CORRECTED_DATA - MODEL_DATA) or"
+    " RESIDUAL_DATA (DATA - MODEL_DATA). CASA's flagdata datacolumn. The"
+    " flags always land on the FLAG column.",
+)
+@click.option(
     "--row-chunk",
     type=int,
     default=None,
@@ -279,6 +290,9 @@ def main(**kw):
 
     if opts.field is not None:
         ms.set_field_scope(opts.field)
+
+    if opts.data_column != "DATA":
+        ms.set_data_column(opts.data_column)
 
     flag_ops.run(ms, ops, flush=False)
 
