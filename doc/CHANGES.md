@@ -3,6 +3,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The ``skarabina`` cab declares ``ms`` ``writable``.  ``--apply`` and ``save:``/``restore:`` write into
+  it, and without the flag stimela binds an MS outside the working directory read-only, so the step
+  failed with "Table ... cannot be opened for read/write" (seen with the MS behind a symlinked data
+  directory; inside the working directory the directory's own read-write bind hid it).
+
 ## [1.0.13]
 
 ### Fixed

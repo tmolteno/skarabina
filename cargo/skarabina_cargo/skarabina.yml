@@ -15,6 +15,9 @@ cabs:
         dtype: MS
         info: The input measurement set
         required: true
+        # --apply (and save:/restore:) write into it.  Without this stimela binds an MS that lies outside
+        # the working directory read-only, and the in-place write fails ("cannot be opened for read/write").
+        writable: true
       scan:
         dtype: Union[str, None]
         info: >-
