@@ -75,6 +75,14 @@
                                 MODEL_DATA). CASA's flagdata datacolumn;
                                 the flags always land on FLAG [default:
                                 DATA]
+  --data-from TEXT              Which column the written DATA holds: DATA,
+                                CORRECTED (CORRECTED_DATA) or MODEL
+                                (MODEL_DATA). mstransform's datacolumn
+                                semantics for the write: e.g. --data-from
+                                CORRECTED writes the corrected visibilities
+                                as DATA, which is what imaging reads. Runs
+                                before the averaging factors [default:
+                                DATA]
   --debug / --no-debug          Verbose debug output
   --version                     Print version and exit
 ```

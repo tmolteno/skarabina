@@ -838,6 +838,39 @@ class DaskMS:
         arrays = [da.asarray(self.ds[col].data) for col in columns]
         return arrays[0] - arrays[1] if op == "sub" else arrays[0]
 
+    def rebase_data_column(self, source):
+        """Take the written DATA column from another visibility column.
+
+        ``mstransform(datacolumn=...)`` semantics for ``--data-from``: the
+        output's DATA holds ``source``'s values (``DATA``, ``CORRECTED`` or
+        ``MODEL``), which is what a downstream imager reads.  Call this
+        before the averaging factors, so they average the substituted column
+        exactly as ``mstransform`` would.
+        """
+        key = str(source).strip().upper()
+        columns = {
+            "DATA": "DATA",
+            "CORRECTED": "CORRECTED_DATA",
+            "CORRECTED_DATA": "CORRECTED_DATA",
+            "MODEL": "MODEL_DATA",
+            "MODEL_DATA": "MODEL_DATA",
+        }
+        if key not in columns:
+            raise RuntimeError(
+                f"unknown --data-from {source!r}. Valid are DATA, CORRECTED"
+                " (CORRECTED_DATA) and MODEL (MODEL_DATA)"
+            )
+        col = columns[key]
+        if col not in self.ds.data_vars:
+            raise RuntimeError(
+                f"--data-from {source!r} needs the {col} column,"
+                f" which {self.name} does not have"
+            )
+        if col != "DATA":
+            self.ds["DATA"] = (self.ds.DATA.dims, da.asarray(self.ds[col].data))
+            self.changed["DATA"] = True
+        print(f"--data-from {key}: the written DATA column holds {col}")
+
     #: When set (flag_ops.run sets it for a run), a step's statistics are
     #: queued rather than computed on the spot, and computed together in the
     #: next pass over the data (see :meth:`_report`).

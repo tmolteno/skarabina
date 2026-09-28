@@ -187,6 +187,18 @@ def _row_chunk(opts, ops):
     " flags always land on the FLAG column.",
 )
 @click.option(
+    "--data-from",
+    "data_from",
+    type=str,
+    default="DATA",
+    show_default=True,
+    help="Which column the written DATA holds: DATA, CORRECTED"
+    " (CORRECTED_DATA) or MODEL (MODEL_DATA). mstransform's datacolumn"
+    " semantics for the write: e.g. --data-from CORRECTED writes the"
+    " corrected visibilities as DATA, which is what imaging reads. Runs"
+    " before the averaging factors, so they average the substituted column.",
+)
+@click.option(
     "--row-chunk",
     type=int,
     default=None,
@@ -311,6 +323,13 @@ def main(**kw):
     reads_flags_early = opts.optimize or opts.barber
     if ops and reads_flags_early:
         ms.materialise_flags()
+
+    if opts.data_from.upper() != "DATA":
+        # After the flagging (which measures --data-column's source, not the
+        # written column) and before the averaging factors: they must average
+        # the substituted column, exactly as mstransform(datacolumn=...)
+        # averages its source.
+        ms.rebase_data_column(opts.data_from)
 
     # --- Row removal / averaging (MUST be last before writing) ---
     #

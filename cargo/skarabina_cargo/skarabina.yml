@@ -28,6 +28,32 @@ cabs:
           When writing the output MS, keep only this field's rows (a field
           name or a numeric FIELD_ID). Applied at save time, after flagging,
           averaging and optimization.
+      field:
+        dtype: Union[str, None]
+        info: >-
+          With flag, confine the verbs' new flags to these fields' rows: a
+          comma-separated list of field names or numeric FIELD_IDs (like
+          split, but any number of them). CASA's field= selection for
+          flagging: existing flags are never cleared, save:/restore: stay
+          whole-table, and averaging, optimization and the write keep every
+          field.
+      data-column:
+        dtype: str
+        default: DATA
+        info: >-
+          What nan/clip/rflag/tfcrop measure: DATA, CORRECTED
+          (CORRECTED_DATA), MODEL (MODEL_DATA), RESIDUAL (CORRECTED_DATA -
+          MODEL_DATA) or RESIDUAL_DATA (DATA - MODEL_DATA). CASA's flagdata
+          datacolumn; the flags always land on FLAG.
+      data-from:
+        dtype: str
+        default: DATA
+        info: >-
+          Which column the written DATA holds: DATA, CORRECTED
+          (CORRECTED_DATA) or MODEL (MODEL_DATA). mstransform's datacolumn
+          semantics for the write, e.g. data-from CORRECTED writes the
+          corrected visibilities as DATA. Runs before the averaging factors,
+          so they average the substituted column.
       summary:
         dtype: bool
         info: Print the flagging summary
