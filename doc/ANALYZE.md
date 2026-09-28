@@ -116,6 +116,18 @@ line; the `SKARABINA_ANALYZE_JSON ` prefix on that line is a public interface
    These are the numbers the superseded `set-image-parameters` cab in the
    white-belt pipeline used to print; that cab has been retired.
 
+## What is in the MS (content summary)
+
+Besides the image geometry, `skarabina-analyze` reports the MS **content** --
+rows (and how many carry `FLAG_ROW`), fields with their names and row counts,
+scans, antennas, correlations and the time range.  This is the summary the
+`quartical-summary` (`goquartical-summary`) and `listobs` cabs used to provide
+in the white-belt pipeline; it is computed from the small index columns and the
+`FIELD`/`ANTENNA`/`POLARIZATION` subtables only, never the visibility cubes,
+so it costs nothing on a large MS.  Flag *fractions* are `skarabina --summary`'s
+job.  The block is printed on the console and recorded under `ms_content` in
+the JSON output.
+
 ## Example
 
 A real MeerKAT measurement set (1.6 M rows, 58 antennas, 4096 channels over
@@ -127,6 +139,11 @@ A real MeerKAT measurement set (1.6 M rows, 58 antennas, 4096 channels over
       Max frequency:  1711.791 MHz
       Resolution:     4.74 arcsec
       Field of view:  2.5 deg
+    MS content: 1620263 rows (14512 with FLAG_ROW set), 64 antennas, 2 correlations
+      Field 0 'J1939-6342': 207336 rows
+      Field 1 'MAGIC': 1412927 rows
+      Scans: 24 (1, 2, 3, ..., 24)
+      Time: 5117000000.0 .. 5121000000.0 s (4000000.0 s elapsed)
     Recommended image size: 9500 × 9500 pixels
       Channels:       4096 × 209.0 kHz  (856.000 MHz of spectrum)
     Averaging limits at the field edge (1.25 deg):
@@ -143,6 +160,23 @@ the keys are a stable interface — stimela cab outputs are named after them:
 {
   "ms": "target.ms",
   "max_baseline_m": 7625.494677046231,
+  "ms_content": {
+    "n_rows": 1620263,
+    "n_rows_flagged": 14512,
+    "n_corr": 2,
+    "n_antennas": 64,
+    "antenna_names": ["m000", "m001", "..."],
+    "n_fields": 2,
+    "fields": [
+      {"field_id": 0, "name": "J1939-6342", "n_rows": 207336},
+      {"field_id": 1, "name": "MAGIC", "n_rows": 1412927}
+    ],
+    "n_scans": 24,
+    "scan_numbers": [1, 2, "..."],
+    "time_start_s": 5117000000.0,
+    "time_end_s": 5121000000.0,
+    "duration_s": 4000000.0
+  },
   "min_frequency_hz": 856000000.0,
   "max_frequency_hz": 1711791015.625,
   "max_frequency_mhz": 1711.791015625,

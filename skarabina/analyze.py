@@ -164,6 +164,99 @@ def band_info(ms):
     return None
 
 
+def ms_content(ms):
+    """What is in the MS: shape, fields, scans, antennas, time range.
+
+    The content summary a ``listobs``/``goquartical-summary`` cab used to
+    provide, computed here from the small index columns only (TIME,
+    FIELD_ID, SCAN_NUMBER, FLAG_ROW) and the FIELD/ANTENNA/POLARIZATION
+    subtables -- never the visibility cubes, so this stays cheap on a large
+    MS.  Flag *fractions* are ``skarabina --summary``'s job.
+
+    Returns a plain dict, JSON-ready.
+    """
+    t = table(ms, ack=False)
+    try:
+        n_rows = int(t.nrows())
+        field_ids = (
+            np.asarray(t.getcol("FIELD_ID")) if "FIELD_ID" in t.colnames()
+            else np.zeros(n_rows, dtype=int)
+        )
+        scan_numbers = (
+            np.asarray(t.getcol("SCAN_NUMBER")) if "SCAN_NUMBER" in t.colnames()
+            else np.zeros(n_rows, dtype=int)
+        )
+        times = np.asarray(t.getcol("TIME"), dtype=float) if n_rows else np.zeros(0)
+        n_rows_flagged = (
+            int(np.asarray(t.getcol("FLAG_ROW")).sum())
+            if "FLAG_ROW" in t.colnames() else 0
+        )
+
+        subtables = t.getsubtables()
+    finally:
+        t.close()
+
+    def _sub(sub_suffix):
+        for sub in subtables:
+            if sub.endswith(sub_suffix):
+                return sub
+        return None
+
+    field_names = []
+    field_sub = _sub("/FIELD")
+    if field_sub is not None:
+        ft = table(field_sub, ack=False)
+        try:
+            field_names = [str(name).strip() for name in ft.getcol("NAME")]
+        finally:
+            ft.close()
+
+    antenna_names = []
+    antenna_sub = _sub("/ANTENNA")
+    if antenna_sub is not None:
+        at = table(antenna_sub, ack=False)
+        try:
+            antenna_names = [str(name).strip() for name in at.getcol("NAME")]
+        finally:
+            at.close()
+
+    n_corr = None
+    pol_sub = _sub("/POLARIZATION")
+    if pol_sub is not None:
+        pt = table(pol_sub, ack=False)
+        try:
+            num_corr = np.atleast_1d(pt.getcol("NUM_CORR"))
+            if num_corr.size:
+                n_corr = int(num_corr[0])
+        finally:
+            pt.close()
+
+    # Per-field row counts over the ids actually present in the data.
+    fields = []
+    for fid in sorted(set(int(f) for f in field_ids)):
+        fields.append({
+            "field_id": fid,
+            "name": field_names[fid] if fid < len(field_names) else "",
+            "n_rows": int((field_ids == fid).sum()),
+        })
+    scans = sorted(set(int(s) for s in scan_numbers))
+
+    return {
+        "n_rows": n_rows,
+        "n_rows_flagged": n_rows_flagged,
+        "n_corr": n_corr,
+        "n_antennas": len(antenna_names),
+        "antenna_names": antenna_names,
+        "n_fields": len(fields),
+        "fields": fields,
+        "n_scans": len(scans),
+        "scan_numbers": scans,
+        "time_start_s": float(times.min()) if times.size else None,
+        "time_end_s": float(times.max()) if times.size else None,
+        "duration_s": float(times.max() - times.min()) if times.size else None,
+    }
+
+
 def averaging_limits(band, max_uv, fov_rad):
     """How coarsely the data can be averaged before smearing matters.
 
@@ -274,6 +367,9 @@ def main(ms, image_fov, oversampling_factor, output_json, json_stdout):
     # per-channel width and whether the band has holes in it.
     band = band_info(ms)
 
+    # What is in the MS: rows, fields, scans, antennas, time range.
+    content = ms_content(ms)
+
     if band is None or max_uv == 0:
         raise click.ClickException("Could not determine resolution from MS")
 
@@ -303,6 +399,21 @@ def main(ms, image_fov, oversampling_factor, output_json, json_stdout):
     print(f"  Max frequency:  {nu_max / 1e6:.3f} MHz")
     print(f"  Resolution:     {theta_res_arcsec:.2f} arcsec")
     print(f"  Field of view:  {image_fov}")
+    print(
+        f"MS content: {content['n_rows']} rows"
+        f" ({content['n_rows_flagged']} with FLAG_ROW set),"
+        f" {content['n_antennas']} antennas, {content['n_corr']} correlations"
+    )
+    for field in content["fields"]:
+        print(f"  Field {field['field_id']} {field['name']!r}: {field['n_rows']} rows")
+    print(
+        f"  Scans: {content['n_scans']} ({', '.join(str(s) for s in content['scan_numbers'])})"
+    )
+    if content["time_start_s"] is not None:
+        print(
+            f"  Time: {content['time_start_s']:.1f} .. {content['time_end_s']:.1f} s"
+            f" ({content['duration_s']:.1f} s elapsed)"
+        )
     print(f"Recommended image size: {n_pix} × {n_pix} pixels")
     print(
         f"  Channels:       {band.n_chan} × {band.channel_width_hz / 1e3:.1f} kHz"
@@ -325,6 +436,9 @@ def main(ms, image_fov, oversampling_factor, output_json, json_stdout):
     result = {
         "ms": ms,
         "max_baseline_m": max_uv,
+        # The content summary (shape, fields, scans, antennas, time range)
+        # that replaces the quartical-summary/listobs cabs in the pipeline.
+        "ms_content": content,
         "min_frequency_hz": nu_min,
         "max_frequency_hz": nu_max,
         "max_frequency_mhz": nu_max / 1e6,
