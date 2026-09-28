@@ -1459,6 +1459,11 @@ class DaskMS:
             ]
             new_flag = da.logical_or(flag, da.stack(grown_corrs, axis=2))
 
+        # grow_flags works per time-neighbour group and returns that grouping's
+        # row chunks; every other variable (ROWID included) keeps FLAG's, and
+        # the in-place write refuses a mismatch ("ROWID shape and/or chunking
+        # does not match that of FLAG").
+        new_flag = new_flag.rechunk(flag.chunks)
         self.ds["FLAG"].data = new_flag
         self.changed["FLAG"] = True
 

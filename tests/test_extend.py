@@ -202,6 +202,54 @@ def test_growth_sums_across_row_chunks():
     assert out[:, 0, 0].all()
 
 
+@pytest.mark.parametrize("extendpols", [True, False])
+def test_extend_keeps_flags_row_chunks(extendpols):
+    """The grown FLAG must keep FLAG's row chunks: the growth runs per
+    time-neighbour group, and a FLAG chunked by those groups no longer matches
+    ROWID, which the in-place write refuses."""
+    flags = np.zeros((8, 3, 2), dtype=bool)
+    flags[3, 1, 0] = True
+    ms = _make_ms(flags, ant1=[0, 0, 0, 0, 1, 1, 1, 1], ant2=[1, 2, 1, 2, 2, 3, 2, 3])
+    chunks = ms.ds.FLAG.data.chunks
+
+    ms.flag_extend(ExtendParams(flagneartime=True, extendpols=extendpols))
+
+    assert ms.ds.FLAG.data.chunks == chunks
+
+
+def test_extend_applies_in_place(tmp_path):
+    """`--flag extend --apply` writes the grown flags back (1.0.12 raised
+    'ROWID shape and/or chunking does not match that of FLAG'), with and
+    without --field."""
+    from casacore.tables import table
+    from click.testing import CliRunner
+
+    from ms_fixture import make_synthetic_ms
+    from skarabina.main import main
+
+    for field in ([], ["--field", "CAL"]):
+        path = make_synthetic_ms(
+            str(tmp_path / ("f%d.ms" % len(field))), nrow=64, nchan=16,
+            field_ids=[0, 1] * 32, field_names=("CAL", "PCAL"),
+        )
+        with table(path, readonly=False, ack=False) as t:
+            flag = t.getcol("FLAG")
+            flag[:, 7, :] = True          # one channel: extend grows it
+            flag[20, :, :] = True         # one row
+            t.putcol("FLAG", flag)
+            before = flag.sum()
+        result = CliRunner().invoke(
+            main,
+            ["--ms", path, "--row-chunk", "10", "--apply", "--clobber", *field,
+             "--flag", "extend [growtime=40, growfreq=40, growaround=true,"
+             " flagneartime=true, flagnearfreq=true]"],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+        with table(path, ack=False) as t:
+            assert t.getcol("FLAG").sum() > before
+
+
 def test_extend_records_the_change_and_reports(capsys):
     flags = np.zeros((3, 5, 2), dtype=bool)
     flags[1, 2, 0] = True

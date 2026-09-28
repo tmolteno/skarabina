@@ -3,6 +3,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **``extend`` can be applied in place.**  1.0.12's ``--flag extend ... --apply``
+  failed at the write with ``ValueError: ROWID shape and/or chunking does not
+  match that of FLAG`` (with or without ``--field``): the growth runs per
+  time-neighbour group and returned FLAG in that grouping's row chunks.  The
+  grown FLAG is rechunked to FLAG's own chunks; chunking only, no flag value
+  changes.  Tested by an ``--apply`` CLI run on a multi-chunk MS (#6).
+- The cab's ``flag`` input is optional, as the CLI's ``--flag`` is.
+
 ## [1.0.12]
 
 ### Added
