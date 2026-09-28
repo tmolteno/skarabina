@@ -115,7 +115,6 @@ cabs:
           usewindowstats, halfwin, combinescans) and rflag (winsize, timedev,
           freqdev, timedevscale, freqdevscale, spectralmax, spectralmin). See
           doc/NEW_FLAGGING.md in the skarabina distribution.
-        required: true
         # scabha refuses a list-typed input with no repeat policy, so without
         # this the cab cannot be used at all.  "repeat" matches the CLI, which
         # takes --flag once per entry (and accepts a comma-separated run in any
