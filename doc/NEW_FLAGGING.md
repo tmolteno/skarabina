@@ -80,6 +80,7 @@ Quoting is honoured, so paths containing spaces work:
 | `nan` | — | `--flag-nan` |
 | `clip` | `lo hi` | `--flag-clip lo hi` |
 | `uv-above` | `metres` | `--flag-uv-above metres` |
+| `extend` | `[key=value ...]` | — (new; CASA `flagdata mode='extend'`) |
 | `tfcrop` | `[key=value ...]` | — (new) |
 | `rflag` | `[key=value ...]` | — (new) |
 | `spectral-window` | `file.yml` | `--flag-spectral-window file.yml` |
@@ -88,8 +89,9 @@ Quoting is honoured, so paths containing spaces work:
 | `restore:NAME` | — | `--flag-restore-before NAME` |
 
 `save:` and `restore:` keep the colon form because they take a bare name.  Every
-other verb but the two auto-flaggers takes space-separated positional values;
-`tfcrop` and `rflag` take `key=value` pairs, because they have nine and seven
+other verb but `extend` and the two auto-flaggers takes space-separated
+positional values; `extend`, `tfcrop` and `rflag` take `key=value` pairs,
+because they have six, nine and seven
 parameters and positional order for that many values would be a trap.  See §9
 and §10.
 

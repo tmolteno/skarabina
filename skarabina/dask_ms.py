@@ -26,6 +26,7 @@ from daskms import xds_from_ms, xds_to_table  # noqa: E402
 
 from skarabina import flag_versions
 from skarabina.baselines import Baselines
+from skarabina.extend import grow_flags, time_neighbours
 from skarabina.rflag import rflag_plane
 from skarabina.tfcrop import tfcrop_plane
 
@@ -1250,6 +1251,63 @@ class DaskMS:
                     )
             # Queued with the other steps' reports when a run defers them.
             self._report([da.asarray(n_nan), da.asarray(n_clip)], report)
+
+    def flag_extend(self, params):
+        """Grow flags into their neighbours (CASA ``flagdata(mode='extend')``).
+
+        Parameter names and defaults are CASA's; the semantics and their
+        documentation gaps are in :mod:`skarabina.extend`.  The time
+        neighbours and growth groups come from the ANTENNA/TIME/SCAN_NUMBER
+        index columns, read once, eagerly -- they are small.
+        """
+        flag = self.ds.FLAG.data
+        ant1 = np.asarray(self.ds.ANTENNA1.data)
+        ant2 = np.asarray(self.ds.ANTENNA2.data)
+        time = np.asarray(self.ds.TIME.data)
+        try:
+            scan = np.asarray(self.ds.SCAN_NUMBER.data)
+        except AttributeError:
+            scan = np.zeros(len(ant1), dtype=np.int32)
+        prev_idx, next_idx, group_ids, group_sizes = time_neighbours(
+            ant1, ant2, scan, time
+        )
+
+        if params.extendpols:
+            # Growth is computed on the per-(row, chan) union of the
+            # correlations; since the grown mask contains its input, ORing it
+            # back flags all correlations wherever any one was flagged --
+            # which is exactly what extendpols asks for.
+            union = da.any(flag, axis=2)
+            grown = grow_flags(
+                union, prev_idx, next_idx, group_ids, group_sizes, params
+            )
+            new_flag = da.logical_or(flag, grown[:, :, None])
+        else:
+            # Each correlation grown independently: extendpols=False must not
+            # leak a flag from one correlation into another.
+            grown_corrs = [
+                grow_flags(
+                    flag[:, :, corr], prev_idx, next_idx, group_ids,
+                    group_sizes, params,
+                )
+                for corr in range(int(flag.shape[2]))
+            ]
+            new_flag = da.logical_or(flag, da.stack(grown_corrs, axis=2))
+
+        self.ds["FLAG"].data = new_flag
+        self.changed["FLAG"] = True
+
+        def report(n_new, n_old):
+            size = flag.size
+            print(
+                "extend: +%d visibilities (%.2f%% -> %.2f%% flagged)"
+                % (
+                    int(n_new) - int(n_old),
+                    100.0 * int(n_old) / size if size else 0.0,
+                    100.0 * int(n_new) / size if size else 0.0,
+                )
+            )
+        self._report([da.sum(new_flag), da.sum(flag)], report)
 
     def report_data_flags(self, defer):
         """Evaluate and print the reductions collected by ``flag_data(defer=...)``.

@@ -23,6 +23,7 @@ from typing import List, Optional, Tuple
 import click
 import yaml
 
+from skarabina.extend import ExtendParams
 from skarabina.rflag import RFlagParams
 from skarabina.tfcrop import TFCropParams
 
@@ -39,6 +40,10 @@ CANONICAL_ORDER: Tuple[str, ...] = (
     "spectral-window",
 )
 
+# Verbs valid in the 1.x grammar that the 0.8.x flagger did not have, so the
+# "valid verbs" message lists them without rewriting the migration reference.
+EXTRA_VERBS: Tuple[str, ...] = ("extend",)
+
 # Accepted spellings of each verb.  ``uv-above`` is the documented form; the
 # others are accepted so a shell or a hurried typist cannot silently change the
 # meaning of a run.
@@ -54,6 +59,7 @@ VERB_ALIASES = {
     "spectralwindow": "spectral-window",
     "tfcrop": "tfcrop",
     "rflag": "rflag",
+    "extend": "extend",
 }
 
 # Markers take a name rather than a value, hence the colon form.
@@ -230,7 +236,7 @@ def parse_entry(entry: str) -> FlagOp:
             raise FlagOrderError(
                 f"entry {entry!r}: {REJECTED[head.strip().lower()]}"
             )
-        valid = ", ".join(CANONICAL_ORDER)
+        valid = ", ".join(CANONICAL_ORDER + EXTRA_VERBS)
         raise FlagOrderError(
             f"entry {entry!r}: unknown verb '{head}'."
             f" Valid verbs are {valid}, plus save:NAME and restore:NAME"
@@ -279,6 +285,11 @@ def parse_entry(entry: str) -> FlagOp:
     if verb == "rflag":
         return FlagOp(
             verb, _parse_autofit_args(rest, entry, RFlagParams), entry
+        )
+
+    if verb == "extend":
+        return FlagOp(
+            verb, _parse_autofit_args(rest, entry, ExtendParams), entry
         )
 
     if verb == "spectral-window":
@@ -516,6 +527,8 @@ def run(ms, ops, log=print, flush=True):
             ms.flag_tfcrop(TFCropParams(**_coerce_parameters(op.args)))
         elif op.verb == "rflag":
             ms.flag_rflag(RFlagParams(**_coerce_parameters(op.args)))
+        elif op.verb == "extend":
+            ms.flag_extend(ExtendParams(**_coerce_parameters(op.args)))
         elif op.verb == "spectral-window":
             ms.flag_spectral_window(op.args[0])
         else:  # pragma: no cover - parse() rejects anything else
