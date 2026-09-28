@@ -166,6 +166,16 @@ def _row_chunk(opts, ops):
     " (field name or numeric FIELD_ID)",
 )
 @click.option(
+    "--field",
+    type=str,
+    default=None,
+    help="With --flag, confine the verbs' new flags to these fields' rows:"
+    " comma-separated field names or numeric FIELD_IDs (like --split, but"
+    " any number of them). This is CASA's field= selection for flagging:"
+    " existing flags are never cleared, save:/restore: stay whole-table,"
+    " and averaging, --optimize and the write keep every field.",
+)
+@click.option(
     "--row-chunk",
     type=int,
     default=None,
@@ -266,6 +276,9 @@ def main(**kw):
     if opts.scan is not None:
         print(f"scan selection: {opts.scan!r}")
         ms.select_scans(opts.scan)
+
+    if opts.field is not None:
+        ms.set_field_scope(opts.field)
 
     flag_ops.run(ms, ops, flush=False)
 

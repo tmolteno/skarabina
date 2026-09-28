@@ -60,6 +60,14 @@
   --split TEXT                  When writing (--msout), keep only this
                                 field's rows (field name or numeric
                                 FIELD_ID; see SPLITTING.md)
+  --field TEXT                  With --flag, confine the verbs' new flags to
+                                these fields' rows: comma-separated field
+                                names or numeric FIELD_IDs (like --split,
+                                but any number). CASA's field= selection:
+                                existing flags are never cleared,
+                                save:/restore: stay whole-table, and
+                                averaging, --optimize and the write keep
+                                every field
   --debug / --no-debug          Verbose debug output
   --version                     Print version and exit
 ```

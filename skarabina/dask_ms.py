@@ -82,10 +82,17 @@ def _prepare_block(block_function):
     imaginary parts, so it needs the complex visibilities as they are.  Doing
     the conversion here keeps it in the same deferred call as the algorithm.
     """
-    def run(data, existing, params, rows=None):
+    def run(data, existing, params, rows=None, scope=None):
         if block_function is _tfcrop_block:
             data = np.absolute(data)
-        return block_function(data, existing, params, rows)
+        flags = block_function(data, existing, params, rows)
+        if scope is not None:
+            # --field: confine the block's NEW flags to the scope; flags that
+            # are already set stay as they are everywhere else.
+            flags = np.logical_or(
+                np.logical_and(flags, scope.reshape((-1, 1, 1))), existing
+            )
+        return flags
     return run
 
 
@@ -104,8 +111,8 @@ def _flags_to_spill(block_function):
     costs no second evaluation of the block and no second read of the input
     flags.
     """
-    def run(data, existing, params, path, *rows):
-        flags = block_function(data, existing, params, rows or None)
+    def run(data, existing, params, path, scope, *rows):
+        flags = block_function(data, existing, params, rows or None, scope)
         np.save(path, np.packbits(flags, axis=None), allow_pickle=False)
         return np.array(
             [[np.count_nonzero(flags), np.count_nonzero(existing)]],
@@ -712,6 +719,69 @@ class DaskMS:
             f" rows, scans {scans}"
         )
 
+    #: Set by :meth:`set_field_scope` to a per-row boolean mask: the flag
+    #: verbs then confine their *new* flags to these rows (``--field``, CASA's
+    #: ``field=`` selection for flagging).  ``save:``/``restore:`` stay
+    #: whole-table, and averaging, ``optimize`` and the write see every field.
+    #: None means every row.
+    field_scope = None
+
+    def set_field_scope(self, spec):
+        """Confine the flag verbs to these fields' rows (``--field``).
+
+        ``spec`` is a comma-separated list of field names or FIELD_IDs, as
+        for ``--split``.  Unlike ``--scan`` this is not a row selection: the
+        dataset keeps every row, and only the *new* flags the ``--flag``
+        verbs set are confined to the listed fields -- existing flags are
+        never cleared.  ``save:``/``restore:`` stay whole-table, and the
+        write-out writes every field.
+        """
+        if "FIELD_ID" not in self.ds.data_vars:
+            raise RuntimeError(
+                "MS has no FIELD_ID column — cannot scope flags to fields"
+            )
+        wanted = set()
+        for part in str(spec).split(","):
+            part = part.strip()
+            if part:
+                wanted.add(self._resolve_field_id(part))
+        field_ids = np.asarray(self.ds.FIELD_ID.data)
+        scope = np.isin(field_ids, sorted(wanted))
+        if not scope.any():
+            raise RuntimeError(
+                f"field selection {str(spec)!r}: no rows in fields {sorted(wanted)}"
+            )
+        self.field_scope = scope
+        print(
+            f"--field {str(spec).strip()!r}: flagging {int(scope.sum())} of"
+            f" {scope.size} rows, fields {sorted(wanted)}"
+        )
+
+    def _scope(self, mask):
+        """AND a per-row boolean mask (any trailing axes) with the field scope.
+
+        Identity when no ``--field`` was given.  The scope is applied to what
+        a verb would *newly* flag, never to flags that are already set.
+        """
+        if self.field_scope is None:
+            return mask
+        scope = da.from_array(
+            self.field_scope, chunks=(self.ds.FLAG.data.chunks[0],)
+        )
+        return da.logical_and(
+            mask, scope.reshape((-1,) + (1,) * (mask.ndim - 1))
+        )
+
+    def _scope_slices(self, row_chunks):
+        """The field scope cut into per-block slices, or Nones without one."""
+        if self.field_scope is None:
+            return [None] * len(row_chunks)
+        starts = np.cumsum([0] + list(row_chunks[:-1]))
+        return [
+            self.field_scope[start: start + rows]
+            for start, rows in zip(starts, row_chunks)
+        ]
+
     #: When set (flag_ops.run sets it for a run), a step's statistics are
     #: queued rather than computed on the spot, and computed together in the
     #: next pass over the data (see :meth:`_report`).
@@ -821,8 +891,8 @@ class DaskMS:
                     f"MS has no {col} column — cannot identify autocorrelations"
                 )
 
-        auto_row = da.asarray(self.ds.ANTENNA1.data) == da.asarray(
-            self.ds.ANTENNA2.data
+        auto_row = self._scope(
+            da.asarray(self.ds.ANTENNA1.data) == da.asarray(self.ds.ANTENNA2.data)
         )
         flags = self.ds.FLAG.data
         auto_flags = da.broadcast_to(auto_row[:, None, None], flags.shape)
@@ -861,7 +931,7 @@ class DaskMS:
         # snapshots that go stale once rows have been selected.
         uvw = self.ds["UVW"].data
         abs_uv = uvw[:, 0] * uvw[:, 0] + uvw[:, 1] * uvw[:, 1]
-        uv_flag_mask = da.greater(abs_uv, uv_limit * uv_limit)
+        uv_flag_mask = self._scope(da.greater(abs_uv, uv_limit * uv_limit))
         new_flag_row = da.logical_or(uv_flag_mask, self.ds["FLAG_ROW"].data)
 
         n_old = da.sum(self.ds["FLAG_ROW"].data)
@@ -969,6 +1039,7 @@ class DaskMS:
         block_function = _flags_to_spill(_prepare_block(block_function))
         counts = []
         paths = []
+        scope_slices = self._scope_slices(payload.chunks[0])
         for time_index in range(payload.numblocks[0]):
             path = os.path.join(spill, "block%06d.npy" % time_index)
             paths.append(path)
@@ -976,7 +1047,7 @@ class DaskMS:
             counts.append(
                 delayed(block_function)(
                     payload.blocks[time_index], existing.blocks[time_index],
-                    params, path, *rows,
+                    params, path, scope_slices[time_index], *rows,
                 )
             )
         # The reports queued by earlier verbs read the same data (nan and clip
@@ -1024,11 +1095,13 @@ class DaskMS:
         """
         plain = _prepare_block(block_function)
         blocks = []
+        scope_slices = self._scope_slices(payload.chunks[0])
         for index in range(payload.numblocks[0]):
             rows = tuple(column.blocks[index] for column in row_columns) or None
             block = payload.blocks[index]
             blocks.append(da.from_delayed(
-                delayed(plain)(block, existing.blocks[index], params, rows),
+                delayed(plain)(block, existing.blocks[index], params, rows,
+                               scope_slices[index]),
                 shape=block.shape, dtype=bool,
             ))
         new_flags = da.concatenate(blocks, axis=0)
@@ -1145,7 +1218,9 @@ class DaskMS:
             n_chan_flagged = int(np.sum(chan_mask))
 
             # Per-row gate: which rows this entry applies to (lazy).
-            row_gate = da.ones(self.ds.FLAG.shape[0], dtype=bool, chunks=(row_chunks,))
+            row_gate = self._scope(
+                da.ones(self.ds.FLAG.shape[0], dtype=bool, chunks=(row_chunks,))
+            )
             uv_info = ""
             if uv_below is not None:
                 row_gate = row_gate & (uv_dist < float(uv_below))
@@ -1200,7 +1275,7 @@ class DaskMS:
 
         old_flags = self.ds.FLAG.data
         if "NAN" in operations:
-            nan_flag_mask = da.isnan(abs_vis)
+            nan_flag_mask = self._scope(da.isnan(abs_vis))
             n_nan = da.sum(nan_flag_mask)
             nan_updated_flags = da.logical_or(nan_flag_mask, old_flags)
             update = True
@@ -1211,7 +1286,7 @@ class DaskMS:
             clip_min, clip_max = operations["CLIP"]
             min_flag_mask = da.less_equal(abs_vis, clip_min)
             max_flag_mask = da.greater_equal(abs_vis, clip_max)
-            clip_flag_mask = da.logical_or(min_flag_mask, max_flag_mask)
+            clip_flag_mask = self._scope(da.logical_or(min_flag_mask, max_flag_mask))
             n_clip = da.sum(clip_flag_mask)
             clip_updated_flags = da.logical_or(clip_flag_mask, nan_updated_flags)
             update = True
@@ -1276,20 +1351,21 @@ class DaskMS:
             # Growth is computed on the per-(row, chan) union of the
             # correlations; since the grown mask contains its input, ORing it
             # back flags all correlations wherever any one was flagged --
-            # which is exactly what extendpols asks for.
-            union = da.any(flag, axis=2)
+            # which is exactly what extendpols asks for.  --field scopes both
+            # the growth sources and its targets.
+            union = self._scope(da.any(flag, axis=2))
             grown = grow_flags(
                 union, prev_idx, next_idx, group_ids, group_sizes, params
             )
-            new_flag = da.logical_or(flag, grown[:, :, None])
+            new_flag = da.logical_or(flag, self._scope(grown[:, :, None]))
         else:
             # Each correlation grown independently: extendpols=False must not
             # leak a flag from one correlation into another.
             grown_corrs = [
-                grow_flags(
-                    flag[:, :, corr], prev_idx, next_idx, group_ids,
-                    group_sizes, params,
-                )
+                self._scope(grow_flags(
+                    self._scope(flag[:, :, corr]), prev_idx, next_idx,
+                    group_ids, group_sizes, params,
+                ))
                 for corr in range(int(flag.shape[2]))
             ]
             new_flag = da.logical_or(flag, da.stack(grown_corrs, axis=2))

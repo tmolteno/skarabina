@@ -117,6 +117,7 @@ Unchanged, and explicitly outside `--flag`:
 |---|---|
 | `--ms`, `--msout`, `--clobber`, `--apply`, `--split` | I/O, not flagging |
 | `--scan` | row selection; runs before flagging by construction |
+| `--field` | scopes the flag verbs' *new* flags to these fields' rows (CASA's `field=` selection); not a selection -- the write keeps every field |
 | `--frequency-average-factor`, `--time-average-factor` | change row/channel structure; must see the final flags |
 | `--optimize`, `--keep-fully-flagged-channels` | removes rows/channels; must run after all flagging |
 | `--summary`, `--barber`, `--barber-pol` | read-only reports |
