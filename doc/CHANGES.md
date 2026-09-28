@@ -3,6 +3,36 @@
 
 ## [Unreleased]
 
+## [1.0.12]
+
+### Added
+
+- **``extend`` verb** -- flag growth into the neighbours, for
+  ``flagdata(mode='extend')`` recipes: CASA's parameter names and defaults
+  (``extendpols``, ``growtime``, ``growfreq``, ``growaround``,
+  ``flagneartime``, ``flagnearfreq``).  ``growtime``/``growfreq`` are
+  percentages of the scan's timerange / the frequency range, as CASA
+  documents them; where CASA's documentation is terse the choice made is
+  pinned in ``tests/test_extend.py`` and documented in ``skarabina/extend.py``.
+- **``--field SPEC``** -- CASA's ``field=`` selection for flagging: the
+  ``--flag`` verbs confine their *new* flags to these fields' rows
+  (comma-separated field names or FIELD_IDs).  Flags already set are never
+  cleared, ``save:``/``restore:`` stay whole-table, and averaging,
+  ``--optimize`` and the write keep every field.
+- **``--data-column SPEC``** -- ``nan``/``clip``/``rflag``/``tfcrop`` measure
+  CORRECTED, MODEL, RESIDUAL (CORRECTED_DATA - MODEL_DATA) or RESIDUAL_DATA
+  (DATA - MODEL_DATA) instead of DATA: CASA's ``flagdata datacolumn``, which
+  the 1GC residual flagging needs.
+- **``--data-from SPEC``** -- the written DATA column holds another column's
+  values (``mstransform(datacolumn=...)`` semantics for the split), before the
+  averaging factors so they average the substituted column.
+- **``skarabina-analyze`` reports the MS content** -- rows (and FLAG_ROW
+  counts), fields with names and row counts, scans, antennas, correlations
+  and the time range, as ``ms_content`` in the JSON and on the console.
+  Computed from the index columns and subtables only, never the visibility
+  cubes; this replaces the ``quartical-summary``/``listobs`` cabs in the
+  white-belt pipeline.
+
 ## [1.0.11]
 
 ### Fixed
