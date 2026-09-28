@@ -113,4 +113,42 @@ def test_split_still_selects_a_single_field(tmp_path):
     out_ms = str(tmp_path / "target-a.ms")
     ms.write_new_ms(out_ms, clobber=True, split="target-a")
 
-    assert _field_counts(out_ms) == {1: 3}
+    # Re-indexed like CASA's split: one field, id 0, and FIELD/SOURCE hold only it.
+    assert _field_counts(out_ms) == {0: 3}
+    field = table(f"{out_ms}/FIELD", ack=False)
+    try:
+        assert list(field.getcol("NAME")) == ["target-a"]
+        assert list(field.getcol("SOURCE_ID")) == [0]
+    finally:
+        field.close()
+    source = table(f"{out_ms}/SOURCE", ack=False)
+    try:
+        assert list(source.getcol("NAME")) == ["target-a"]
+        assert list(source.getcol("SOURCE_ID")) == [0]
+    finally:
+        source.close()
+
+
+def test_split_by_field_id_renumbers_to_zero(tmp_path):
+    """A numeric --split (FIELD_ID 3) gives the same single-field layout."""
+    in_ms = make_synthetic_ms(
+        tmp_path / "in.ms",
+        nchan=4,
+        nrow=8,
+        field_ids=[0, 0, 1, 1, 1, 2, 3, 3],
+        field_names=["bpcal", "target-a", "pcal", "target-b"],
+    )
+
+    ms = DaskMS(in_ms)
+    ms.select_scans("")
+    out_ms = str(tmp_path / "target-b.ms")
+    ms.write_new_ms(out_ms, clobber=True, split="3")
+
+    assert _field_counts(out_ms) == {0: 2}
+    field = table(f"{out_ms}/FIELD", ack=False)
+    try:
+        assert list(field.getcol("NAME")) == ["target-b"]
+    finally:
+        field.close()
+    # The input MS is untouched.
+    assert _field_counts(in_ms) == {0: 2, 1: 3, 2: 1, 3: 2}

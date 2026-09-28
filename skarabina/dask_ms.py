@@ -2395,6 +2395,57 @@ class DaskMS:
         print(f"--split: single-field MS (FIELD_ID={field_id}), no rows removed")
         return ds
 
+    @staticmethod
+    def _renumber_split_field(ds):
+        """FIELD_ID -> 0 for the rows of a --split: the output MS has one field.
+
+        CASA's split/mstransform re-index the selected field to 0 and keep only
+        its FIELD (and SOURCE) row; tools that select "field 0" by default
+        (wsclean, tricolour's field-names: 0, DDFacet) otherwise see no data.
+        """
+        if "FIELD_ID" in ds.data_vars:
+            return ds.assign(FIELD_ID=(ds.FIELD_ID.dims, da.zeros_like(ds.FIELD_ID.data)))
+        ds = ds.copy()
+        ds.attrs["FIELD_ID"] = 0
+        return ds
+
+    @staticmethod
+    def _reduce_split_subtables(name, field_id):
+        """Keep only the split field's FIELD row and its SOURCE row(s), both as id 0.
+
+        The subtables were copied verbatim from the input MS; after this they
+        match the renumbered main table, as CASA's split leaves them.
+        """
+        field_path = os.path.join(name, "FIELD")
+        ft = table(field_path, readonly=False, ack=False)
+        try:
+            nfield = ft.nrows()
+            if not 0 <= field_id < nfield:
+                raise RuntimeError(
+                    f"--split: FIELD_ID={field_id} is not a row of {field_path} ({nfield} rows)"
+                )
+            source_id = int(ft.getcell("SOURCE_ID", field_id))
+            ft.removerows([i for i in range(nfield) if i != field_id])
+            if source_id >= 0:
+                ft.putcell("SOURCE_ID", 0, 0)
+        finally:
+            ft.close()
+
+        source_path = os.path.join(name, "SOURCE")
+        if source_id < 0 or not os.path.exists(source_path):
+            return
+        st = table(source_path, readonly=False, ack=False)
+        try:
+            if st.nrows() == 0:
+                return
+            ids = np.asarray(st.getcol("SOURCE_ID"))
+            st.removerows(np.nonzero(ids != source_id)[0].tolist())
+            if st.nrows():
+                # One row per SPECTRAL_WINDOW_ID/TIME for this source: all become source 0.
+                st.putcol("SOURCE_ID", np.zeros(st.nrows(), dtype=ids.dtype))
+        finally:
+            st.close()
+
     def write_new_ms(self, name, clobber, split=None, changed_only=False):
         """
         Write a new MS, and make sure it doesn't already exist.
@@ -2409,8 +2460,11 @@ class DaskMS:
         write with a warning.
         """
         ds_to_write = self.ds
+        split_field_id = None
         if split is not None:
             ds_to_write = self._select_field(ds_to_write, split)
+            split_field_id = self._resolve_field_id(split)
+            ds_to_write = self._renumber_split_field(ds_to_write)
 
         if changed_only:
             reason = self._changed_only_blocker(split)
@@ -2469,6 +2523,9 @@ class DaskMS:
             # "NullTable::lock - Table object is empty".  Copy what is missing,
             # repointing subtable links at the newly written MS.
             self._copy_missing_keywords(name)
+
+            if split_field_id is not None:
+                self._reduce_split_subtables(name, split_field_id)
 
         # If channels were reduced (frequency_average or optimize), update
         # the SPECTRAL_WINDOW columns in the output MS.  The subtable was
