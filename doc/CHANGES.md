@@ -3,8 +3,16 @@
 
 ## [Unreleased]
 
+## [1.0.14]
+
 ### Fixed
 
+- **``--split`` writes a single-field MS, re-indexed like CASA's split.**  The selected rows kept their
+  input ``FIELD_ID`` (e.g. 1) and the FIELD and SOURCE subtables were copied whole, so tools that
+  select field 0 by default saw no data: in meerkat_imaging's stage 2 tricolour (``field-names: 0``)
+  flagged nothing and wsclean gridded 0 visibilities.  ``FIELD_ID`` is now 0, FIELD holds only the
+  selected field and SOURCE only its source, both with id 0 -- the layout ``mstransform``/``split``
+  leave.  STATE and the other subtables are unchanged, as CASA leaves them.
 - The ``skarabina`` cab declares ``ms`` ``writable``.  ``--apply`` and ``save:``/``restore:`` write into
   it, and without the flag stimela binds an MS outside the working directory read-only, so the step
   failed with "Table ... cannot be opened for read/write" (seen with the MS behind a symlinked data
