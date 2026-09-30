@@ -77,6 +77,49 @@ def test_content_handles_a_single_field_single_scan(tmp_path):
     assert content["scan_numbers"] == [0]
 
 
+def test_content_reports_the_scan_table_in_time_order(tmp_path):
+    """One record per scan -- field, rows, start/end/duration -- laid out the
+    way a scheduling analysis (target vs calibrator) reads it.  The gaps
+    between the scans matter as much as the durations, so the times are not
+    a uniform tick."""
+    path = make_synthetic_ms(
+        str(tmp_path / "sched.ms"), nchan=2, nrow=6, ncorr=1,
+        scan_numbers=[1, 1, 2, 2, 3, 3],
+        field_ids=[0, 0, 1, 1, 0, 0],
+        field_names=("BPCAL", "TGT"),
+        times=[0.0, 8.0, 100.0, 108.0, 200.0, 208.0],
+        interval=8.0,
+    )
+    content = ms_content(path)
+
+    assert content["scans"] == [
+        {"scan_number": 1, "field_id": 0, "name": "BPCAL", "n_rows": 2,
+         "time_start_s": 0.0, "time_end_s": 8.0, "duration_s": 16.0},
+        {"scan_number": 2, "field_id": 1, "name": "TGT", "n_rows": 2,
+         "time_start_s": 100.0, "time_end_s": 108.0, "duration_s": 16.0},
+        {"scan_number": 3, "field_id": 0, "name": "BPCAL", "n_rows": 2,
+         "time_start_s": 200.0, "time_end_s": 208.0, "duration_s": 16.0},
+    ]
+    # a scan observed out of scan-number order still comes back in time order
+    assert content["scan_numbers"] == [1, 2, 3]
+
+
+def test_content_reports_antenna_positions(tmp_path):
+    """The ANTENNA positions ride along (ITRF m, antenna_names order) so a
+    consumer can pick, say, the reference antenna nearest the array centre."""
+    path = make_synthetic_ms(
+        str(tmp_path / "pos.ms"), nchan=2, nrow=2,
+        antenna_names=("m000", "m002", "m003"),
+        antenna_positions=[[0.0, 0.0, 0.0], [30.0, 40.0, 0.0], [1.0, 0.0, 0.0]],
+    )
+    content = ms_content(path)
+
+    assert content["antenna_names"] == ["m000", "m002", "m003"]
+    assert content["antenna_positions_m"] == [
+        [0.0, 0.0, 0.0], [30.0, 40.0, 0.0], [1.0, 0.0, 0.0],
+    ]
+
+
 def test_content_reaches_the_json_record(ms, tmp_path):
     """The console block and the JSON record both carry the summary; the
     single-line --json-stdout form (the stimela wrangler interface) must

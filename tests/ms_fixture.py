@@ -46,7 +46,9 @@ def _fill(path, sub, row, nrows=1):
 
 
 def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None,
-                      field_ids=None, field_names=("TEST",), auto_rows=0):
+                      field_ids=None, field_names=("TEST",), auto_rows=0,
+                      times=None, interval=10.0,
+                      antenna_names=("a0", "a1"), antenna_positions=None):
     """Create a minimal single-SPW MS at ``path`` and return the path.
 
     ``auto_rows`` rows are written as autocorrelations (ANTENNA1 ==
@@ -56,6 +58,14 @@ def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None,
     tests can build a multi-field MS -- the shape of a real calibrator+target
     observation, where every field must survive flagging, averaging and the
     write-out.
+
+    ``times`` gives the TIME of each row (default: ``k * interval``), so a
+    test can lay out a schedule -- long target scans, short calibrator
+    scans, gaps for slew -- rather than a uniform tick.  ``interval`` is the
+    per-row INTERVAL (and EXPOSURE).  ``antenna_names`` and
+    ``antenna_positions`` ((nant, 3) ITRF metres) populate the ANTENNA
+    subtable beyond the default two-station layout; the data columns always
+    use antennas 0 and 1 regardless.
     """
     path = str(path)
     shutil.rmtree(path, ignore_errors=True)
@@ -115,15 +125,19 @@ def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None,
         "TIME": np.zeros(len(field_names)),
     }, nrows=len(field_names))
     _fill(path, "ANTENNA", {
-        "NAME": np.array(["a0", "a1"]),
-        "STATION": np.array(["s0", "s1"]),
-        "TYPE": np.array(["GROUND-BASED"] * 2),
-        "MOUNT": np.array(["ALT-AZ"] * 2),
-        "POSITION": np.zeros((2, 3)),
-        "OFFSET": np.zeros((2, 3)),
-        "DISH_DIAMETER": np.array([13.5, 13.5]),
-        "FLAG_ROW": np.array([False, False]),
-    }, nrows=2)
+        "NAME": np.array(list(antenna_names)),
+        "STATION": np.array([f"s{i}" for i in range(len(antenna_names))]),
+        "TYPE": np.array(["GROUND-BASED"] * len(antenna_names)),
+        "MOUNT": np.array(["ALT-AZ"] * len(antenna_names)),
+        "POSITION": (
+            np.zeros((len(antenna_names), 3))
+            if antenna_positions is None
+            else np.asarray(antenna_positions, dtype=float)
+        ),
+        "OFFSET": np.zeros((len(antenna_names), 3)),
+        "DISH_DIAMETER": np.full(len(antenna_names), 13.5),
+        "FLAG_ROW": np.zeros(len(antenna_names), dtype=bool),
+    }, nrows=len(antenna_names))
     _fill(path, "OBSERVATION", {
         "TELESCOPE_NAME": np.array(["MEERKAT"]),
         "TIME_RANGE": np.zeros((1, 2)),
@@ -161,7 +175,11 @@ def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None,
 
     t = table(path, readonly=False)
     t.addrows(nrow)
-    times = np.arange(nrow, dtype=float) * 10.0
+    if times is None:
+        times = np.arange(nrow, dtype=float) * interval
+    times = np.asarray(times, dtype=float)
+    if times.shape != (nrow,):
+        raise ValueError(f"times must have one entry per row ({nrow}), got {times.shape}")
     t.putcol("TIME", times)
     t.putcol("TIME_CENTROID", times)
     t.putcol("ANTENNA1", antenna1)
@@ -169,8 +187,8 @@ def make_synthetic_ms(path, nchan=4, nrow=4, ncorr=1, scan_numbers=None,
     t.putcol("DATA_DESC_ID", np.zeros(nrow, dtype=np.int32))
     t.putcol("FIELD_ID", fields)
     t.putcol("SCAN_NUMBER", scans)
-    t.putcol("INTERVAL", np.full(nrow, 10.0))
-    t.putcol("EXPOSURE", np.full(nrow, 10.0))
+    t.putcol("INTERVAL", np.full(nrow, interval))
+    t.putcol("EXPOSURE", np.full(nrow, interval))
     t.putcol("UVW", np.stack([np.arange(nrow) * 500.0, np.zeros(nrow), np.zeros(nrow)], axis=1))
     t.putcol("DATA", np.ones((nrow, nchan, ncorr), dtype=complex))
     t.putcol("FLAG", np.zeros((nrow, nchan, ncorr), dtype=bool))

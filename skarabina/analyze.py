@@ -169,9 +169,17 @@ def ms_content(ms):
 
     The content summary a ``listobs``/``goquartical-summary`` cab used to
     provide, computed here from the small index columns only (TIME,
-    FIELD_ID, SCAN_NUMBER, FLAG_ROW) and the FIELD/ANTENNA/POLARIZATION
-    subtables -- never the visibility cubes, so this stays cheap on a large
-    MS.  Flag *fractions* are ``skarabina --summary``'s job.
+    INTERVAL, FIELD_ID, SCAN_NUMBER, FLAG_ROW) and the
+    FIELD/ANTENNA/POLARIZATION subtables -- never the visibility cubes, so
+    this stays cheap on a large MS.  Flag *fractions* are ``skarabina
+    --summary``'s job.
+
+    The ``scans`` list carries one record per scan, in time order (field,
+    row count, start/end/duration): the table a scheduling analysis needs to
+    tell targets from calibrators, and the replacement for the listobs
+    dimension summary a pipeline config header used to carry.  Antenna
+    positions (ITRF metres, same order as ``antenna_names``) are included so
+    a consumer can pick, say, a reference antenna nearest the array centre.
 
     Returns a plain dict, JSON-ready.
     """
@@ -187,6 +195,11 @@ def ms_content(ms):
             else np.zeros(n_rows, dtype=int)
         )
         times = np.asarray(t.getcol("TIME"), dtype=float) if n_rows else np.zeros(0)
+        intervals = (
+            np.asarray(t.getcol("INTERVAL"), dtype=float)
+            if n_rows and "INTERVAL" in t.colnames()
+            else np.zeros(n_rows)
+        )
         n_rows_flagged = (
             int(np.asarray(t.getcol("FLAG_ROW")).sum())
             if "FLAG_ROW" in t.colnames() else 0
@@ -212,11 +225,19 @@ def ms_content(ms):
             ft.close()
 
     antenna_names = []
+    antenna_positions = []
     antenna_sub = _sub("/ANTENNA")
     if antenna_sub is not None:
         at = table(antenna_sub, ack=False)
         try:
             antenna_names = [str(name).strip() for name in at.getcol("NAME")]
+            if "POSITION" in at.colnames() and len(antenna_names):
+                pos = np.atleast_2d(
+                    np.asarray(at.getcol("POSITION"), dtype=float)
+                )
+                antenna_positions = [
+                    [float(x) for x in row] for row in pos[: len(antenna_names)]
+                ]
         finally:
             at.close()
 
@@ -239,7 +260,36 @@ def ms_content(ms):
             "name": field_names[fid] if fid < len(field_names) else "",
             "n_rows": int((field_ids == fid).sum()),
         })
-    scans = sorted(set(int(s) for s in scan_numbers))
+
+    def _field_name(fid):
+        return field_names[fid] if fid < len(field_names) else ""
+
+    # Per-scan records, in time order.  A scan observes one field; if the ids
+    # disagree inside a scan (a corrupted index or a mid-scan field change)
+    # the majority id wins, ties to the lower id.  The duration is the span
+    # between the first and last integration plus one integration (TIME is
+    # the integration centroid), so a single-integration scan has a nonzero
+    # duration -- that is what separates it from an empty one.
+    scans = []
+    for scan in sorted(set(int(s) for s in scan_numbers)):
+        sel = scan_numbers == scan
+        n_scan_rows = int(sel.sum())
+        stimes = times[sel]
+        fids, fid_counts = np.unique(field_ids[sel], return_counts=True)
+        fid = int(fids[np.argmax(fid_counts)])
+        scans.append({
+            "scan_number": scan,
+            "field_id": fid,
+            "name": _field_name(fid),
+            "n_rows": n_scan_rows,
+            "time_start_s": float(stimes.min()) if n_scan_rows else None,
+            "time_end_s": float(stimes.max()) if n_scan_rows else None,
+            "duration_s": (
+                float(stimes.max() - stimes.min() + np.median(intervals[sel]))
+                if n_scan_rows else 0.0
+            ),
+        })
+    scans.sort(key=lambda s: s["time_start_s"] or 0.0)
 
     return {
         "n_rows": n_rows,
@@ -247,10 +297,12 @@ def ms_content(ms):
         "n_corr": n_corr,
         "n_antennas": len(antenna_names),
         "antenna_names": antenna_names,
+        "antenna_positions_m": antenna_positions,
         "n_fields": len(fields),
         "fields": fields,
         "n_scans": len(scans),
-        "scan_numbers": scans,
+        "scan_numbers": [s["scan_number"] for s in scans],
+        "scans": scans,
         "time_start_s": float(times.min()) if times.size else None,
         "time_end_s": float(times.max()) if times.size else None,
         "duration_s": float(times.max() - times.min()) if times.size else None,
@@ -409,6 +461,11 @@ def main(ms, image_fov, oversampling_factor, output_json, json_stdout):
     print(
         f"  Scans: {content['n_scans']} ({', '.join(str(s) for s in content['scan_numbers'])})"
     )
+    for scan in content["scans"]:
+        print(
+            f"    scan {scan['scan_number']}: field {scan['field_id']}"
+            f" {scan['name']!r}, {scan['n_rows']} rows, {scan['duration_s']:.1f} s"
+        )
     if content["time_start_s"] is not None:
         print(
             f"  Time: {content['time_start_s']:.1f} .. {content['time_end_s']:.1f} s"
