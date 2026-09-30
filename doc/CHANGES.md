@@ -3,6 +3,23 @@
 
 ## [Unreleased]
 
+## [1.0.15]
+
+### Added
+
+- **``skarabina-analyze``'s content summary carries the per-scan table and the antenna positions.**
+  ``ms_content()`` now emits one record per scan, in time order (``scan_number``, ``field_id``,
+  ``name``, ``n_rows``, ``time_start_s``, ``time_end_s``, ``duration_s`` -- duration is the time
+  span plus one integration, so a single-integration scan is nonzero), plus
+  ``antenna_positions_m`` (ITRF metres, in ``antenna_names`` order).  This is the schedule summary
+  a field classifier needs (which field is a target, which a calibrator -- meerkat-imaging's
+  ``meerkat-analyze`` consumes exactly this) and the replacement for the listobs dimension summary
+  a pipeline config header used to carry by hand.  The console block prints the scan table.
+  Read-identical under the casacore and casacure (``DASK_MS_BACKEND=casacure``) backends.  The
+  test fixture gained ``times=``, ``interval=``, ``antenna_names=`` and ``antenna_positions=`` so
+  a test can lay out a real schedule (long target scans, short calibrator scans, slew gaps)
+  instead of a uniform tick.
+
 ## [1.0.14]
 
 ### Fixed
