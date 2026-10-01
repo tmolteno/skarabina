@@ -26,6 +26,7 @@ import yaml
 from skarabina.extend import ExtendParams
 from skarabina.rflag import RFlagParams
 from skarabina.tfcrop import TFCropParams
+from skarabina.tf_nn import TFCropNNParams
 
 # Canonical order used by the 0.8.x flagger, kept as the migration reference in
 # the documentation.  The new interface does NOT consult it: the list is the
@@ -42,7 +43,7 @@ CANONICAL_ORDER: Tuple[str, ...] = (
 
 # Verbs valid in the 1.x grammar that the 0.8.x flagger did not have, so the
 # "valid verbs" message lists them without rewriting the migration reference.
-EXTRA_VERBS: Tuple[str, ...] = ("extend",)
+EXTRA_VERBS: Tuple[str, ...] = ("extend", "tf-nn")
 
 # Accepted spellings of each verb.  ``uv-above`` is the documented form; the
 # others are accepted so a shell or a hurried typist cannot silently change the
@@ -60,6 +61,9 @@ VERB_ALIASES = {
     "tfcrop": "tfcrop",
     "rflag": "rflag",
     "extend": "extend",
+    "tf-nn": "tf-nn",
+    "tf_nn": "tf-nn",
+    "tfnn": "tf-nn",
 }
 
 # Markers take a name rather than a value, hence the colon form.
@@ -292,6 +296,9 @@ def parse_entry(entry: str) -> FlagOp:
             verb, _parse_autofit_args(rest, entry, ExtendParams), entry
         )
 
+    if verb == "tf-nn":
+        return FlagOp(verb, _parse_tf_nn_args(rest, entry), entry)
+
     if verb == "spectral-window":
         if len(rest) != 1:
             raise FlagOrderError(
@@ -377,6 +384,48 @@ def _parse_autofit_args(rest, entry, params_class) -> Tuple[str, ...]:
         # Constructed for its validation side effect; the values are parsed
         # again at run time, so the parsed form stays a plain tuple of strings.
         params_class(**dict(_coerce_parameters(named)))
+    except ValueError as exc:
+        raise FlagOrderError(f"entry {entry!r}: {exc}") from None
+    return tuple(named)
+
+
+def _parse_tf_nn_args(rest, entry) -> Tuple[str, ...]:
+    """Parameters for ``tf-nn``: a server URL and an optional mode.
+
+        tf-nn grpc://flagger.example:8815
+        tf-nn grpc://flagger.example:8815 and
+
+    The URL is positional because every use has exactly one; the mode
+    is ``or`` (the union, the default) or ``and`` (the intersection).
+    Explicit ``server=``/``mode=`` pairs are accepted as well.
+    """
+    named: List[str] = []
+    server = None
+    mode = None
+    for token in rest:
+        head, sep, tail = token.partition("=")
+        if sep:
+            named.append(f"{head.strip()}={tail.strip()}")
+            continue
+        value = token.strip()
+        if value in ("or", "and"):
+            if mode is not None:
+                raise FlagOrderError(
+                    f"entry {entry!r}: tf-nn mode given twice"
+                )
+            mode = value
+        elif server is None:
+            server = value
+        else:
+            raise FlagOrderError(
+                f"entry {entry!r}: tf-nn takes one server URL, got {value!r}"
+            )
+    if server is not None:
+        named.insert(0, f"server={server}")
+    if mode is not None:
+        named.append(f"mode={mode}")
+    try:
+        TFCropNNParams(**dict(_coerce_parameters(named)))
     except ValueError as exc:
         raise FlagOrderError(f"entry {entry!r}: {exc}") from None
     return tuple(named)
@@ -529,6 +578,8 @@ def run(ms, ops, log=print, flush=True):
             ms.flag_rflag(RFlagParams(**_coerce_parameters(op.args)))
         elif op.verb == "extend":
             ms.flag_extend(ExtendParams(**_coerce_parameters(op.args)))
+        elif op.verb == "tf-nn":
+            ms.flag_tf_nn(TFCropNNParams(**_coerce_parameters(op.args)))
         elif op.verb == "spectral-window":
             ms.flag_spectral_window(op.args[0])
         else:  # pragma: no cover - parse() rejects anything else

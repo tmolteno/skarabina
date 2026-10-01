@@ -29,6 +29,7 @@ from skarabina.baselines import Baselines
 from skarabina.extend import grow_flags, time_neighbours
 from skarabina.rflag import rflag_plane
 from skarabina.tfcrop import tfcrop_plane
+from skarabina.tf_nn import combine_flags, nn_block_mask
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,26 @@ def _tfcrop_block(amplitude, existing, params, rows=None):
 def _rflag_block(data, existing, params, rows=None):
     """RFlag over one block; see :func:`_autofit_block`."""
     return _autofit_block(rflag_plane, data, existing, params, rows)
+
+
+def _tf_nn_block(data, existing, params, rows=None):
+    """TFCrop plus the served neural flagger over one block.
+
+    ``rows`` is ``(antenna1, antenna2, scan, time)``; the wire protocol
+    needs the antennas and times, tfcrop the first three.  See
+    :mod:`skarabina.tf_nn` for the combination and its rationale.
+    """
+    if rows is None or len(rows) < 4:
+        raise RuntimeError(
+            "tf-nn needs the per-row ANTENNA1/ANTENNA2/SCAN_NUMBER/TIME"
+            " columns"
+        )
+    antenna1, antenna2, scan, time = rows
+    tfc_flags = _tfcrop_block(
+        np.absolute(data), existing, params.tfcrop, (antenna1, antenna2, scan)
+    )
+    nn_flags = nn_block_mask(data, time, antenna1, antenna2, params)
+    return combine_flags(tfc_flags, nn_flags, existing, params.mode)
 
 
 def _prepare_block(block_function):
@@ -1065,12 +1086,17 @@ class DaskMS:
             )
         return tempfile.mkdtemp(prefix=label + "-", dir=self._spill_root)
 
-    def _run_autofit(self, params, plane_function, block_function, label):
+    def _run_autofit(self, params, plane_function, block_function, label,
+                     row_columns_fn=None):
         """Chunk the cube along time and run a plane-wise flagger over it.
 
         Shared by ``tfcrop`` and ``rflag``: both take the whole band and every
         correlation as the unit they work on, and neither can be vectorised
         across those axes, so both need the same chunking and reassembly.
+
+        ``row_columns_fn`` supplies the per-block row columns
+        (:meth:`_baseline_columns` by default; ``tf-nn`` passes
+        :meth:`_nn_row_columns`).
         """
         import dask.array as _da
 
@@ -1119,7 +1145,7 @@ class DaskMS:
         # lives on disk at one bit per visibility.  Every later pass (summary,
         # write) reads the flags back from there block by block, rather than
         # running the algorithm -- and the whole graph upstream of it -- again.
-        row_columns = self._baseline_columns(payload.chunks[0])
+        row_columns = (row_columns_fn or self._baseline_columns)(payload.chunks[0])
         if self.defer_reports:
             self._defer_autofit(payload, existing, params, block_function,
                                 row_columns, shape, label)
@@ -1227,6 +1253,38 @@ class DaskMS:
             columns.append(da.full(sum(row_chunks), -1, chunks=(row_chunks,), dtype=np.int32))
         return columns
 
+    def _nn_row_columns(self, row_chunks):
+        """``[ANTENNA1, ANTENNA2, SCAN_NUMBER, TIME]`` chunked like the data.
+
+        The ``tf-nn`` verb's serving protocol carries the per-row antennas
+        and times (the server derives uvw and integration grouping from
+        them), so unlike :meth:`_baseline_columns` these are not optional:
+        a missing column is an error at run time rather than a silently
+        un-modelled row.
+        """
+        names = ("ANTENNA1", "ANTENNA2", "TIME")
+        missing = [name for name in names if name not in self.ds.data_vars]
+        if missing:
+            raise RuntimeError(
+                "tf-nn needs the %s column(s) of the MS" % ", ".join(missing)
+            )
+        columns = [
+            da.asarray(self.ds[name].data).rechunk((row_chunks,))
+            for name in ("ANTENNA1", "ANTENNA2")
+        ]
+        if "SCAN_NUMBER" in self.ds.data_vars:
+            columns.append(
+                da.asarray(self.ds.SCAN_NUMBER.data).rechunk((row_chunks,))
+            )
+        else:
+            columns.append(
+                da.full(
+                    sum(row_chunks), -1, chunks=(row_chunks,), dtype=np.int32
+                )
+            )
+        columns.append(da.asarray(self.ds.TIME.data).rechunk((row_chunks,)))
+        return columns
+
     def flag_rflag(self, params):
         """Flag outliers from sliding-window statistics (a CASA ``rflag``).
 
@@ -1244,6 +1302,25 @@ class DaskMS:
         unit, so its length *is* CASA's ``ntime``.
         """
         self._run_autofit(params, tfcrop_plane, _tfcrop_block, "flag_tfcrop")
+
+    def flag_tf_nn(self, params):
+        """Flag with ``tfcrop`` and a served neural flagger, combined per block.
+
+        See :mod:`skarabina.tf_nn` for the combination and its rationale.
+        Shares its chunking with :meth:`flag_tfcrop` (the chunk is
+        tfcrop's fit unit), and adds the per-row antenna/time columns the
+        serving protocol needs (:meth:`_nn_row_columns`).
+        """
+        if self.chan_freq_hz is None:
+            raise RuntimeError(
+                "No SPECTRAL_WINDOW/CHAN_FREQ found in MS — tf-nn cannot"
+                " describe the channel axis to the flagging server"
+            )
+        params.chan_freq_hz = self.chan_freq_hz
+        self._run_autofit(
+            params, tfcrop_plane, _tf_nn_block, "flag_tf_nn",
+            row_columns_fn=self._nn_row_columns,
+        )
 
     def flag_spectral_window(self, yaml_file):
         """

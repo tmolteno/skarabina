@@ -144,6 +144,34 @@ in any order and any subset, written with `=` or `:`:
 A typo is an error rather than a silently ignored setting, so `maxnpices=3`
 fails with a message naming `maxnpieces`.
 
+### TFCrop + neural flagger (`tf-nn`)
+
+`tf-nn` runs `tfcrop` **and** a served neural flagger (radio-nn's
+`nn-flag-server`) over the same data block and combines the two decisions
+before the block's flags are written:
+
+    skarabina --ms test.ms --flag "tf-nn grpc://flagger.example:8815" --apply
+
+The server URL is the only required parameter. The combine mode is `or`
+(the union, the default) or `and` (the intersection):
+
+    skarabina --ms test.ms --flag "tf-nn grpc://flagger.example:8815 and" --apply
+
+Each data block is streamed to the server as it is processed, so the run's
+memory is bounded exactly as `tfcrop`'s is, however large the table. The
+two decisions are independent: the neural flagger reads DATA only, and
+tfcrop sees the incoming FLAG exactly as CASA's `flagdata` would.
+
+The served model thresholds its own probability server-side
+(`flag_threshold` in the bundle manifest); `tf-nn` applies the decision it
+gets back. For the union to beat `tfcrop` alone the served threshold must
+be the model's saturated tail (~0.9997) -- see radio-nn's `SUMMARY.md`.
+
+Requirements: `pyarrow` (`pip install 'skarabina[nn]'`), a reachable
+`nn-flag-server`, and an MS whose antenna rows match the served bundle's
+antenna map (a MeerKAT `m0xx` set in the same row order). Baselines the
+bundle does not know keep their generic flags only.
+
 `flagdimension` decides which directions are searched. Narrow-band RFI -- a
 channel that is bright at every time -- can only be found by a `freq`-containing
 mode, and a bad integration can only be found by a `time`-containing one. The

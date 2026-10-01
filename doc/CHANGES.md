@@ -3,6 +3,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- **``tf-nn`` verb** -- ``tfcrop`` combined with a served neural flagger
+  (radio-nn's ``nn-flag-server``) per data chunk:
+  ``--flag "tf-nn grpc://host:8815 [or|and]"``.  The chunk is streamed to
+  the server over Arrow Flight and the two decisions are combined (``or`` =
+  union, the default; ``and`` = intersection) before the block's flags are
+  written, so the run's memory stays bounded like ``tfcrop``'s on
+  arbitrarily large tables.  Needs ``pyarrow`` (``skarabina[nn]``) and a
+  reachable ``nn-flag-server`` whose antenna map matches the MS.
+
 ## [1.0.15]
 
 ### Added

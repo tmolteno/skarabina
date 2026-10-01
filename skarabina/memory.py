@@ -55,6 +55,8 @@ CHUNK_COST = {
     "restore": (3, 0),
     "tfcrop": (30, 3.5 * GB),
     "rflag": (36, 2.5 * GB),
+    # tfcrop plus the serving wire copies (vis pairs, weights, response).
+    "tf-nn": (34, 3.5 * GB),
 }
 
 #: Added to every per-chunk step when the write shares the flagging pass (it

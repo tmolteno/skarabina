@@ -34,6 +34,9 @@ skarabina-analyze = "skarabina.analyze:main"
 # it with DASK_MS_BACKEND=casacure; without casacure installed, dask-ms falls
 # back to real python-casacore.
 casacure = ["casacure>=3.8.9"]
+# The tf-nn verb streams each data chunk to a served neural flagger over
+# Arrow Flight (radio-nn's nn-flag-server); only that verb needs pyarrow.
+nn = ["pyarrow>=14"]
 
 [dependency-groups]
 dev = [
