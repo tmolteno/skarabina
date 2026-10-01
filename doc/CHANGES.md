@@ -5,6 +5,15 @@
 
 ### Added
 
+- **``nn-flagger`` verb** -- union the flags of a served neural flagger
+  (radio-nn's ``nn-flag-server``) into an ordered run:
+  ``--flag "tfcrop [timecutoff=5], nn-flagger grpc://host:8815"``.  Each data
+  block is streamed to the server over Arrow Flight and the returned mask is
+  ORed into ``FLAG``, so it composes with ``tfcrop``'s own parameters and the
+  per-block memory stays bounded; write it after the verbs it unions with.
+  Union-only by construction (``tf-nn`` offers the intersection).  Needs
+  ``pyarrow`` (``skarabina[nn]``) and a reachable ``nn-flag-server`` whose
+  antenna map matches the MS.
 - **``tf-nn`` verb** -- ``tfcrop`` combined with a served neural flagger
   (radio-nn's ``nn-flag-server``) per data chunk:
   ``--flag "tf-nn grpc://host:8815 [or|and]"``.  The chunk is streamed to

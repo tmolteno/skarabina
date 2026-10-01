@@ -144,6 +144,36 @@ in any order and any subset, written with `=` or `:`:
 A typo is an error rather than a silently ignored setting, so `maxnpices=3`
 fails with a message naming `maxnpieces`.
 
+### Neural flagger (`nn-flagger`)
+
+`nn-flagger` streams each data block to a served neural flagger (radio-nn's
+`nn-flag-server`) over Arrow Flight and unions its decisions into `FLAG`.
+Written after another verb it adds the model's flags to that verb's, with
+`tfcrop`'s own parameters still at your disposal:
+
+    skarabina --ms test.ms --flag "tfcrop [timecutoff=5], nn-flagger grpc://flagger.example:8815" --apply
+
+The server URL is the only parameter. Order matters: write `nn-flagger`
+*after* the classical verbs it unions with. It reads DATA only and is
+unaffected by existing flags, but `tfcrop` honours FLAG on read exactly as
+CASA's `flagdata` does, so running it on a pre-flagged table changes its
+statistics. Each block is streamed as it is processed, so memory stays
+bounded like `tfcrop`'s; the composed form takes one pass over the data per
+verb, while `tf-nn` (below) fuses both flaggers into a single pass and adds
+the `and` mode.
+
+The served model thresholds its own probability server-side (`flag_threshold`
+in the bundle manifest); `nn-flagger` applies the decision it gets back. For
+the union to beat `tfcrop` alone the served threshold must be the model's
+saturated tail (~0.9997) -- see radio-nn's `SUMMARY.md`.
+
+Requirements: `pyarrow` (`pip install 'skarabina[nn]'`), a reachable
+`nn-flag-server`, and an MS whose antenna rows match the served bundle's
+antenna map (a MeerKAT `m0xx` set in the same row order). Baselines the
+bundle does not know keep their generic flags only. The verb is union-only
+by construction -- an intersection would clear flags an earlier verb set;
+for that combination see `tf-nn` below.
+
 ### TFCrop + neural flagger (`tf-nn`)
 
 `tf-nn` runs `tfcrop` **and** a served neural flagger (radio-nn's

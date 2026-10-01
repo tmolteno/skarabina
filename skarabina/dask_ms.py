@@ -27,6 +27,7 @@ from daskms import xds_from_ms, xds_to_table  # noqa: E402
 from skarabina import flag_versions
 from skarabina.baselines import Baselines
 from skarabina.extend import grow_flags, time_neighbours
+from skarabina.nn_flagger import union_flags
 from skarabina.rflag import rflag_plane
 from skarabina.tfcrop import tfcrop_plane
 from skarabina.tf_nn import combine_flags, nn_block_mask
@@ -94,6 +95,23 @@ def _tf_nn_block(data, existing, params, rows=None):
     )
     nn_flags = nn_block_mask(data, time, antenna1, antenna2, params)
     return combine_flags(tfc_flags, nn_flags, existing, params.mode)
+
+
+def _nn_flagger_block(data, existing, params, rows=None):
+    """Union a served neural flagger's flags into one block.
+
+    ``rows`` is ``(antenna1, antenna2, scan, time)``; the serving protocol
+    needs the antennas and times.  See :mod:`skarabina.nn_flagger` for the
+    verb and its rationale.
+    """
+    if rows is None or len(rows) < 4:
+        raise RuntimeError(
+            "nn-flagger needs the per-row ANTENNA1/ANTENNA2/SCAN_NUMBER/TIME"
+            " columns"
+        )
+    antenna1, antenna2, scan, time = rows
+    nn_flags = nn_block_mask(data, time, antenna1, antenna2, params)
+    return union_flags(existing, nn_flags)
 
 
 def _prepare_block(block_function):
@@ -1319,6 +1337,24 @@ class DaskMS:
         params.chan_freq_hz = self.chan_freq_hz
         self._run_autofit(
             params, tfcrop_plane, _tf_nn_block, "flag_tf_nn",
+            row_columns_fn=self._nn_row_columns,
+        )
+
+    def flag_nn_flagger(self, params):
+        """Union in the flags of a served neural flagger (the ``nn-flagger`` verb).
+
+        See :mod:`skarabina.nn_flagger`.  Shares its chunking with
+        :meth:`flag_tfcrop` and needs the per-row antenna/time columns the
+        serving protocol requires (:meth:`_nn_row_columns`).
+        """
+        if self.chan_freq_hz is None:
+            raise RuntimeError(
+                "No SPECTRAL_WINDOW/CHAN_FREQ found in MS — nn-flagger cannot"
+                " describe the channel axis to the flagging server"
+            )
+        params.chan_freq_hz = self.chan_freq_hz
+        self._run_autofit(
+            params, None, _nn_flagger_block, "flag_nn_flagger",
             row_columns_fn=self._nn_row_columns,
         )
 
