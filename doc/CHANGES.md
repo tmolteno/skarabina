@@ -25,6 +25,18 @@
 
 ### Fixed
 
+- **A ``save:`` marker now backs up the flags as they stand where it appears (#5).**
+  Every marker read ``FLAG`` from the MS on disk, and flagging is in memory until
+  ``--apply``/``--msout`` writes at the end, so
+  ``"save:start, clip 0 100, save:after-clip"`` silently wrote two identical
+  versions holding the *pre-run* flags.  A marker that is not the leading entry now
+  snapshots the run's in-memory flags, merged over the on-disk flags at their
+  ``ROWID`` positions so the version still covers the whole MS -- the row-count
+  check a restore performs holds under ``--scan`` too -- and the snapshot is the
+  run's pass, sharing its read of ``DATA`` with the reports queued before it.  A
+  leading marker still reads the streamed whole-MS copy from disk, byte-identical
+  to before, and the on-disk version layout is unchanged (CASA ``flagmanager``
+  parity).
 - **``rflag``/``tfcrop``'s ``newly`` report count can no longer go negative (#7).**
   ``flag_rflag: N of T visibilities flagged, X newly`` now prints ``X`` as the set
   difference -- visibilities the verb flagged that were not flagged when it ran --
@@ -33,7 +45,7 @@
   was already flagged and is flagged again does not count as new, as before; both
   report sites (the eager spill path and the deferred one) use the same definition.
   The ``save:``-after-a-flagging-verb half of #7 shares #5's root cause and is
-  tracked there.
+  fixed by #5.
 
 ## [1.0.15]
 

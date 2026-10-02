@@ -108,6 +108,20 @@ def test_a_flag_list_with_nothing_after_it_reads_data_once(tmp_path, column_read
     assert column_reads["DATA"] == data_bytes
 
 
+def test_a_non_leading_save_snapshots_within_the_single_pass(tmp_path, column_reads):
+    """A mid-run save: snapshot must share the run's pass, not add one.
+
+    The snapshot materialises the flags at the marker (that is what it
+    saves), and the write afterwards reads the spilled flags -- so a flag
+    list whose entries all run before the marker still reads DATA exactly
+    once, as it does without the marker (#5).
+    """
+    path, data_bytes = _ms(tmp_path)
+    _run(["--ms", path, "--row-chunk", "300",
+          "--flag", "clip 0 100, save:mid, autos", "--apply", "--clobber"])
+    assert column_reads["DATA"] == data_bytes, "the snapshot re-read DATA"
+
+
 def test_the_single_pass_writes_the_same_flags(tmp_path):
     """Materialising the flags must not change them."""
     from casacore.tables import table

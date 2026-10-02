@@ -308,14 +308,20 @@ list, so a backup is placed exactly where it is wanted in the sequence:
     # undo it later, writing the restored flags back
     skarabina --ms raw.ms --flag "restore:before" --apply --clobber
 
-Because a `save:` entry acts on the flag state where it appears, ordering the
-markers is what makes a sequence of snapshots meaningful — `restore:X` then
-`save:Y` re-labels a version.
+Because a `save:` entry backs up the flag state where it appears, ordering
+the markers is what makes a sequence of snapshots meaningful — `restore:X`
+then `save:Y` re-labels a version. A leading `save:` (nothing before it that
+could change the flags) reads the flags from the MS on disk, where the run
+has not touched them yet; a `save:` further down the list snapshots the run's
+in-memory flags — flagging stays in memory until `--apply`/`--msout` writes
+it — so it holds what the operations before it produced rather than the
+pre-run state.
 
-The backup is taken from the MS on disk, so a version stays restorable even if
-the run itself is working on a row selection (`--scan`, `--split`). Saving a
-version name that already exists moves the old one aside as
-`<name>.old.<timestamp>`, matching `flagmanager`.
+Whichever it reads, the version covers the whole MS: the in-memory snapshot
+is merged over the flags on disk for the rows the run is not holding (a
+`--scan` selection), so a version stays restorable even when the run itself
+is working on a row selection. Saving a version name that already exists
+moves the old one aside as `<name>.old.<timestamp>`, matching `flagmanager`.
 
 List what is available with CASA:
 

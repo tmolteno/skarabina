@@ -595,13 +595,26 @@ def run(ms, ops, log=print, flush=True):
     or, with ``flush=False``, by the caller's next pass
     (``ms.materialise_flags()`` or ``ms.flush_reports()``), which is how the
     CLI folds them into the pass that materialises the flags.
+
+    A ``save:`` reads the MS on disk when nothing before it in the list could
+    have changed the flags -- it is the first entry, or follows only other
+    ``save:`` markers -- and snapshots the run's in-memory flags otherwise
+    (``ms.save_flag_version(..., snapshot=True)``, issue #5).
     """
     ms.defer_reports = True
+    # A save: only needs the run's in-memory flags when something before it
+    # could have changed them; a leading marker's read of the MS on disk is
+    # identical to that snapshot and keeps the streamed whole-MS path (#5).
+    snapshot = False
     for op in ops:
         log(op.describe())
         if op.verb == "save":
-            ms.save_flag_version(op.name)
-        elif op.verb == "restore":
+            ms.save_flag_version(op.name, snapshot=snapshot)
+            continue
+        # Every other entry can change the flags, so any later save: must
+        # snapshot the in-memory state rather than re-read the pre-run MS.
+        snapshot = True
+        if op.verb == "restore":
             ms.restore_flag_version(op.name)
         elif op.verb == "autos":
             ms.flag_autocorrelations()

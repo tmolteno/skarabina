@@ -179,7 +179,83 @@ def _check_version_name(versionname):
         raise ValueError(f"invalid version name: {versionname!r}")
 
 
-def save_version_streaming(ms_path, versionname, comment=""):
+def _overlay_coverage(overlay, nrow):
+    """Boolean mask of the MS rows an overlay writes, or None without one.
+
+    Validates the whole overlay before anything is written: ``rows`` must be
+    strictly increasing positions inside the ``nrow``-row MS and the flag
+    arrays must hold one entry each, or a bad overlay would silently write
+    flags to the wrong rows of the version.
+    """
+    if overlay is None:
+        return None
+    rows, flag, flag_row = overlay
+    rows = np.asarray(rows)
+    if rows.ndim != 1:
+        raise ValueError(f"overlay rows must be 1-D, got shape {rows.shape}")
+    if rows.size > 1 and np.any(np.diff(rows) <= 0):
+        raise ValueError("overlay rows must be strictly increasing MS positions")
+    if rows.size and (rows.min() < 0 or rows.max() >= nrow):
+        raise ValueError(
+            f"overlay rows must be positions of the {nrow}-row MS,"
+            f" got [{int(rows.min())}, {int(rows.max())}]"
+        )
+    for value, label in ((flag, "flag"), (flag_row, "row flag")):
+        # .shape, not np.asarray: that would compute a dask array here.
+        shape = getattr(value, "shape", None) or (len(value),)
+        if int(shape[0]) != rows.size:
+            raise ValueError(
+                f"overlay {label} array holds {int(shape[0])} rows but"
+                f" {rows.size} row positions"
+            )
+    covered = np.zeros(nrow, dtype=bool)
+    covered[rows] = True
+    return covered
+
+
+def _write_overlay(t, overlay):
+    """Write the overlay's in-memory flags over the version table.
+
+    One block of ``flag`` at a time -- however the run chunks its rows, and
+    never more than one block in memory -- each block's rows are cut into the
+    runs of consecutive MS positions they land on and ``putcol``'d there.
+    That is the same scattered-row write ``xds_to_table`` does for a
+    row-selected dataset through ROWID, so the merge places the run's flags
+    exactly where ``--apply`` would write them; the table's row count is
+    untouched, so the version stays whole-MS.
+    """
+    rows, flag, flag_row = overlay
+    rows = np.asarray(rows)
+    if rows.size == 0:
+        return
+
+    # One block at a time: dask arrays are computed block by block, a numpy
+    # array is already in memory and counts as its single block.
+    if hasattr(flag, "blocks"):
+        blocks = [flag.blocks[i] for i in range(flag.numblocks[0])]
+        row_counts = [int(n) for n in flag.chunks[0]]
+    else:
+        blocks, row_counts = [flag], [int(rows.size)]
+
+    start = 0
+    for block, count in zip(blocks, row_counts):
+        if count == 0:
+            continue
+        block_rows = rows[start:start + count]
+        flag_block = np.asarray(_freeze(block), dtype=bool)
+        row_block = np.asarray(_freeze(flag_row[start:start + count]), dtype=bool)
+        start += count
+        # Consecutive MS positions in this block -> one putcol per run.
+        cuts = np.flatnonzero(np.diff(block_rows) != 1) + 1
+        for part in np.split(np.arange(count), cuts):
+            first, n = int(part[0]), int(part.size)
+            startrow = int(block_rows[first])
+            t.putcol("FLAG", flag_block[first:first + n], startrow=startrow, nrow=n)
+            t.putcol("FLAG_ROW", row_block[first:first + n], startrow=startrow, nrow=n)
+            t.flush()
+
+
+def save_version_streaming(ms_path, versionname, comment="", overlay=None):
     """Back up the MS's FLAG/FLAG_ROW as a CASA flag version, streaming.
 
     Reads the source MS's FLAG column row-chunk by row-chunk and writes each
@@ -190,15 +266,24 @@ def save_version_streaming(ms_path, versionname, comment=""):
     ~16 GB RSS.  CASA's flagmanager semantics are unchanged: the saved version
     covers the whole MS regardless of any in-memory row selection.
 
+    ``overlay`` optionally merges a run's *in-memory* flags into that
+    whole-MS copy (issue #5).  It is a ``(rows, flag, flag_row)`` triple:
+    ``rows`` are the MS row positions the in-memory rows belong to (the
+    dataset's ROWID, strictly increasing), ``flag`` the flag cube -- dask or
+    numpy -- and ``flag_row`` the per-row flags.  Each row ``rows`` covers is
+    written from memory over the on-disk copy; every other row keeps its
+    on-disk flags.  So a ``save:`` after other operations backs up the state
+    the run has actually reached, while the version stays a whole-MS
+    snapshot that passes the row-count check on restore -- and when the
+    overlay covers every row (no row selection), the on-disk read is
+    skipped altogether.  ``flag`` is written block by block, so the snapshot
+    never holds the whole cube either.
+
     Returns the path of the written version.
     """
     _check_version_name(versionname)
-    _rename_existing(ms_path, versionname)
-
-    path = version_path(ms_path, versionname)
-    shutil.rmtree(path, ignore_errors=True)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-
+    # Read the MS and validate the overlay first: a bad overlay must fail
+    # before an existing version is moved aside or a new one is created.
     src = table(ms_path, ack=False, readonly=True)
     try:
         nrow = src.nrows()
@@ -207,6 +292,13 @@ def save_version_streaming(ms_path, versionname, comment=""):
         flag_desc = _flag_column_description((nchan, 0))
     finally:
         src.close()
+    covered = _overlay_coverage(overlay, nrow)
+
+    _rename_existing(ms_path, versionname)
+
+    path = version_path(ms_path, versionname)
+    shutil.rmtree(path, ignore_errors=True)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
 
     tabdesc = maketabdesc(
         [
@@ -217,27 +309,35 @@ def save_version_streaming(ms_path, versionname, comment=""):
     t = table(path, tabdesc, nrow=0, readonly=False, dminfo=_dminfo(nchan))
     try:
         t.addrows(nrow)
-        src = table(ms_path, ack=False, readonly=True)
-        try:
-            for start in range(0, nrow, CHUNK_ROWS):
-                n = min(CHUNK_ROWS, nrow - start)
-                chunk = np.asarray(
-                    src.getcol("FLAG", startrow=start, nrow=n), dtype=bool
-                )
-                t.putcol("FLAG", chunk, startrow=start, nrow=n)
-                row_chunk = np.asarray(
-                    src.getcol("FLAG_ROW", startrow=start, nrow=n), dtype=bool
-                )
-                t.putcol("FLAG_ROW", row_chunk, startrow=start, nrow=n)
-                # Flush per chunk, so the write buffer holds one chunk: a
-                # table backend that buffers writes (casacure) otherwise
-                # keeps the whole flag cube until close -- 18-19 GB on
-                # mergA_tim.ms.  casacure grows the table in place, so each
-                # flush costs the chunk, not the table (the first one also
-                # gives the shape-less FLAG column its cell shape).
-                t.flush()
-        finally:
-            src.close()
+        # Fill from the MS on disk unless the overlay already holds every
+        # row.  With a row selection the fill writes the whole table and the
+        # overlay then overwrites its rows: the selection's rows are written
+        # twice, which costs a bounded amount of extra I/O in exchange for
+        # leaving the streaming loop below exactly as it is.
+        if covered is None or not covered.all():
+            src = table(ms_path, ack=False, readonly=True)
+            try:
+                for start in range(0, nrow, CHUNK_ROWS):
+                    n = min(CHUNK_ROWS, nrow - start)
+                    chunk = np.asarray(
+                        src.getcol("FLAG", startrow=start, nrow=n), dtype=bool
+                    )
+                    t.putcol("FLAG", chunk, startrow=start, nrow=n)
+                    row_chunk = np.asarray(
+                        src.getcol("FLAG_ROW", startrow=start, nrow=n), dtype=bool
+                    )
+                    t.putcol("FLAG_ROW", row_chunk, startrow=start, nrow=n)
+                    # Flush per chunk, so the write buffer holds one chunk: a
+                    # table backend that buffers writes (casacure) otherwise
+                    # keeps the whole flag cube until close -- 18-19 GB on
+                    # mergA_tim.ms.  casacure grows the table in place, so each
+                    # flush costs the chunk, not the table (the first one also
+                    # gives the shape-less FLAG column its cell shape).
+                    t.flush()
+            finally:
+                src.close()
+        if overlay is not None:
+            _write_overlay(t, overlay)
     finally:
         t.close()
 

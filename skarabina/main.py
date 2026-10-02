@@ -292,10 +292,12 @@ def main(**kw):
     if not ops:
         print("No flagging operations requested (--flag was not given)")
 
-    # Row selection precedes the sequence: a version saved after a scan
-    # selection would hold only the selected rows and could never be restored.
-    # With no 'scan' verb in --flag, doing it here keeps --scan's documented
-    # meaning ("keep only these scans") without needing a token for it.
+    # Row selection precedes the sequence: every verb -- and the write-out --
+    # sees only the selected scans.  With no 'scan' verb in --flag, doing it
+    # here keeps --scan's documented meaning ("keep only these scans") without
+    # needing a token for it.  A save: further down the list merges its
+    # in-memory snapshot back over the whole MS (see save_flag_version), so
+    # the version it writes stays restorable (#5).
     if opts.scan is not None:
         print(f"scan selection: {opts.scan!r}")
         ms.select_scans(opts.scan)

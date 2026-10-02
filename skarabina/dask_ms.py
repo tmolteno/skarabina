@@ -977,8 +977,16 @@ class DaskMS:
         tfcrop do) and FLAG_ROW to memory (a bool per row), and computes the
         queued reports in the same ``dask.compute``.  Later steps read the
         spilled flags.
+
+        Calling it again when the flags have not changed since -- a second
+        ``save:`` marker in the same run (issue #5) -- must not re-spill
+        anything: the current FLAG already *is* the spill, so only queued
+        reports can be left, and those are computed on their own.
         """
         flag = self.ds.FLAG.data
+        if flag is getattr(self, "_materialised_flags", None):
+            self.flush_reports()
+            return
         spill = self._spill_directory("flags")
         paths, saves = [], []
         for index in range(flag.numblocks[0]):
@@ -1006,6 +1014,11 @@ class DaskMS:
             self.ds.FLAG_ROW.dims, da.from_array(np.asarray(flag_row), chunks=(row_chunks,))
         )
         self._refresh_cached_columns()
+        # What the guard at the top of this method matches on: the object
+        # identity of the FLAG array just installed.  Any verb that changes
+        # the flags rebinds FLAG, so for it the guard fails and the next
+        # materialise (the next save: snapshot, #5) spills again.
+        self._materialised_flags = self.ds.FLAG.data
         report(values)
 
     def flag_autocorrelations(self):
@@ -2192,24 +2205,77 @@ class DaskMS:
             f" channels to {n_new}"
         )
 
-    def save_flag_version(self, versionname, comment=""):
+    def save_flag_version(self, versionname, comment="", snapshot=False):
         """Back up the flags of the MS as a CASA-compatible flag version.
 
         Writes ``<ms>.flagversions/flags.<versionname>`` and updates
         ``FLAG_VERSION_LIST``, in the same layout CASA's ``flagmanager`` uses,
         so the version can be listed and restored by either tool.
 
-        The flags are read from the MS on disk, not from the in-memory dataset:
-        a version holding only the rows left by a row selection would fail the
-        row-count check on restore, and CASA's flagmanager likewise backs up
-        the whole MS.
+        ``snapshot=False`` -- what a leading ``save:`` marker uses -- reads
+        the flags from the MS on disk: at the head of a run memory and disk
+        agree, and reading the whole MS keeps a version complete under a row
+        selection (a version holding only the rows left by ``--scan`` would
+        fail the row-count check on restore), which is also what CASA's
+        ``flagmanager`` does.
 
-        The read+write is streamed row-chunk by row-chunk
+        ``snapshot=True`` -- what a ``save:`` that is not the leading marker
+        uses -- backs up the run's *in-memory* flags instead (issue #5):
+        flagging is in memory until ``--apply``/``--msout`` writes at the
+        end, so a later marker reading from disk would silently back up the
+        pre-run state.  The flags are materialised first
+        (:meth:`materialise_flags`: the run's pass at that point, sharing its
+        read of DATA with every report queued before the marker), then
+        written over the on-disk flags at their ``ROWID`` positions -- the
+        same scattered-row mapping ``--apply`` writes a row selection back
+        at -- while the rows the run does not hold keep their on-disk flags,
+        so the version stays whole-MS and the row-count check on restore
+        still holds.
+
+        Either way the read+write is streamed block by block
         (``flag_versions.save_version_streaming``), so saving a version of a
         large MS does not materialise the whole (multi-GB) flag cube in RAM.
         """
-        path = flag_versions.save_version_streaming(self.name, versionname, comment=comment)
+        if snapshot:
+            # Materialise first: the overlay must point at the materialised
+            # (spilled) flags, so the version write reads the spill and the
+            # run still gets DATA at this point exactly once.
+            self.materialise_flags()
+            path = flag_versions.save_version_streaming(
+                self.name, versionname, comment=comment,
+                overlay=self._flag_overlay(),
+            )
+        else:
+            path = flag_versions.save_version_streaming(
+                self.name, versionname, comment=comment)
         print(f"flag version '{versionname}' saved to {path}")
+
+    def _flag_overlay(self):
+        """The in-memory flags as a version overlay: ``(ROWID, FLAG, FLAG_ROW)``.
+
+        ``ROWID`` is the dataset's coordinate of MS row positions -- what
+        ``xds_to_table`` writes a row-selected dataset back through -- so the
+        merge places the run's flags exactly where ``--apply`` would write
+        them, and the rows outside the selection keep their on-disk flags.
+        """
+        if "ROWID" in self.ds:
+            rows = np.asarray(self.ds.ROWID.data)
+        else:
+            # A dataset that did not come from an MS read has no ROWID; only
+            # an unreduced one can be mapped back positionally.
+            t = table(self.name, ack=False, readonly=True)
+            try:
+                nrow_ms = t.nrows()
+            finally:
+                t.close()
+            if int(self.ds.FLAG.shape[0]) != nrow_ms:
+                raise RuntimeError(
+                    "cannot snapshot the in-memory flags: the dataset holds"
+                    f" {int(self.ds.FLAG.shape[0])} of the MS's {nrow_ms} rows"
+                    " and carries no ROWID to map them back by"
+                )
+            rows = np.arange(nrow_ms)
+        return rows, self.ds.FLAG.data, self.ds.FLAG_ROW.data
 
     def restore_flag_version(self, versionname):
         """Replace the flags in memory with a saved flag version.

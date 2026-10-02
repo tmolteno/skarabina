@@ -147,10 +147,15 @@ Two properties worth stating, because they are what make the ordering real:
 - **Position is the only order.** There is no hidden canonical sequence to
   reason about: `clip 0 100, nan` runs clip before nan, because that is the
   order written, and the reverse list runs them the other way.
-- **Markers keep their place.** `save:` and `restore:` are not verbs and have
-  no ordering relationship to each other or to the operations; they act on the
-  flag state at the point they appear, which is what makes
-  `save:X, <ops>, restore:X` a meaningful snapshot and rollback.
+- **Markers keep their place.** `save:` and `restore:` are not verbs; they act
+  on the flag state at the point they appear, which is what makes
+  `save:X, <ops>, restore:X` a meaningful snapshot and rollback. What a
+  `save:` backs up is the run's flags *as they stand there*: a leading marker
+  (nothing before it that could change the flags) reads the MS on disk, where
+  the run has not touched them yet, and a later marker snapshots the
+  in-memory flags the operations before it produced — merged over the flags
+  on disk for any rows the run is not holding (`--scan`), so the version
+  always covers the whole MS and stays restorable.
 
 A consequence to accept consciously: writing a long run means naming every
 operation, including the ones in the "obvious" order. The canonical order the
@@ -277,7 +282,7 @@ over `DATA`.
 Requirement, stated for the implementation: **one pass per column per run.** A
 sequence of N operations must read `DATA` once, not N times.
 
-### 4.2 Only two operations force a `DATA` pass
+### 4.2 Which operations force a `DATA` pass
 
 Which columns each operation actually depends on:
 
@@ -287,7 +292,8 @@ Which columns each operation actually depends on:
 | `flag_uv_above` | `UVW` | no |
 | `flag_data` (`nan`, `clip`) | `DATA`, `FLAG` | **yes** — its statistics |
 | `flag_spectral_window` | `FLAG`, `UVW` | no |
-| `save:` / `restore:` | `FLAG` | no |
+| `save:` (leading) / `restore:` | `FLAG` | no |
+| `save:` after other operations | what the flags so far depend on — `DATA` once `nan`/`clip` has run | **yes** — the snapshot computes the flags where they stand (§2.4, issue #5), so the pass the end of the run would take runs at the marker, and verbs *after* the marker are read in the end-of-run pass |
 
 So deferring **only** the `nan`/`clip` reductions is sufficient. Every other
 operation can keep printing its per-step counts as it does today, and the
