@@ -23,6 +23,18 @@
   arbitrarily large tables.  Needs ``pyarrow`` (``skarabina[nn]``) and a
   reachable ``nn-flag-server`` whose antenna map matches the MS.
 
+### Fixed
+
+- **``rflag``/``tfcrop``'s ``newly`` report count can no longer go negative (#7).**
+  ``flag_rflag: N of T visibilities flagged, X newly`` now prints ``X`` as the set
+  difference -- visibilities the verb flagged that were not flagged when it ran --
+  instead of ``total - already``, a difference of two totals that could disagree
+  (the chained ``--apply`` run in #7 printed ``-7709326 newly``).  A visibility that
+  was already flagged and is flagged again does not count as new, as before; both
+  report sites (the eager spill path and the deferred one) use the same definition.
+  The ``save:``-after-a-flagging-verb half of #7 shares #5's root cause and is
+  tracked there.
+
 ## [1.0.15]
 
 ### Added

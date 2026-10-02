@@ -145,16 +145,20 @@ def _flags_to_spill(block_function):
     written instead to ``path``, packed to one bit per visibility, and read back
     block by block by whichever pass needs them (:func:`_load_spilled_flags`).
 
-    The call returns ``[[flagged, pre_existing]]`` for the block: both counts
-    are reductions of arrays that are already in hand here, so the report
-    costs no second evaluation of the block and no second read of the input
-    flags.
+    The call returns ``[[flagged, pre_existing, newly]]`` for the block: the
+    three counts are reductions of arrays that are already in hand here, so
+    the report costs no second evaluation of the block and no second read of
+    the input flags.  ``newly`` is the set difference -- flagged now and not
+    flagged before -- so it counts what this verb added (a visibility that
+    was already flagged and is flagged again does not count) and can never
+    be negative, whatever the other two totals are (#7).
     """
     def run(data, existing, params, path, scope, *rows):
         flags = block_function(data, existing, params, rows or None, scope)
         np.save(path, np.packbits(flags, axis=None), allow_pickle=False)
         return np.array(
-            [[np.count_nonzero(flags), np.count_nonzero(existing)]],
+            [[np.count_nonzero(flags), np.count_nonzero(existing),
+              np.count_nonzero(flags & ~existing)]],
             dtype=np.int64,
         )
     return run
@@ -1190,8 +1194,8 @@ class DaskMS:
         # delayed, the reports arrays, and fusion would give each its own read.
         counts, *pending_values = dask.compute(counts, *pending, optimize_graph=False)
         report_pending(pending_values)
-        counts = np.concatenate(counts) if counts else np.zeros((0, 2), int)
-        new_count, already = (int(n) for n in counts.sum(axis=0))
+        counts = np.concatenate(counts) if counts else np.zeros((0, 3), int)
+        new_count, _, newly = (int(n) for n in counts.sum(axis=0))
         total = int(np.prod(shape))
 
         new_flags = _da.concatenate(
@@ -1210,10 +1214,14 @@ class DaskMS:
 
         self.ds["FLAG"] = (self.ds.FLAG.dims, new_flags)
         self.changed["FLAG"] = True
+        # ``newly`` is the per-block set difference (see _flags_to_spill):
+        # visibilities this verb flagged that were not flagged when it ran,
+        # so a re-flag of an already-flagged one does not count and the
+        # number can never be negative (#7).
         print(
             "%s: %d of %d visibilities flagged, %d newly (%.2f%% of all)"
-            % (label, new_count, total, new_count - already,
-               100.0 * (new_count - already) / total if total else 0.0)
+            % (label, new_count, total, newly,
+               100.0 * newly / total if total else 0.0)
         )
 
     def _defer_autofit(self, payload, existing, params, block_function,
@@ -1242,14 +1250,22 @@ class DaskMS:
         self.changed["FLAG"] = True
         total = int(np.prod(shape))
 
-        def report(new_count, already):
-            new_count, already = int(new_count), int(already)
+        def report(new_count, newly):
+            # ``newly`` is the set difference ``new_flags & ~existing``:
+            # visibilities this verb flagged that were not flagged when it
+            # ran -- never a difference of two independently-evaluated
+            # totals, which is what made it able to print a negative count
+            # (#7).  A re-flag of an already-flagged visibility does not
+            # count as new.
+            new_count, newly = int(new_count), int(newly)
             print(
                 "%s: %d of %d visibilities flagged, %d newly (%.2f%% of all)"
-                % (label, new_count, total, new_count - already,
-                   100.0 * (new_count - already) / total if total else 0.0)
+                % (label, new_count, total, newly,
+                   100.0 * newly / total if total else 0.0)
             )
-        self._report([da.sum(new_flags), da.sum(existing)], report)
+        self._report(
+            [da.sum(new_flags), da.sum(new_flags & ~existing)], report
+        )
 
     def _baseline_columns(self, row_chunks):
         """``[ANTENNA1, ANTENNA2, SCAN_NUMBER]`` chunked like the data, or ``[]``.
