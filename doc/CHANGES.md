@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.16]
+
 ### Added
 
 - **``skarabina-plotms``** -- plot a measurement set or a caltable with
