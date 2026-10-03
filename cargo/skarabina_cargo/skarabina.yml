@@ -278,3 +278,74 @@ cabs:
         # markup it wraps around lines.
         'SKARABINA_ANALYZE_JSON (.*)':
           - PARSE_JSON_OUTPUT_DICT
+
+  # The casaplotms substitute.  casa.plotms runs casaplotms, an x86_64-only
+  # AppImage, so an arm64 pipeline has to skip every plot step that uses it
+  # (meerkat_imaging's stage-1 gain tables: 12 looped tables plus K0 and G0).
+  # Same params and defaults as the casa.plotms cab for everything a recipe
+  # here uses -- ms, plotfile, overwrite, xaxis, yaxis -- so a step swaps with
+  # `cab:` changed and nothing else.
+  skarabina-plotms:
+    name: skarabina-plotms
+    info: "skarabina-plotms -- plot a measurement set or caltable (matplotlib; casaplotms substitute)"
+    image:
+      _use: vars.skarabina-cargo.images
+      name: skarabina
+    command: skarabina-plotms
+    inputs:
+      ms:
+        dtype: Union[MS, Directory]
+        info: Input measurement set or caltable
+        required: true
+      plotfile:
+        dtype: str
+        info: >-
+          Name of the plot file to write; the extension picks the format
+          (.png, .pdf, .svg, .ps or .eps)
+        required: true
+      overwrite:
+        dtype: bool
+        info: Overwrite the plot file if it already exists
+      xaxis:
+        dtype: str
+        info: >-
+          Plot x-axis (blank for plotms' default, time): time, channel,
+          frequency, uvdist, uvwave, scan, field, spw, antenna, antenna1,
+          antenna2, baseline, interval, row, u, v or w.  uv/scan axes are
+          measurement-set only.
+      yaxis:
+        dtype: str
+        info: >-
+          Plot y-axis (blank for plotms' default, amplitude): amp, phase,
+          real, imag, wt (weight) or snr (caltables only).
+      corr:
+        dtype: str
+        info: Correlations to plot, comma-separated names or 0-based indices (blank for all)
+      field:
+        dtype: str
+        info: Fields to plot, comma-separated names or ids (blank for all)
+      spw:
+        dtype: str
+        info: Spectral windows to plot, comma-separated ids (blank for all)
+      scan:
+        dtype: str
+        info: Scans to plot, comma-separated numbers (blank for all; measurement sets only)
+      data-column:
+        dtype: str
+        info: >-
+          Measurement-set column to plot: DATA, CORRECTED or MODEL.
+          Caltables always use CPARAM.
+      max-points:
+        dtype: int
+        info: >-
+          Decimate to about this many plotted points per correlation; the
+          read is chunked, so a big MS is never materialised in memory.
+          0 disables decimation.
+      show-flagged:
+        dtype: bool
+        info: Include flagged data (plotms leaves flagged points out)
+      title:
+        dtype: str
+        info: >-
+          Plot title; blank for the default, the table name with
+          the y and x axis names.

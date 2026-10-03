@@ -362,3 +362,16 @@ genuinely did not change. `--split` selects rows, which changes every column's
 shape, so it falls back to a full copy with a warning. And the mode saves
 *writes*, not reads: the output is read through dask-ms, which loads the whole
 MS to write it, so `--apply` remains the better choice when reading dominates.
+
+### Plotting (skarabina-plotms)
+
+A separate command, `skarabina-plotms`, plots a measurement set or a caltable
+with matplotlib — the stand-in for CASA `plotms`, whose casaplotms is an
+x86_64-only AppImage. Its defaults are plotms' own (time vs amplitude,
+flagged data left out), and the format comes from the `plotfile` extension:
+
+    skarabina-plotms --ms out/multi.G0 --plotfile out/cal_G0.pdf --overwrite
+    skarabina-plotms --ms raw.ms --plotfile uv.png --xaxis uvdist --yaxis amp --overwrite
+
+See [Plotting](PLOTTING.md) for the axes, the selections, and the
+`skarabina-plotms` stimela cab that replaces `casa.plotms` in a pipeline.

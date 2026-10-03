@@ -17,14 +17,16 @@ dependencies = [
     # ANTENNA POSITION/OFFSET, FEED POSITION) in casacore's inline layout --
     # 3.8.8 could not read them from a casacore MS and wrote them in a form
     # casacore misreads.
-    "casacure>=3.8.9",
+    "casacure>=3.8.17",
     "zarr>=2.0",
     "angle-parser>=0.1.0",
+    "matplotlib>=3.10.9",
 ]
 
 [project.scripts]
 skarabina = "skarabina.main:main"
 skarabina-analyze = "skarabina.analyze:main"
+skarabina-plotms = "skarabina.plotms:main"
 
 [project.optional-dependencies]
 # The pure-Rust drop-in replacement for casacore, used as dask-ms's I/O backend
@@ -33,7 +35,7 @@ skarabina-analyze = "skarabina.analyze:main"
 # way to ask for the Rust backend: pip install skarabina[casacure].  Runs select
 # it with DASK_MS_BACKEND=casacure; without casacure installed, dask-ms falls
 # back to real python-casacore.
-casacure = ["casacure>=3.8.9"]
+casacure = ["casacure>=3.8.17"]
 # The tf-nn verb streams each data chunk to a served neural flagger over
 # Arrow Flight (radio-nn's nn-flag-server); only that verb needs pyarrow.
 nn = ["pyarrow>=14"]

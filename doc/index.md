@@ -9,6 +9,7 @@ flagging of measurement sets.
 - [Time & frequency averaging](AVERAGING.md)
 - [Splitting an MS by field](SPLITTING.md)
 - [Measurement set analyzer](ANALYZE.md)
+- [Plotting (skarabina-plotms, the casaplotms substitute)](PLOTTING.md)
 - [RFlag, and how it differs from CASA's](RFLAG.md)
 - [Changelog](CHANGES.md)
 
@@ -24,4 +25,7 @@ skarabina --ms raw.ms \
 
 # Analyze a measurement set
 skarabina-analyze --ms raw.ms --image-fov 2.5
+
+# Plot a gain table or an MS (casaplotms substitute; no display needed)
+skarabina-plotms --ms raw.ms --plotfile amp.png --xaxis uvdist --overwrite
 ```

@@ -83,6 +83,23 @@ demo-imaging-pipeline:
         output-json: analysis.json
 
     # -----------------------------------------------------------------
+    # 2b. Diagnostic plot.  skarabina-plotms is the casaplotms substitute
+    # (casaplotms is an x86_64-only AppImage, so an arm64 pipeline cannot run
+    # casa.plotms steps); the output format follows the plotfile extension.
+    # It plots a caltable the same way -- e.g. the stage-1 gain tables:
+    #     ms: out/multi.G0, plotfile: cal_G0.pdf
+    # -----------------------------------------------------------------
+    plot:
+      info: "Amplitude vs uv distance of the cleaned MS"
+      cab: skarabina-plotms
+      params:
+        ms: =steps.flag.msout
+        plotfile: amp-vs-uvdist.png
+        overwrite: true
+        xaxis: uvdist
+        yaxis: amp
+
+    # -----------------------------------------------------------------
     # 3. Third-party imager (for example cult-cargo's wsclean cab).  The
     #    wrangled outputs bind straight onto the imager's parameters.  Point
     #    the step at a real imaging cab and uncomment:

@@ -275,9 +275,36 @@ def test_flag_list_accepts_the_documented_yaml_form(schemas):
     pinned here rather than left implied by the repeat policy."""
     flag = schemas.cabs["skarabina"].inputs["flag"]
     assert str(flag.dtype) == "List[str]"
-    assert flag.get("required") is True
+    # b10d722 removed required: true -- a run may split/summarise without
+    # flagging anything -- so the flag list must stay optional.  (The old
+    # `is True` assertion here predates that commit and failed on main.)
+    assert flag.get("required") is not True
     assert (flag.get("policies") or {}).get("repeat") == "repeat"
     # the documented verbs must be named in the info text a user reads
     info = str(flag.get("info", ""))
     for verb in ("autos", "nan", "clip", "uv-above", "spectral-window", "save:"):
         assert verb in info, f"flag info does not mention '{verb}'"
+
+
+def test_plotms_cab_is_exposed(schemas):
+    """The casaplotms substitute must be packaged, on the skarabina image.
+
+    The meerkat_imaging pipeline's plot steps pass ms/plotfile/overwrite (and
+    may pass xaxis/yaxis), so those inputs are the substitution contract; the
+    image must be the already-published multi-arch skarabina image, since the
+    whole point is having plots on arm64 without casaplotms.
+    """
+    cab = schemas.cabs.get("skarabina-plotms")
+    assert cab is not None, "skarabina-plotms cab missing from the schema"
+    assert cab.command == "skarabina-plotms"
+    for key in ("ms", "plotfile", "overwrite", "xaxis", "yaxis"):
+        assert key in cab.inputs, f"missing input '{key}' in skarabina-plotms"
+    assert cab.inputs["ms"].get("required") is True
+    assert cab.inputs["plotfile"].get("required") is True
+    assert str(cab.inputs["overwrite"].get("dtype")) == "bool"
+    assert OmegaConf.to_container(cab.image) == OmegaConf.to_container(
+        schemas.cabs["skarabina"].image
+    ), "skarabina-plotms must run in the same image as the other cabs"
+    assert "outputs" not in cab or not cab.outputs, (
+        "skarabina-plotms declares outputs nothing populates"
+    )

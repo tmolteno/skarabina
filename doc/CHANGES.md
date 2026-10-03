@@ -5,6 +5,22 @@
 
 ### Added
 
+- **``skarabina-plotms``** -- plot a measurement set or a caltable with
+  matplotlib, as a drop-in replacement for CASA ``plotms``.  casaplotms ships
+  as an x86_64-only AppImage, so the meerkat_imaging pipeline skipped every
+  ``casa.plotms`` step on arm64 (stage 1's gain-table plots: K0, G0 and the
+  twelve tables of ``cal-loop-plot-gains``).  The defaults are plotms' own --
+  x = time, y = amplitude, flagged data left out, format from the
+  ``plotfile`` extension -- and the parameters match (``ms``, ``plotfile``,
+  ``overwrite``, ``xaxis``, ``yaxis``, plus ``corr``/``field``/``spw``/
+  ``scan`` selection, ``data-column`` and a ``--max-points`` decimation that
+  keeps a multi-GB MS out of memory).  MS and caltable axes are both
+  supported; reads are chunked because casacure -- the default backend,
+  see below -- ignores ``getcol``'s ``rowincr`` and has no ``selectrows``.
+  Ships as the
+  ``skarabina-plotms`` cab in skarabina-cargo on the same multi-arch image,
+  so a recipe swaps ``cab: casa.plotms`` for ``cab: skarabina-plotms`` with
+  its params unchanged (doc/PLOTTING.md).  New dependency: ``matplotlib``.
 - **``nn-flagger`` verb** -- union the flags of a served neural flagger
   (radio-nn's ``nn-flag-server``) into an ordered run:
   ``--flag "tfcrop [timecutoff=5], nn-flagger grpc://host:8815"``.  Each data
@@ -22,6 +38,27 @@
   written, so the run's memory stays bounded like ``tfcrop``'s on
   arbitrarily large tables.  Needs ``pyarrow`` (``skarabina[nn]``) and a
   reachable ``nn-flag-server`` whose antenna map matches the MS.
+
+### Changed
+
+- **casacure is the table backend everywhere; python-casacore is not used.**
+  Importing ``skarabina`` now sets ``DASK_MS_BACKEND=casacure`` when the
+  variable is unset (an explicit value still wins), so ``skarabina``,
+  ``skarabina-analyze``, ``skarabina-plotms`` and the test suite run the
+  Rust backend with no environment setup, on x86_64 and arm64 alike --
+  python-casacore does not work on arm64.  ``tests/conftest.py`` activates
+  the ``casacore`` -> ``casacure`` alias at session start, so the fixtures
+  import ``casacore`` in any order and need no python-casacore install.
+  Three casacure gaps this closes are implemented upstream (in the
+  casacure checkout, changelog under *Unreleased*): ``table.removerows``
+  (``--split``'s FIELD/SOURCE subtable reduction), ``addcols(dminfo)``
+  (a new column's storage manager -- the ``--write-changed-only`` sharing
+  tests lay a real-MS layout out with it), and a read-only open no longer
+  failing on a writer's unflushable backing (a shared read-only block).
+  The installed casacure must carry them: this environment runs it from
+  the ``../casacure`` checkout, and the ``casacure>=3.8.9`` floor in
+  ``pyproject.toml`` should be raised to the first release that ships them
+  when that release is out (``uv lock -U casacure``).
 
 ### Fixed
 

@@ -31,6 +31,7 @@ See [doc/](doc/index.md) for full documentation:
 - [Usage & CLI reference](doc/usage.md)
 - [Time & frequency averaging](doc/AVERAGING.md)
 - [Measurement set analyzer](doc/ANALYZE.md)
+- [Plotting (skarabina-plotms)](doc/PLOTTING.md)
 - [Changelog](doc/CHANGES.md)
 
 ## Install
@@ -53,6 +54,9 @@ skarabina --ms raw.ms --scan 1,12,14 --flag-nan \
 
 # Analyze
 skarabina-analyze --ms raw.ms --image-fov 2.5
+
+# Plot a gain table or an MS (casaplotms substitute, arm64-friendly)
+skarabina-plotms --ms raw.ms --plotfile amp_vs_time.png --overwrite
 ```
 
 `--field-of-view` (flagging/summary) and `--image-fov` (analysis) both take the

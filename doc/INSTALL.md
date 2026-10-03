@@ -5,27 +5,28 @@
 
     pip install skarabina
 
-### The Rust I/O backend (optional)
+### The Rust I/O backend (default)
 
-casacore is the C++ table library skarabina reads measurement sets through.
-[casacure](https://github.com/tmolteno/casacure) is a pure-Rust drop-in for it,
-and the [tmolteno/dask-ms](https://github.com/tmolteno/dask-ms) fork can drive
-it as dask-ms's I/O backend:
+casacore is the C++ table library measurement sets are formatted with.
+[casacure](https://github.com/tmolteno/casacure) is a pure-Rust drop-in for
+it, and it is what skarabina uses by default: importing `skarabina` sets
+`DASK_MS_BACKEND=casacure` when the variable is unset, so every entry point
+(`skarabina`, `skarabina-analyze`, `skarabina-plotms`) and the test suite
+run on it with no environment setup — on x86_64 and arm64 alike, where
+python-casacore does not work.  casacure itself comes with the package.
 
-    pip install skarabina[casacure]
-
-The extra installs casacure itself.  The dask-ms that knows how to use it is
-the fork -- which `uv sync` in this repository resolves, per `[tool.uv.sources]`
--- so a pip user installing skarabina from PyPI gets upstream dask-ms with it
-and should install the fork explicitly to get the Rust backend:
+Driving it through dask-ms needs the
+[tmolteno/dask-ms](https://github.com/tmolteno/dask-ms) fork — which
+`uv sync` in this repository resolves, per `[tool.uv.sources]`.  A pip user
+installing skarabina from PyPI should install the fork explicitly:
 
     pip install "dask-ms[casacure,xarray,zarr] @ git+https://github.com/tmolteno/dask-ms.git"
-    pip install skarabina[casacure]
+    pip install skarabina
 
-Runs then select it with `DASK_MS_BACKEND=casacure` (the
-[`bench/flag_timing.py`](../bench/flag_timing.py) harness does this for its
-`casacure` backend).  Without casacure, dask-ms uses real python-casacore,
-which is what the container images ship.
+Set `DASK_MS_BACKEND` yourself only to *override* the default: any value
+other than `casacure` selects real python-casacore instead (x86_64 only).
+The [`bench/flag_timing.py`](../bench/flag_timing.py) harness passes
+`casacure` explicitly for its `casacure` backend.
 
 ## Docker (any architecture)
 
@@ -90,43 +91,22 @@ docker build -t skarabina .
 
 A single Dockerfile supports all architectures — on x86_64 it uses a
 pre-built `python-casacore` wheel; on aarch64 it builds from source
-via scikit-build-core with C++17.
+via scikit-build-core with C++17.  The runtime backend is casacure either
+way (see above); the image's python-casacore only matters on x86_64, and
+only if you override `DASK_MS_BACKEND`.
 
 ## aarch64 (NVIDIA DGX Spark, Raspberry Pi, AWS Graviton)
 
-`python-casacore` has no pre-built aarch64 wheel, but builds from
-source successfully.  Install system dependencies first:
+Nothing extra to install: casacure is the default backend and installs
+from wheels on every architecture, so `pip install skarabina` — or the
+multi-arch Docker image — is all an arm64 host needs.
 
-```sh
-sudo apt-get install casacore-dev python3-dev gcc g++ \
-    libblas-dev liblapack-dev wcslib-dev libcfitsio-dev \
-    libboost-python-dev cmake ninja-build
-```
-
-Then:
-
-```sh
-CMAKE_ARGS="-DCMAKE_CXX_STANDARD=17" pip install python-casacore
-pip install skarabina
-```
-
-The `CMAKE_ARGS` tells scikit-build-core (the CMake build backend) to
-compile with C++17.  This is needed because system casacore headers
-reference `std::allocator::pointer` / `::const_pointer` / `::reference`
-typedefs that were deprecated in C++17 and removed in C++20.
-
-### If the C++ allocator build fails
-
-If you see errors like:
-
-```
-error: no type named 'pointer' in 'casacore::casacore_allocator<...>::Super'
-error: 'struct casacore::Allocator_private::BulkAllocator<...>' has no member named 'destroy'
-```
-
-the `CMAKE_ARGS` flag above resolves them.  If it persists, your
-casacore package may need updating (`apt-get update`), or you can
-build casacore from source with `-std=c++17`.
+python-casacore (the C++ binding) does not work on arm64, so there is
+deliberately no python-casacore path here anymore: on arm64 leave
+`DASK_MS_BACKEND` at its default (`casacure`).  (This section used to
+describe building python-casacore from source with C++17 flags; that build
+is unsupported and the backend it would select is not the one skarabina
+runs.)
 
 ## Development install
 
@@ -134,3 +114,11 @@ build casacore from source with `-std=c++17`.
     cd skarabina
     uv sync
     uv run skarabina --help
+
+`uv sync` installs the casacure pinned in `uv.lock`.  The casacure fixes
+`CHANGES.md` lists (`table.removerows`, `addcols(dminfo)`, and the
+read-open fallback for an unflushable writer) are in the casacure checkout
+but not yet in a released wheel, so until that release exists install it
+into the venv as well:
+
+    uv pip install ../casacure
