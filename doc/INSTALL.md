@@ -115,10 +115,6 @@ runs.)
     uv sync
     uv run skarabina --help
 
-`uv sync` installs the casacure pinned in `uv.lock`.  The casacure fixes
-`CHANGES.md` lists (`table.removerows`, `addcols(dminfo)`, and the
-read-open fallback for an unflushable writer) are in the casacure checkout
-but not yet in a released wheel, so until that release exists install it
-into the venv as well:
-
-    uv pip install ../casacure
+`uv sync` installs the casacure pinned in `uv.lock`
+(`casacure>=3.8.17`, which carries the ``removerows``/``addcols(dminfo)``
+fixes `CHANGES.md` lists).

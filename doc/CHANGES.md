@@ -51,16 +51,14 @@
   python-casacore does not work on arm64.  ``tests/conftest.py`` activates
   the ``casacore`` -> ``casacure`` alias at session start, so the fixtures
   import ``casacore`` in any order and need no python-casacore install.
-  Three casacure gaps this closes are implemented upstream (in the
-  casacure checkout, changelog under *Unreleased*): ``table.removerows``
-  (``--split``'s FIELD/SOURCE subtable reduction), ``addcols(dminfo)``
-  (a new column's storage manager -- the ``--write-changed-only`` sharing
-  tests lay a real-MS layout out with it), and a read-only open no longer
-  failing on a writer's unflushable backing (a shared read-only block).
-  The installed casacure must carry them: this environment runs it from
-  the ``../casacure`` checkout, and the ``casacure>=3.8.9`` floor in
-  ``pyproject.toml`` should be raised to the first release that ships them
-  when that release is out (``uv lock -U casacure``).
+  Three casacure gaps this closes are released upstream as casacure
+  3.8.17: ``table.removerows`` (``--split``'s FIELD/SOURCE subtable
+  reduction), ``addcols(dminfo)`` (a new column's storage manager -- the
+  ``--write-changed-only`` sharing tests lay a real-MS layout out with
+  it), and a read-only open no longer failing on a writer's unflushable
+  backing (a shared read-only block).  The floor in ``pyproject.toml`` is
+  raised to ``casacure>=3.8.17``, the release that carries them, and
+  ``uv.lock`` pins it.
 
 ### Fixed
 
