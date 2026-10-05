@@ -685,19 +685,40 @@ implementation, and the choice is recorded here rather than left implicit.
    is meaningless: measured, one such piece reached 395 on a band whose values
    run 7 to 16, and the next rejection pass removed almost everything.  Those
    channels are interpolated between the neighbouring fitted regions instead.
-5. **The two directions are computed independently.**  The published
-   description runs the second direction after the first, so the first
-   direction's flags are already excluded from the second's average.  Here both
-   are computed from the *input* flags, so neither biases the other.  The four
-   `flagdimension` spellings therefore reduce to: union (`freqtime`,
-   `timefreq`), frequency only (`freq`), time only (`time`).  The order within
-   the name carries no meaning.
+5. **The two directions run sequentially, as CASA runs them.**  An earlier
+   version computed both directions from the *input* flags so neither biased
+   the other, and unioned them; the order within the `flagdimension` name
+   carried no meaning.  Measured on the skarabina#9 bench that counted
+   higher than CASA even after the flagging rule was matched (5.11% vs
+   4.13% on the J0408-6545 split, tfcrop from `basic`), so the module now
+   follows CASA's `freqtime` order: the frequency direction runs first, and
+   the time direction sees the frequency flags -- excluded from its
+   averages and scatter -- and adds its own.  A `time`-only run is
+   unchanged, and a `freq`-only run never sees the time direction.
 6. **`combinescans` is accepted but does nothing.**  The chunk is the fit unit
    and a chunk does not cross a scan boundary in the data this tool reads, so
    the parameter has nothing to control.  It is accepted so that a CASA recipe
    does not fail on an unknown name, and rejecting it as unsupported would be
    worse than accepting it as a no-op.  This is the one parameter whose
    acceptance is not backed by behaviour.
+8. **The flagging rule is CASA's, not the adaptive robust scatter.**  The
+   published description iterates the scatter estimate from the surviving
+   points; an earlier version did exactly that with a robust
+   median-based estimate (`1.4826 x MAD`, five passes).  CASA's actual
+   implementation (`FlagAgentTimeFreqCrop::fitBaseAndFlag`, STEP 3B) is
+   cruder and weaker: the threshold is the *plain* standard deviation of
+   the flattened values about 1 -- RFI included, so a contaminated
+   timestep raises its own threshold -- and its five-iteration loop stops
+   as soon as the scatter moves by less than 0.1 in the flattened units,
+   with the comparison value starting at 0.  Flattened data scatters at
+   the few-percent level, so in practice exactly one pass runs.  Measured
+   on the skarabina#9 bench (J0408-6545 split of the fast-profile MS,
+   tfcrop from `basic`), the adaptive robust rule flagged 11.4% of the
+   frequency direction against CASA's 4.1% -- 2.8x -- while CASA's own
+   rule flags 3.3% here.  The rule is CASA's (`_flag_lanes_casa`) in both
+   code paths for parity; the robust machinery (`flag_1d`, `flag_lanes`)
+   remains for `rflag` and as the reference implementation's scatter.
+
 7. **Window statistics are approximate.**  `sum` and `std` are CASA's own
    approximations to the LOFAR sum-threshold and AIPS `rflag` statistics, and
    are marked experimental there.  They are kept for parity, not because either

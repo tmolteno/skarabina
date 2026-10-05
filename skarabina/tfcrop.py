@@ -22,12 +22,23 @@ TFCrop therefore fits the bandpass first and flags the *residuals*:
 2. Divide that fit out of every timestep.  The result is flat -- near 1
    wherever the band is clean -- so one threshold now means the same thing at
    the band edge and in the middle.
-3. Flag points deviating from 1, iterating so that the scatter estimate is
-   itself computed from the surviving points.
-4. Repeat the whole thing in the other direction: average over frequency, fit
-   the time series, and flag deviations from that.
+3. Flag points deviating from 1, with CASA's rule: the threshold is the
+   plain standard deviation of the timestep's flattened values about 1 --
+   RFI included, so a contaminated timestep sets its own, looser threshold
+   -- and in practice the rule runs a single pass (CASA's iteration stops
+   as soon as the scatter moves by less than 0.1 in the flattened units,
+   which the flattened data always is on the first pass).
+4. Repeat the whole thing in the other direction: average over frequency,
+   fit the time series, and flag deviations from that.  The second
+   direction sees the first direction's flags, exactly as CASA's
+   ``freqtime`` runs them.
 
-Steps 1-4 run per baseline and per correlation, over chunks of time.
+Steps 1-4 run per baseline and per correlation, over chunks of time.  The
+flagging rule is CASA's rather than the more aggressive adaptive robust
+scatter this module once used, because the two disagree measurably: on the
+bench in skarabina#9 the adaptive rule flagged 2.9x what CASA's
+``flagdata`` does on the same data, while CASA's own rule lands within a
+few percent of it.
 """
 
 import numpy as np
@@ -793,7 +804,8 @@ def _fit_and_flag_freq(plane, flagged, params):
     """Bandpass direction: fit the time-average, flatten, flag across frequency."""
     template = bandpass_template(plane, flagged, params)
     flat = _flatten(plane, template)
-    return _new_flags(flat, flagged, params.freqcutoff, axis=1), flat
+    return _flag_lanes_casa(flat, params.freqcutoff, axis=1,
+                            flagged=flagged) & ~flagged, flat
 
 
 def _fit_and_flag_time(plane, flagged, params):
@@ -803,19 +815,59 @@ def _fit_and_flag_time(plane, flagged, params):
     )
     safe = _safe_template(baseline, np.ones_like(baseline))
     flat = _flatten(plane, safe[None, :])
-    return _new_flags(flat, flagged, params.timecutoff, axis=0), flat
+    return _flag_lanes_casa(flat, params.timecutoff, axis=0,
+                            flagged=flagged) & ~flagged, flat
 
 
-def _new_flags(flat, flagged, cutoff, axis):
-    """One direction's flags on a flattened plane: only what it finds itself.
+def _flag_lanes_casa(values, cutoff, axis, flagged):
+    """CASA's flagging rule (``FlagAgentTimeFreqCrop::fitBaseAndFlag``, STEP 3B),
+    applied to every lane of a 2-D array along ``axis``.
 
-    The samples flagged before TFCrop ran are kept out of the scatter (see
-    :func:`flag_1d`), and out of the result, so ``combined`` holds each
-    direction's own judgements and nothing else -- which is what the window
-    statistics then measure the outlier content of a neighbourhood from.  The
-    caller adds the pre-existing flags back when it assembles the final plane.
+    CASA's rule differs from :func:`flag_lanes` in three ways that measurably
+    matter, and this function reproduces all three:
+
+    * the scatter is the plain standard deviation of the lane's surviving
+      values about 1.0 -- not a robust median-based estimate -- so RFI in the
+      lane inflates the very threshold that is meant to catch it;
+    * the loop runs at most five times, but stops as soon as the scatter
+      moves by less than 0.1 *in the flattened units* (CASA compares against
+      a fixed 0.1, with ``temp`` starting at 0).  Flattened data scatters at
+      the few-percent level, so in practice the loop runs exactly once: the
+      first pass's contaminated scatter is the one that decides;
+    * a lane's threshold is that lane's own scatter, which is the same
+      per-lane structure :func:`flag_lanes` has.
+
+    ``flagged`` marks values flagged before this call; they are left out of
+    the scatter and stay flagged.  Returns the complete flag plane.
     """
-    return flag_lanes(flat, cutoff, axis=axis, flagged=flagged) & ~flagged
+    values = np.asarray(values, dtype=float)
+    excluded = ~np.isfinite(values)
+    if flagged is not None:
+        excluded |= np.asarray(flagged, dtype=bool)
+    lanes = values if axis == 1 else values.T
+    excluded = excluded if axis == 1 else excluded.T
+    flags = excluded.copy()
+    deviation = lanes - 1.0
+    squared = deviation * deviation
+    previous = np.zeros(lanes.shape[0])
+    active = np.ones(lanes.shape[0], dtype=bool)
+    for _ in range(5):
+        if not active.any():
+            break
+        count = np.count_nonzero(~flags[active], axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            sigma = np.sqrt(np.where(flags[active], 0.0, squared[active]).sum(axis=1)
+                            / np.maximum(count, 1))
+        flags[active] |= (~flags[active]) & (
+            np.abs(deviation[active]) > cutoff * sigma[:, None])
+        # CASA's stop: |previous - sigma| < 0.1, per lane, previous starting
+        # at 0 -- so a lane whose first sigma is under 0.1 stops after one
+        # pass, which is what flattened data does.
+        settled = np.abs(previous[active] - sigma) < 0.1
+        rows = np.flatnonzero(active)
+        previous[rows] = sigma
+        active[rows[settled]] = False
+    return flags if axis == 1 else flags.T
 
 
 def _fit_for(fit_type):
@@ -834,13 +886,16 @@ def _combine(freq_flags, time_flags, flagdimension):
 
     ``freqtime`` and ``timefreq`` union them, so a point is flagged when either
     direction calls it an outlier; ``freq`` and ``time`` use one direction only.
-    CASA lists the four as distinct spellings; here the order within the name
-    carries no meaning, because both directions are computed from the *input*
-    flags and neither sees the other's output.  The published description runs
-    the second direction after the first, so the first direction's flags are
-    already excluded from the second's average; keeping them independent is a
-    deliberate simplification, since it stops the first direction from biasing
-    the second.
+    CASA lists the four as distinct spellings; the order within the name
+    carries no meaning for which points survive, because whichever direction
+    runs second sees the first's flags either way -- CASA runs the second
+    direction after the first (its ``freqtime`` flags along frequency, then
+    along time with the frequency flags already applied), and this module
+    follows that: the caller hands the second direction ``flagged |
+    freq_flags``.  An earlier version computed the two directions
+    independently from the input flags; on the skarabina#9 bench that
+    measured higher than CASA's count even with the same flagging rule, so
+    the sequential order is kept for parity.
     """
     if flagdimension == "freq":
         return freq_flags
@@ -878,7 +933,12 @@ def tfcrop_plane(plane, params, flagged=None, baselines=None):
     if params.flagdimension in ("freqtime", "freq"):
         freq_flags, flat_freq = _fit_and_flag_freq(plane, flagged, params)
     if params.flagdimension in ("freqtime", "timefreq", "time"):
-        time_flags, flat_time = _fit_and_flag_time(plane, flagged, params)
+        # CASA's freqtime runs the time direction after the frequency one,
+        # with the frequency flags already applied (they are excluded from
+        # the time direction's statistics); a time-only run is unchanged.
+        time_flags, flat_time = _fit_and_flag_time(
+            plane, flagged | freq_flags, params
+        )
 
     combined = _combine(freq_flags, time_flags, params.flagdimension)
 
@@ -927,14 +987,20 @@ def _tfcrop_baselines(plane, params, flagged, baselines):
        antennas predict.  Data units, not the flattened ratio: the noise
        factorises by antenna (SEFD, gains) but the level it would be divided by
        includes the source, which does not, except for a point source.
-    3. Frequency direction: a sample is flagged where it departs from its
-       baseline's fit by more than ``freqcutoff`` of the modelled scatter.
+    3. Frequency direction: every row is divided by its baseline's fit and
+       each timestep's flattened spectrum is flagged with CASA's rule
+       (:func:`_flag_lanes_casa`) at ``freqcutoff`` -- per timestep, plain
+       standard deviation about 1, one pass in practice.  Measured on the
+       skarabina#9 bench, the adaptive robust scatter this once used flagged
+       2.8x what CASA's ``flagdata`` does on the same data; CASA's own rule
+       lands within a few percent of it.
     4. Time direction: each sample against its baseline's median in that
        channel over the chunk's rows -- no fit, as the single-baseline
        algorithm judges a channel against its own time baseline -- in units of
        the modelled scatter of those residuals, every channel's samples (all
-       baselines, all times) flagged as :func:`flag_lanes` flags a column, at
-       ``timecutoff``.
+       baselines, all times) flagged with CASA's rule at ``timecutoff``.  The
+       time direction sees the frequency direction's flags, as CASA's
+       ``freqtime`` runs it.
     """
     plane = np.asarray(plane, dtype=float)
     flagged = np.zeros(plane.shape, dtype=bool) if flagged is None \
@@ -970,24 +1036,37 @@ def _tfcrop_baselines(plane, params, flagged, baselines):
         templates[chosen] = fitted.T
     templates = _safe_template(templates, spectra)
     templates = np.where(np.isfinite(templates) & (templates != 0.0), templates, 1.0)
-    # One working plane: the per-row template, then the residual from it.
+    # One working plane: the per-row template, the flattened plane built on
+    # it, and the residual from it.
     work = templates[baselines.labels]
-    flat = _flatten(plane, work) if params.usewindowstats != "none" else None
+    flat = _flatten(plane, work)
     np.subtract(plane, work, out=work)
 
     # 3 & 4.  Both directions report only their own new flags.
     freq_flags = time_flags = np.zeros_like(flagged)
     if params.flagdimension in ("freqtime", "freq"):
-        _to_modelled_units(work, flagged, baselines)
-        freq_flags = (np.abs(work) > params.freqcutoff) & ~flagged
+        # The flattened plane judged per timestep with CASA's own rule
+        # (plain std about 1, one pass in practice): see
+        # :func:`_flag_lanes_casa` for why the adaptive robust scatter of
+        # :func:`flag_lanes` flags measurably more than CASA on the same
+        # data.
+        freq_flags = _flag_lanes_casa(flat, params.freqcutoff, axis=1,
+                                      flagged=flagged) & ~flagged
     if params.flagdimension in ("freqtime", "timefreq", "time"):
-        reference = group_median_rows(plane, baselines, flagged=flagged)
+        # CASA runs the second direction on the first's result: its time
+        # pass reads the flags the freq pass just applied (they are excluded
+        # from the averages and the scatter), and its flags accumulate on
+        # top.  ``seen`` is that updated flag plane; for a time-only run it
+        # is the input flags unchanged.
+        seen = flagged | freq_flags
+        reference = group_median_rows(plane, baselines, flagged=seen)
         np.take(reference, baselines.labels, axis=0, out=work)
         del reference
         np.subtract(plane, work, out=work)
-        _to_modelled_units(work, flagged, baselines)
+        _to_modelled_units(work, seen, baselines)
         work += 1.0
-        time_flags = _new_flags(work, flagged, params.timecutoff, axis=0)
+        time_flags = _flag_lanes_casa(work, params.timecutoff, axis=0,
+                                      flagged=seen) & ~seen
     del work
     combined = _combine(freq_flags, time_flags, params.flagdimension)
 

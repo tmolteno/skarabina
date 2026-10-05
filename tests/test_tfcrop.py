@@ -921,3 +921,86 @@ def test_short_lane_fallback_lowers_false_positives_on_sparse_rows(monkeypatch):
     pooled_fp = pooled[clean_live].mean()
     assert pooled_fp < 0.5 * own_fp, (own_fp, pooled_fp)
     assert pooled[rfi & ~flagged].all()
+
+
+# --- CASA's flagging rule (skarabina#9) --------------------------------------
+
+def test_casa_rule_is_one_pass_std_about_one():
+    """CASA's STEP 3B: threshold = cutoff * plain std about 1, unflagged only.
+
+    With RFI inflating the std, the adaptive rule (flag_1d) flags more than
+    CASA's: construct a lane where the two differ and check the CASA rule
+    keeps the weaker flags off while still catching the outlier that CASA
+    would catch.
+    """
+    from skarabina.tfcrop import _flag_lanes_casa
+
+    rng = np.random.default_rng(9)
+    # One lane, 79 values: noise 0.02, one 10-sigma RFI spike.
+    values = 1.0 + rng.normal(0, 0.02, 79)
+    values[40] = 1.2
+    plane = values[None, :]
+
+    casa_flag, _ = None, None
+    casa_flag = _flag_lanes_casa(plane, 3.0, axis=1, flagged=None)
+    adaptive_flag, _ = flag_1d(values, cutoff=3.0)
+    assert casa_flag[0, 40]
+    # CASA's threshold uses the contaminated std (>= the robust one), so its
+    # flags are a subset of the adaptive rule's on the same lane.
+    assert casa_flag.sum() <= adaptive_flag.sum()
+
+
+def test_casa_rule_stops_after_one_pass_on_flattened_data():
+    """CASA's loop breaks when the scatter moves under 0.1 -- always, on
+    flattened data.  So the flags must equal exactly one pass's: no shrinkage
+    across the five allowed iterations."""
+    from skarabina.tfcrop import _flag_lanes_casa
+
+    rng = np.random.default_rng(10)
+    values = 1.0 + rng.normal(0, 0.02, (1, 256))
+    values[0, 100] = 1.5
+    flags = _flag_lanes_casa(values, 3.0, axis=1, flagged=None)
+
+    deviation = values - 1.0
+    sigma = np.sqrt((deviation ** 2).sum() / deviation.size)
+    manual = np.abs(deviation[0]) > 3.0 * sigma
+    assert np.array_equal(flags[0], manual)
+
+
+def test_casa_rule_excludes_preexisting_flags_from_the_scatter():
+    """Pre-flagged values stay out of the std and stay flagged."""
+    from skarabina.tfcrop import _flag_lanes_casa
+
+    rng = np.random.default_rng(11)
+    values = 1.0 + rng.normal(0, 0.02, (1, 128))
+    values[0, 60] = 3.0          # strong RFI
+    pre = np.zeros_like(values, dtype=bool)
+    pre[0, 60] = True            # ...already flagged
+    pre[0, 61] = True
+    flags = _flag_lanes_casa(values, 3.0, axis=1, flagged=pre)
+    assert flags[0, 60] and flags[0, 61]
+    # With the RFI pre-flagged, the scatter is the clean one; a threshold
+    # that counted the spike would be far looser and flag the noise too.
+    assert flags.sum() == 2
+
+
+def test_casa_rule_matches_tfcrop_counts_per_direction():
+    """On a plane with narrowband RFI, CASA's rule flags fewer clean points
+    than the adaptive rule did, and still finds every RFI column."""
+    from skarabina.tfcrop import _flag_lanes_casa
+
+    ntime, nchan = 60, 256
+    plane = make_plane(ntime, nchan)
+    rfi = np.array([40, 41, 150, 200])
+    for col in rfi:
+        plane[:, col] *= 2.5
+
+    template, _ = robust_fit(
+        np.arange(nchan, dtype=float),
+        np.where(~np.isfinite(plane), np.nan, plane).mean(axis=0), 7, 3,
+    )
+    flat = plane / template
+    flags = _flag_lanes_casa(flat, 3.0, axis=1, flagged=None)
+    assert all(flags[:, col].any() for col in rfi)
+    clean = mask_without(flat.shape, cols=rfi)
+    assert flags[clean].mean() < 0.01

@@ -150,15 +150,23 @@ def _rates(flag, pre, rfi):
 
 
 def test_tfcrop_does_not_flag_baselines_for_their_level():
-    """One bandpass for the whole chunk flags every baseline brighter or
-    fainter than average; a fit per baseline flags the RFI and little else."""
+    """One bandpass for the whole chunk cannot judge interleaved baselines.
+
+    Under CASA's flagging rule (skarabina#9) the failure mode is
+    under-flagging rather than the over-flagging the adaptive rule showed:
+    each baseline's level offset inflates the plain std-about-1 until the
+    threshold absorbs both it and the RFI, so the mixed path misses most of
+    the bursts.  A fit per baseline restores the contrast and flags the RFI
+    and little else."""
     vis, pre, rfi, a1, a2 = interleaved()
     amplitude = np.abs(vis).astype(float)
     mixed, _ = tfcrop_plane(amplitude, TFCropParams(), pre)
     aware, _ = tfcrop_plane(amplitude, TFCropParams(), pre, baselines=Baselines(a1, a2))
-    mixed_fp, _ = _rates(mixed, pre, rfi)
+    mixed_fp, mixed_recall = _rates(mixed, pre, rfi)
     aware_fp, aware_recall = _rates(aware, pre, rfi)
-    assert mixed_fp > 0.2, "the interleaved chunk no longer shows the problem"
+    assert aware_recall > mixed_recall + 0.2, (
+        "the interleaved chunk no longer shows the problem"
+    )
     assert aware_fp < 0.01
     assert aware_recall > 0.6
 
