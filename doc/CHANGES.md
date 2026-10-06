@@ -3,6 +3,27 @@
 
 ## [Unreleased]
 
+## [1.0.18]
+
+### Added
+
+- **Flagging calibration tables** -- the same `--flag` list against a
+  CPARAM caltable, which is what the pipeline's last four `flagdata`
+  calls do (`flagdata(vis=multi.B0, mode='tfcrop', datacolumn='CPARAM')`):
+  `skarabina --ms multi.B0 --flag tfcrop --apply --clobber`.  No dask --
+  the table is read once with casacore (a caltable is small) and the
+  verbs run on numpy planes through the same functions the MS path uses,
+  grouped per antenna; both cell orientations are read ((chan, corr) as
+  the bandpass writer stores, (corr, chan) as gain tables do); rows out
+  of time order are sorted and written back in place.  `tfcrop`,
+  `rflag` and `nan`/`clip` are supported, `--apply` writes the FLAG
+  column, `--summary` reports per antenna; everything an MS has that a
+  caltable has not is refused with the reason (skarabina/caltable.py,
+  doc/NEW_FLAGGING.md §11).  Measured on the pipeline's bandpass tables:
+  use `tfcrop` on solutions -- CASA's rflag step is a no-op there and
+  skarabina's rflag (real/imag, neighbour-channel) is the RFI shape, not
+  the solutions' (the §11 note has the numbers).
+
 ## [1.0.17]
 
 ### Changed
