@@ -31,18 +31,23 @@ SUBTABLES = ("ANTENNA", "SPECTRAL_WINDOW", "POLARIZATION", "FIELD")
 
 
 def make_synthetic_caltable(path, nrow=8, nchan=4, ncorr=2, nant=4,
-                            flagged=0, field_names=("BPCAL",)):
+                            flagged=0, field_names=("BPCAL",),
+                            chan_first=False):
     """Create a caltable at ``path`` and return the path.
 
     ``flagged`` rows are flagged in their entirety; the remaining rows are
     unflagged.  ``ncorr`` polarizations sit on one spectral window of
     ``nchan`` channels and ``nant`` antennas (ANTENNA1 cycles, ANTENNA2 is
-    -1, as CASA writes for single-antenna gain solutions).
+    -1, as CASA writes for single-antenna gain solutions).  ``chan_first``
+    chooses the CPARAM/FLAG cell orientation: the default (corr, chan) is
+    what gain tables carry, while CASA's bandpass writer stores (chan,
+    corr) -- the flagger must read both.
     """
     path = str(path)
     shutil.rmtree(path, ignore_errors=True)
     os.makedirs(path)
 
+    cell_shape = [nchan, ncorr] if chan_first else [ncorr, nchan]
     columns = [
         makescacoldesc("TIME", 0.0, keywords={"UNIT": "s"}),
         makescacoldesc("INTERVAL", 0.0),
@@ -50,8 +55,8 @@ def make_synthetic_caltable(path, nrow=8, nchan=4, ncorr=2, nant=4,
         makescacoldesc("SPECTRAL_WINDOW_ID", 0),
         makescacoldesc("ANTENNA1", 0),
         makescacoldesc("ANTENNA2", 0),
-        makearrcoldesc("CPARAM", 0j, ndim=2, shape=[ncorr, nchan]),
-        makearrcoldesc("FLAG", False, ndim=2, shape=[ncorr, nchan]),
+        makearrcoldesc("CPARAM", 0j, ndim=2, shape=cell_shape),
+        makearrcoldesc("FLAG", False, ndim=2, shape=cell_shape),
         makearrcoldesc("SNR", 0.0, ndim=1, shape=[ncorr]),
         makearrcoldesc("WEIGHT", 0.0, ndim=1, shape=[ncorr]),
     ]
@@ -68,9 +73,13 @@ def make_synthetic_caltable(path, nrow=8, nchan=4, ncorr=2, nant=4,
     tab.putcol("SPECTRAL_WINDOW_ID", np.zeros(nrow, dtype=np.int32))
     tab.putcol("ANTENNA1", (np.arange(nrow, dtype=np.int32)) % nant)
     tab.putcol("ANTENNA2", np.full(nrow, -1, dtype=np.int32))
+    if chan_first:
+        cparam = np.swapaxes(cparam, 1, 2)
     tab.putcol("CPARAM", cparam)
     flag = np.zeros((nrow, ncorr, nchan), dtype=bool)
     flag[:flagged] = True
+    if chan_first:
+        flag = np.swapaxes(flag, 1, 2)
     tab.putcol("FLAG", flag)
     tab.putcol("SNR", np.full((nrow, ncorr), 5.0, dtype=np.float32))
     tab.putcol("WEIGHT", np.ones((nrow, ncorr), dtype=np.float32))

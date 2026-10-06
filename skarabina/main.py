@@ -7,9 +7,55 @@ from types import SimpleNamespace
 import click
 from angle_parser import parse_angle
 
-from skarabina import barber, dask_ms, flag_ops, memory
+from skarabina import barber, caltable, dask_ms, flag_ops, memory
 
 logger = logging.getLogger(__name__)
+
+
+def _run_caltable(opts, ops):
+    """A --flag run against a calibration table (skarabina.caltable).
+
+    The same dispatcher, none of the measurement set's options: every
+    MS-only option is rejected here, before anything runs, so a mis-aimed
+    command fails on the option rather than partway through a run.
+    """
+    ms_only = []
+    if opts.scan is not None:
+        ms_only.append("--scan")
+    if opts.field is not None:
+        ms_only.append("--field")
+    if opts.data_from.upper() != "DATA":
+        ms_only.append("--data-from")
+    for flag_name, opt in (("--frequency-average-factor",
+                            opts.frequency_average_factor),
+                           ("--time-average-factor",
+                            opts.time_average_factor)):
+        if opt is not None and opt > 1:
+            ms_only.append(flag_name)
+    if opts.optimize:
+        ms_only.append("--optimize")
+    if opts.barber:
+        ms_only.append("--barber")
+    if opts.msout:
+        ms_only.append("--msout")
+    if ms_only:
+        raise RuntimeError(
+            f"{opts.ms}: a calibration table is flagged in place (--apply);"
+            f" not supported: {', '.join(ms_only)}"
+        )
+    ct = caltable.CalTable(opts.ms)
+    ct.set_data_column(opts.data_column)
+    if not ops:
+        print("No flagging operations requested (--flag was not given)")
+    flag_ops.run(ct, ops, flush=False)
+    if opts.summary:
+        ct.summary()
+    if opts.apply:
+        ct.update_ms(opts.ms, opts.clobber)
+    elif ops:
+        print("Nothing written: pass --apply to update the table's FLAG"
+              " column")
+    ct.flush_reports()
 
 
 def _write_mode(opts):
@@ -275,6 +321,14 @@ def main(**kw):
     for path in opts.flag_files:
         flag_specs.extend(flag_ops.load_file(path))
     ops = flag_ops.parse(flag_specs)
+
+    # A calibration table takes the CalTable path: the same --flag list
+    # through the same dispatcher, but no dask and none of the measurement
+    # set's options (see skarabina.caltable and _run_caltable).  This is
+    # before _row_chunk, whose memory plan reads the MS via dask-ms.
+    if caltable.table_kind(opts.ms) == "cal":
+        _run_caltable(opts, ops)
+        return
 
     ms = dask_ms.DaskMS(opts.ms, row_chunk=_row_chunk(opts, ops))
     fov_str = opts.field_of_view if opts.field_of_view is not None else "1.0 deg"

@@ -375,3 +375,15 @@ flagged data left out), and the format comes from the `plotfile` extension:
 
 See [Plotting](PLOTTING.md) for the axes, the selections, and the
 `skarabina-plotms` stimela cab that replaces `casa.plotms` in a pipeline.
+
+### Flagging a calibration table
+
+The same `--flag` list against a caltable flags its solutions
+(`skarabina/caltable.py`, doc/NEW_FLAGGING.md §11): the pipeline's
+`flagdata(vis=multi.B0, mode='tfcrop', datacolumn='CPARAM')` becomes
+
+    skarabina --ms multi.B0 --flag "rflag, tfcrop" --apply --clobber
+
+CPARAM tables only; `tfcrop`, `rflag`, `nan` and `clip`; the write is the
+table's FLAG column, in place.  The measurement-set options (scans, fields,
+averaging, `--msout`, flag versions) do not exist here and are refused.

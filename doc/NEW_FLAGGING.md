@@ -891,3 +891,44 @@ false-positive bound.
   spike;
 - pre-existing flags are preserved, counted, and excluded from the statistics;
 - the band and time axes are not transposed, on a cube spanning several blocks.
+
+## 11. Flagging a calibration table
+
+`flagdata` flags caltables as well as measurement sets -- meerkat_imaging's
+stage 1 rejects bad bandpass solutions with
+`flagdata(vis=multi.B0, mode='tfcrop', datacolumn='CPARAM')` -- so the same
+`--flag` list runs against a calibration table:
+
+    skarabina --ms multi.B0 --flag "rflag, tfcrop" --apply --clobber
+
+`skarabina/caltable.py` implements this without dask: a caltable is small
+(the fast profile's `multi.B0` is 183 rows x 79 channels x 2 correlations),
+so the table is read once with casacore and the verbs run on plain numpy
+planes through the same functions the MS path uses.  The rows are one
+antenna's solutions in time order, interleaved across antennas exactly as
+an MS chunk interleaves baselines, so the per-antenna grouping applies
+unchanged, and the MS path's chunk-thresholds deviation mostly vanishes --
+the whole table *is* one chunk.
+
+Supported, on CPARAM tables (complex gain solutions):
+
+* the `tfcrop`, `rflag` verbs, with CASA's parameter names;
+* the `nan` and `clip` pair, on the CPARAM amplitudes;
+* `--apply --clobber` (the write is the table's FLAG column, in place) and
+  `--summary` (overall and per-antenna fractions).
+
+Both cell orientations are read: CASA's bandpass writer stores (chan, corr)
+cells while gain tables carry (corr, chan) -- the axes are read from the
+SPECTRAL_WINDOW and POLARIZATION subtables rather than assumed.  A table
+whose rows are out of time order is sorted for the verbs and written back
+in place.
+
+Rejected, each with the reason: `save:`/`restore:` (the flagmanager is an
+MS structure), `autos`, `uv-above`/`uv-below` (no UVW), `spectral-window`,
+`extend` and the neural-flagger verbs (dask-graph or server paths not
+reimplemented for caltables), and every MS-only option -- `--scan`,
+`--field`, `--data-from`, the averaging factors, `--optimize`, `--barber`
+and `--msout` fail before anything runs.  `--data-column` accepts `DATA`
+(the default, meaning "the caltable's data") and `CPARAM`; the MS-only
+spellings are refused.  FPARAM/SPARAM tables (real-valued solutions) are
+refused outright: the flaggers judge the amplitude of a complex solution.
