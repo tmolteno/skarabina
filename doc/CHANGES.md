@@ -3,6 +3,23 @@
 
 ## [Unreleased]
 
+## [1.0.17]
+
+### Changed
+
+- **`tfcrop` matches CASA's flagging rule and direction order** (#9, #11).
+  CASA's actual implementation (casa5 `FlagAgentTimeFreqCrop.cc`) thresholds
+  each timestep's flattened spectrum on the plain standard deviation about 1
+  -- RFI included -- and runs exactly one pass (its five-iteration loop
+  stops when the scatter moves by under 0.1, which flattened data always
+  is on the first pass); `freqtime` runs the time direction on the
+  frequency direction's flags.  skarabina's adaptive robust MAD and
+  independent-and-union directions measured 2.9x CASA's `flagdata` count
+  on the skarabina#9 bench; with CASA's rule and order (`_flag_lanes_casa`,
+  both code paths) tfcrop lands at 0.94x, and the chained calibrator
+  sequence at 1.31x (rflag 1.44x and extend 1.21x unchanged, see #9).
+  Doc 9.4.5 rewritten; 9.4.8 records the rule change with the numbers.
+
 ## [1.0.16]
 
 ### Added
