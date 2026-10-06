@@ -212,13 +212,17 @@ class CalTable:
 
     def flag_tfcrop(self, params):
         """:meth:`DaskMS.flag_tfcrop` on the caltable's planes."""
-        self._run(_tfcrop_block, params, "flag_tfcrop")
+        # tfcrop judges the amplitude plane, exactly as the MS path's
+        # block preparation computes it; rflag gets the complex data.
+        self._load()
+        self._run(_tfcrop_block, params, "flag_tfcrop", np.abs(self._data))
 
     def flag_rflag(self, params):
         """:meth:`DaskMS.flag_rflag` on the caltable's planes."""
-        self._run(_rflag_block, params, "flag_rflag")
+        self._load()
+        self._run(_rflag_block, params, "flag_rflag", self._data)
 
-    def _run(self, block_function, params, label):
+    def _run(self, block_function, params, label, data):
         """Run one verb over the table in row chunks, flags accumulated.
 
         The chunk is a slice of rows -- whole antennas at a time, since a
@@ -228,8 +232,7 @@ class CalTable:
         the MS path's per-chunk thresholds here behave like CASA's
         selection-wide ones.
         """
-        self._load()
-        data, flag = self._data, self._flag
+        flag = self._flag
         pre = flag.copy()
         total = flag.size
         nrow = data.shape[0]

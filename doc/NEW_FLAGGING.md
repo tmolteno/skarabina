@@ -910,6 +910,22 @@ an MS chunk interleaves baselines, so the per-antenna grouping applies
 unchanged, and the MS path's chunk-thresholds deviation mostly vanishes --
 the whole table *is* one chunk.
 
+Measured on the pipeline's bandpass tables (the fast profile's
+`multi.B0`/`multi.B1`, from the same initial flags): CASA's tfcrop adds
+0.98% / 0.89% and its rflag 0.04% / ~0 -- on solutions the rflag step is a
+no-op.  skarabina's tfcrop adds 2.24% / 2.07% (2.3x, Jaccard 0.03): both
+tools flag template fine structure rather than amplitude defects (the
+gross ones are already flagged before the verbs run), and skarabina's
+sharper robust fit follows the band more closely than CASA's
+boxcar-smoothed one, leaving more band ripple for the 3-sigma cut.  The
+time direction is inert on a bandpass solve (three solution times per
+antenna).  skarabina's `rflag` measures real/imag departures with a
+neighbour-channel reference -- the right shape for visibilities with RFI,
+the wrong one for a smooth complex gain: on the same tables it added
+4.6-5.3% of phase/fine-structure.  **The pipeline's caltable steps use
+`tfcrop` (plus `nan`/`clip` when wanted) and not `rflag`**; the verb is
+not refused, but it is not the tool for solutions.
+
 Supported, on CPARAM tables (complex gain solutions):
 
 * the `tfcrop`, `rflag` verbs, with CASA's parameter names;
