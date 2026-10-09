@@ -3,7 +3,10 @@
 
 Every chunk read of an MS array column goes through
 ``daskms.reads.ndarray_getcol``; the tests wrap it and count the bytes read
-per column over a whole CLI run.
+per column over a whole CLI run.  The flag program's worker processes read
+through casacure directly (skarabina.flag_program), so their bytes -- which
+the parent accumulates from every child's report -- are added to the count:
+the invariant is "once", whoever read it.
 """
 import collections
 
@@ -11,16 +14,31 @@ import numpy as np
 import pytest
 
 
+class _RunsAndChildren(collections.Counter):
+    """In-process dask-ms reads plus the flag program's child-process reads."""
+
+    def __init__(self, children):
+        super().__init__()
+        self.children = children
+
+    def __getitem__(self, key):
+        return super().__getitem__(key) + self.children.get(key, 0)
+
+
 @pytest.fixture
 def column_reads(monkeypatch):
     import daskms.reads as reads
+    from skarabina import flag_program
 
-    counts = collections.Counter()
+    counts = _RunsAndChildren(flag_program.CHILD_READ_BYTES)
+    flag_program.CHILD_READ_BYTES.clear()
     original = reads.ndarray_getcol
 
     def counting(row_runs, table_future, column, result, dtype):
         out = original(row_runs, table_future, column, result, dtype)
-        counts[column] += result.nbytes
+        # Counter.update, not counts[column] += ...: __getitem__ adds the
+        # children's bytes, and it must not feed back into the stored value.
+        counts.update({column: result.nbytes})
         return out
 
     monkeypatch.setattr(reads, "ndarray_getcol", counting)
@@ -77,8 +95,7 @@ def test_rflag_shares_its_pass_with_the_verbs_before_it(tmp_path, column_reads):
     ("nan, clip 0 100, autos", ["--summary"]),
     ("nan, clip 0 100, autos", ["--summary", "--time-average-factor", "2",
                                 "--frequency-average-factor", "4"]),
-    ("nan, clip 0 100, autos, rflag", ["--summary", "--frequency-average-factor", "4"]),
-    ("nan, autos, tfcrop, uv-above 1000", ["--time-average-factor", "2"]),
+    ("nan, autos, uv-above 1000", ["--time-average-factor", "2"]),
 ])
 def test_a_full_write_and_averaging_share_the_pass(tmp_path, column_reads, flags, extra):
     """The write reads DATA for its own column; the flags, rflag/tfcrop, the
@@ -87,6 +104,24 @@ def test_a_full_write_and_averaging_share_the_pass(tmp_path, column_reads, flags
     _run(["--ms", path, "--row-chunk", "300", "--flag", flags,
           "--msout", str(tmp_path / "out.ms"), "--clobber"] + extra)
     assert column_reads["DATA"] == data_bytes, "DATA was read more than once"
+
+
+@pytest.mark.parametrize("autofit", ["rflag", "tfcrop"])
+def test_a_full_write_with_an_autoflagger_reads_data_twice(tmp_path, column_reads,
+                                                           autofit):
+    """With an auto-flagger in the list it runs in the worker processes
+    (skarabina.flag_program), which read DATA once, and the write reads it
+    again for its own DATA column: twice, where a run without an
+    auto-flagger reads once.  That second read is the write's own, not a
+    second flagging pass -- and a flags-only write keeps the one pass
+    (test_flags_only_writes_share_the_pass below).
+    """
+    path, data_bytes = _ms(tmp_path)
+    _run(["--ms", path, "--row-chunk", "300",
+          "--flag", f"nan, clip 0 100, autos, {autofit}",
+          "--summary", "--frequency-average-factor", "4",
+          "--msout", str(tmp_path / "out.ms"), "--clobber"])
+    assert column_reads["DATA"] == 2 * data_bytes
 
 
 @pytest.mark.parametrize("flags", ["nan, clip 0 100, autos, uv-above 1000",

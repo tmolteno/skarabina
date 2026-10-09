@@ -7,6 +7,7 @@ import sys
 import tempfile
 import weakref
 from contextlib import contextmanager
+from functools import partial
 
 import dask
 import dask.array as da
@@ -25,6 +26,7 @@ from dask.diagnostics import ProgressBar
 from daskms import xds_from_ms, xds_to_table  # noqa: E402
 
 from skarabina import flag_versions
+from skarabina import flag_program
 from skarabina.baselines import Baselines
 from skarabina.extend import grow_flags, time_neighbours
 from skarabina.nn_flagger import union_flags
@@ -580,9 +582,13 @@ class DaskMS:
             self.chan_axis_hz = {}
         self.chan_axis_hz["RESOLUTION"] = value
 
-    def __init__(self, ms_name, row_chunk=ROW_CHUNK_ROWS):
+    def __init__(self, ms_name, row_chunk=ROW_CHUNK_ROWS, workers=None):
         self.name = ms_name
         self.row_chunk = max(1, int(row_chunk))
+        #: dask thread count the run plans for (see skarabina.memory), used
+        #: to size the flag program's worker pool to the same parallelism.
+        self.workers = workers if workers and workers > 0 \
+            else (os.cpu_count() or 1)
         print(f"Getting Data from MS file: {self.name}")
         print(f"Row chunk: {self.row_chunk} rows")
 
@@ -656,6 +662,16 @@ class DaskMS:
         #         print(f"Failed to open {s} as a subtable")
         #         pass
         self.changed = {}
+
+        # The flag program (skarabina.flag_program): the verbs that are a
+        # pure function of their block record themselves into it, and the
+        # auto-flaggers run it in worker processes instead of dask threads.
+        # None = not tried yet; False = unavailable (no pool / one block);
+        # a FlagProgram = recording.  _program_base is where a *new* program
+        # would start: "input", ("version", name) after a restore that ran
+        # outside any program, or a spent FlagProgram after a flush.
+        self._program = None
+        self._program_base = "input"
 
         # Load the channel axis from the SPECTRAL_WINDOW subtable: the centre
         # frequencies, plus every per-channel width column (CHAN_WIDTH,
@@ -919,6 +935,17 @@ class DaskMS:
     #: next pass over the data (see :meth:`_report`).
     defer_reports = False
 
+    #: The flag program (skarabina.flag_program): None = not tried yet,
+    #: False = unavailable (no pool, one block), a FlagProgram = recording.
+    #: Class-level defaults keep instances built via __new__ (the tests'
+    #: synthetic doubles) on the lazy path.
+    _program = None
+    #: Where a *new* program would start: "input", ("version", name) after a
+    #: restore outside any program, or a spent FlagProgram after a flush.
+    _program_base = "input"
+    #: dask thread count the run plans for; 0 = unknown, stay lazy.
+    workers = 0
+
     #: Set by a pass that *reduces* the dataset -- ``optimize()``,
     #: ``time_average()``, ``frequency_average()`` -- to a description of what
     #: it removed, and None while the dataset still matches the input's shape.
@@ -931,7 +958,100 @@ class DaskMS:
     #: exactly what ``--apply`` should do for one.
     shape_reduction = None
 
-    def _report(self, reductions, report):
+    # ------------------------------------------------------------------
+    # the flag program (see skarabina.flag_program)
+    # ------------------------------------------------------------------
+
+    def _program_for_recording(self):
+        """The program to record a replayable verb into, or None.
+
+        Created on the first verb that could record: the pool is prepared
+        here when the CLI did not already fork it (the CLI's early fork is
+        the cleaner one -- before any table is open -- so main() calls
+        :func:`flag_program.prepare_pool` first).  A program is worth
+        recording only if an auto-flagger could join it: at least two row
+        blocks, at least two workers, a fork start method and the
+        ``SKARABINA_FLAG_POOL`` switch on.  False caches the failure.
+        """
+        if self._program is not None:
+            return self._program or None
+        # FLAG is a dask array on the real path; the tests' synthetic doubles
+        # sometimes carry numpy arrays, which have no chunks to chunk by.
+        chunks = getattr(self.ds.FLAG.data, "chunks", ((self.ds.FLAG.shape[0],),))[0]
+        base = self._program_base
+        usable_base = base == "input" or (
+            isinstance(base, flag_program.FlagProgram) and base.shm is not None
+        ) or (isinstance(base, tuple) and base[0] == "version")
+        if len(chunks) < 2 or self.workers < 2 \
+                or not hasattr(os, "fork") \
+                or not flag_program.pool_enabled_by_env() \
+                or not usable_base:
+            self._program = False
+            return None
+        if flag_program.prepare_pool(self.workers) is None:
+            self._program = False
+            return None
+        rowids = np.asarray(self.ds.ROWID.data) if "ROWID" in self.ds \
+            else np.arange(self.ds.FLAG.shape[0])
+        self._program = flag_program.FlagProgram(
+            self.name, chunks, self.ds.FLAG.shape,
+            self._DATA_SOURCES[self.data_column], rowids, self.workers,
+            scope=self.field_scope,
+        )
+        if base != "input":
+            self._program.base = base
+        return self._program
+
+    def _active_program(self):
+        """The program while it can still be recorded into, or None."""
+        program = self._program
+        return program if isinstance(program, flag_program.FlagProgram) \
+            and program.recordable() else None
+
+    def _record_layer(self, mask):
+        """Record an elementwise mask layer, if a program is recordable.
+
+        The lazy FLAG graph is built by the verb as always; the recording
+        only matters if an auto-flagger later joins the program, in which
+        case the child replays the layer instead of the parent evaluating
+        the graph.  Returns the recorded :class:`flag_program.Layer`, for
+        the verb to hand to :meth:`_report` as the report's settlement
+        holder -- or None when nothing was recorded.
+        """
+        program = self._program_for_recording()
+        if program is None:
+            return None
+        return program.append_layer(mask)
+
+    def _poison_program(self, reason):
+        """A verb the program cannot replay ran: record nothing further."""
+        program = self._program
+        if isinstance(program, flag_program.FlagProgram):
+            program.poisoned = True
+            logger.debug("flag program stops recording: %s", reason)
+
+    def _flush_program(self):
+        """Run the flag program, if one with an auto-flagger is pending.
+
+        Idempotent, and called by every point that starts the run's final
+        pass (the writes, ``materialise_flags``, ``flush_reports``): the
+        children read the visibility column once, the reports print, and
+        FLAG -- already the program's lazy array -- resolves from the shared
+        buffer.  Afterwards a new program, should another verb record one,
+        starts from this one's result.
+        """
+        program = self._program
+        if not isinstance(program, flag_program.FlagProgram) \
+                or not program.has_stage():
+            return
+        program.run()
+        # FLAG is the program's own array: blocks unpack from the shared
+        # buffer, so it is as materialised as the spill ever made it.
+        self._materialised_flags = self.ds.FLAG.data
+        self._program_base = program
+        self._program = None
+
+    def _report(self, reductions, report, layer=None):
         """Compute ``reductions`` and call ``report(*values)`` -- now, or later.
 
         Printing a step's counts needs a pass over what the step depends on,
@@ -941,27 +1061,40 @@ class DaskMS:
         that materialises the flags (:meth:`materialise_flags`), or
         :meth:`flush_reports` -- computes them in the same ``dask.compute``,
         where dask shares the reads between them.  Reports keep their order.
+
+        ``layer`` is the :class:`flag_program.Layer` the verb recorded for
+        the same counts: when the flag program runs, it settles the layer
+        from the children's sums and prints the line itself, and the lazy
+        reduction queued here is dropped instead of computed -- computing it
+        would be a second pass over DATA.
         """
         if not self.defer_reports:
             report(*dask.compute(*reductions))
             return
         if "_pending" not in self.__dict__:
             self._pending = []
-        self._pending.append((list(reductions), report))
+        self._pending.append((list(reductions), report, layer))
 
     def _take_pending(self):
-        """The queued reductions (flat) and a callback that prints them."""
-        pending = self.__dict__.pop("_pending", [])
-        flat = [r for reductions, _ in pending for r in reductions]
+        """The queued reductions (flat) and a callback that prints them.
+
+        Entries whose layer the flag program settled are left out: their
+        line has already printed, and their reductions would read the data
+        column again.
+        """
+        pending = [entry for entry in self.__dict__.pop("_pending", [])
+                   if not (entry[2] is not None and entry[2].settled)]
+        flat = [r for reductions, _, _ in pending for r in reductions]
 
         def report(values):
             values = iter(values)
-            for reductions, callback in pending:
+            for reductions, callback, _ in pending:
                 callback(*[next(values) for _ in reductions])
         return flat, report
 
     def flush_reports(self):
         """Compute and print every queued report, in one pass."""
+        self._flush_program()
         flat, report = self._take_pending()
         if flat:
             report(dask.compute(*flat))
@@ -983,6 +1116,7 @@ class DaskMS:
         anything: the current FLAG already *is* the spill, so only queued
         reports can be left, and those are computed on their own.
         """
+        self._flush_program()
         flag = self.ds.FLAG.data
         if flag is getattr(self, "_materialised_flags", None):
             self.flush_reports()
@@ -1045,6 +1179,9 @@ class DaskMS:
         new_flags = da.logical_or(flags, auto_flags)
         new_flag_row = da.logical_or(self.ds.FLAG_ROW.data, auto_row)
 
+        # The program's replay of the FLAG half (FLAG_ROW stays lazy: it is
+        # measured over the antenna columns, which no child reads DATA for).
+        self._record_layer(partial(flag_program._mask_autos))
         self.ds["FLAG"].data = new_flags
         self.ds["FLAG_ROW"] = (self.ds.FLAG_ROW.dims, new_flag_row)
         self.changed["FLAG"] = True
@@ -1138,6 +1275,17 @@ class DaskMS:
         print("%s: %s" % (label, _parameter_summary(params)))
 
         shape = self.ds.DATA.shape
+
+        # The flag program: this verb's blocks run in worker processes rather
+        # than dask threads (see skarabina.flag_program -- the GIL caps the
+        # threaded blocks at a couple of cores).  Everything the verb needs --
+        # the cheap layers recorded before it, the block function, the scope --
+        # is replayable per block, so this branch needs no graph at all.
+        program = self._program_for_recording()
+        if program is not None and program.recordable():
+            self._record_autofit(program, params, block_function, label, shape)
+            return
+
         n_time, n_chan, n_corr = shape
         # The cube keeps the MS's own axis order, (time, chan, corr), and only
         # the *time* axis is chunked: a plane needs the whole band and every
@@ -1236,6 +1384,44 @@ class DaskMS:
             % (label, new_count, total, newly,
                100.0 * newly / total if total else 0.0)
         )
+
+    def _record_autofit(self, program, params, block_function, label, shape):
+        """Record one auto-flagger as a stage of the flag program.
+
+        The same block function the lazy path runs is executed per block by
+        the program's children (skarabina.flag_program resolves it by kind),
+        on the same inputs: the visibilities, the flags as of this verb's
+        position in the list, the row columns and the field scope.  The
+        counts line prints when the program runs, from the children's sums.
+        """
+        kind = {
+            _rflag_block: "rflag",
+            _tfcrop_block: "tfcrop",
+            _tf_nn_block: "tf_nn",
+            _nn_flagger_block: "nn_flagger",
+        }[block_function]
+        if block_function in (_tf_nn_block, _nn_flagger_block):
+            rows_kind = "nn"
+        elif AUTOFIT_BASELINES and all(
+            name in self.ds.data_vars for name in ("ANTENNA1", "ANTENNA2")
+        ):
+            rows_kind = "baselines"
+        else:
+            rows_kind = "none"
+
+        total = int(np.prod(shape))
+
+        def report(new_count, newly):
+            print(
+                "%s: %d of %d visibilities flagged, %d newly (%.2f%% of all)"
+                % (label, new_count, total, newly,
+                   100.0 * newly / total if total else 0.0)
+            )
+        program.append_stage(
+            kind, params, block_function is _tfcrop_block, rows_kind, report
+        )
+        self.ds["FLAG"] = (self.ds.FLAG.dims, program.flags_array())
+        self.changed["FLAG"] = True
 
     def _defer_autofit(self, payload, existing, params, block_function,
                        row_columns, shape, label):
@@ -1431,6 +1617,7 @@ class DaskMS:
         # pass of its own; the per-entry counts factor to channels x rows x
         # corr from the two 1-D gates and are queued with the run's reports.
         entry_stats = []  # (idx, n_chan, n_ranges, row count, uv_info)
+        program_entries = []  # (chan_mask, uv_below, uv_above) per entry
         for idx, entry in enumerate(entries):
             spw_ranges = entry.get("spw", [])
             uv_below = entry.get("uv_below")
@@ -1468,6 +1655,13 @@ class DaskMS:
             # product a dask array.
             spw_flag = row_gate[:, np.newaxis, np.newaxis] & chan_mask[np.newaxis, :, np.newaxis]
             new_flags = da.logical_or(new_flags, spw_flag)
+            program_entries.append(
+                (chan_mask, uv_below, uv_above))
+
+        # One layer replaying every entry's contribution to FLAG (the
+        # per-entry count lines stay with the parent's UVW reductions).
+        self._record_layer(
+            partial(flag_program._mask_spectral, entries=program_entries))
 
         def report(*row_counts):
             for (idx, n_chan, n_ranges, _, uv_info), n_rows in zip(entry_stats, row_counts):
@@ -1530,6 +1724,10 @@ class DaskMS:
 
             if defer is not None:
                 # Collect for one shared evaluation; the caller owns the print.
+                # Its shared abs(DATA) subgraph belongs to this process, so
+                # an auto-flagger after it cannot replay it: stay lazy.
+                self._poison_program(
+                    "flag_data(defer=...) evaluates its masks in-process")
                 if "NAN" in operations:
                     defer[("nan",)] = abs_vis, nan_flag_mask
                 if "CLIP" in operations:
@@ -1538,25 +1736,42 @@ class DaskMS:
 
             total_v = int(np.prod(self.ds.FLAG.shape))
 
-            def report(n_nan_v, n_clip_v):
+            def nan_report(count):
                 if "NAN" in operations:
                     print(
                         "flag_data (NaN): flagged %d / %d visibilities (%.2f%%)"
-                        % (int(n_nan_v), total_v, 100.0 * int(n_nan_v) / total_v)
+                        % (int(count), total_v, 100.0 * int(count) / total_v)
                     )
+
+            def clip_report(count):
                 if "CLIP" in operations:
                     print(
                         "flag_data (clip [%s, %s]): flagged %d / %d visibilities (%.2f%%)"
                         % (
                             clip_min,
                             clip_max,
-                            int(n_clip_v),
+                            int(count),
                             total_v,
-                            100.0 * int(n_clip_v) / total_v,
+                            100.0 * int(count) / total_v,
                         )
                     )
-            # Queued with the other steps' reports when a run defers them.
-            self._report([da.asarray(n_nan), da.asarray(n_clip)], report)
+            # Queued with the other steps' reports when a run defers them;
+            # the recorded layers let the flag program settle these from the
+            # children's sums instead of a second pass over DATA.
+            nan_layer = clip_layer = None
+            if "NAN" in operations:
+                nan_layer = self._record_layer(
+                    partial(flag_program._mask_nan))
+                if nan_layer is not None:
+                    nan_layer.report = nan_report
+            if "CLIP" in operations:
+                clip_layer = self._record_layer(
+                    partial(flag_program._mask_clip, low=clip_min,
+                            high=clip_max))
+                if clip_layer is not None:
+                    clip_layer.report = clip_report
+            self._report([da.asarray(n_nan)], nan_report, layer=nan_layer)
+            self._report([da.asarray(n_clip)], clip_report, layer=clip_layer)
 
     def flag_extend(self, params):
         """Grow flags into their neighbours (CASA ``flagdata(mode='extend')``).
@@ -1605,6 +1820,11 @@ class DaskMS:
         # row chunks; every other variable (ROWID included) keeps FLAG's, and
         # the in-place write refuses a mismatch ("ROWID shape and/or chunking
         # does not match that of FLAG").
+        #
+        # The growth crosses rows (per-baseline groups, neighbour indices),
+        # so a block cannot replay it: an auto-flagger after this verb runs
+        # on the lazy path.
+        self._poison_program("extend grows flags across rows")
         new_flag = new_flag.rechunk(flag.chunks)
         self.ds["FLAG"].data = new_flag
         self.changed["FLAG"] = True
@@ -2324,7 +2544,20 @@ class DaskMS:
                     int(flag_row.sum()),
                 )
             )
-        self._report([flag.sum()], report)
+        # A restore restarts whatever is recorded: the program's base becomes
+        # the version, discarding the ops before it (their reports' holders
+        # are left unsettled, so their queued reductions still print).  With
+        # no program to join, the run's next one starts from the version.
+        holder = None
+        program = self._program_for_recording()
+        if program is not None:
+            holder = flag_program.Layer(None, report)
+            program.append_reset(versionname, holder)
+            self.ds["FLAG"].data = program.flags_array()
+            self._refresh_cached_columns()
+        else:
+            self._program_base = ("version", versionname)
+        self._report([flag.sum()], report, layer=holder)
 
     def list_flag_versions(self):
         """The saved flag versions of this MS as ``[(name, comment), ...]``."""
@@ -2676,6 +2909,9 @@ class DaskMS:
 
         all_tables = list(ds_to_write.keys())
         print(f"Writing {all_tables} to {name}")
+        # The program (if any) runs before the write's graph is built: the
+        # children read the visibility column while this process still can.
+        self._flush_program()
 
         if os.path.exists(name):
             if not clobber:
@@ -2952,6 +3188,7 @@ class DaskMS:
         queued, so what they share -- the reads of DATA and FLAG behind the
         lazy flags -- is read once.
         """
+        self._flush_program()
         writes = xds_to_table(ds, name, columns)
         pending, report = self._take_pending()
         with ProgressBar():
@@ -2972,7 +3209,16 @@ class DaskMS:
         src = table(self.name, ack=False)
         try:
             src_keywords = set(src.getkeywords())
-            missing = src_keywords - set(table(name, ack=False).getkeywords())
+            # Both handles closed before anything else: an inline
+            # `table(name).getkeywords()` here leaked the whole handle -- the
+            # table directory fd, its lock and every data file's -- on every
+            # write, and a test suite of CLI runs died at its fd limit
+            # (EMFILE) around the two-thirds mark.
+            dest_read = table(name, ack=False)
+            try:
+                missing = src_keywords - set(dest_read.getkeywords())
+            finally:
+                dest_read.close()
             if not missing:
                 return
             dest = table(name, readonly=False)

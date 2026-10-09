@@ -164,16 +164,33 @@ options control the concurrent-chunk working set (mirroring tricolour's
 - A run reads DATA once: every verb's statistics are queued (`DaskMS._report`)
   and computed in the run's single pass -- the full write when there is one
   (averaging and the summary included), else `materialise_flags`, else
-  `flush_reports`.  rflag/tfcrop stay lazy inside a run.  Keep new verbs on
-  `_report`; `tests/test_single_pass.py` counts DATA reads and fails on a
-  second pass.
+  `flush_reports`.  rflag/tfcrop join the flag program (below) or stay lazy.
+  Keep new verbs on `_report`; `tests/test_single_pass.py` counts DATA reads
+  (the flag program's child processes included) and fails on a second pass.
+  One documented exception: a *full* `--msout` write with an auto-flagger in
+  the list reads DATA twice (workers once, the write's own column once); a
+  flags-only write never does.
 - `--workers N` (default 0 = all cores) — the number of dask threads, i.e. the
-  number of chunks materialised concurrently.
+  number of chunks materialised concurrently, **and** the number of the flag
+  program's worker processes.  Cap it to the cores actually free: the threaded
+  path self-capped at ~2-3 cores (the GIL), the program does not, and on a
+  loaded host 8 default workers oversubscribe.
 
-`rflag`/`tfcrop` (`DaskMS._run_autofit`) run once per dask row chunk and do
-not persist their result: each block's flags are spilled at one bit per
-visibility to `.skarabina-spill-*` in `$TMPDIR` if set, else beside the input
-MS (never `/tmp` by default — often tmpfs), and read back by later passes.  The
+`rflag`/`tfcrop` (`DaskMS._run_autofit`) run once per dask row chunk.  On the
+CLI path they normally join the **flag program**
+(`skarabina/flag_program.py`): the block-replayable verbs record into it and
+forked worker processes evaluate it per block -- each child opens the input
+read-only with its own casacure handle (closed again at the end of the block:
+a parked read handle holds the lock `--apply`'s write then waits on), reads
+its rows, runs the same block functions, and packs its flags at one bit per
+visibility into a shared-memory buffer (unlinked with the `DaskMS`; the
+memory plan prints its size).  The GIL is per process, so this is what makes
+the auto-flaggers scale with workers.  `SKARABINA_FLAG_POOL=0`, `extend`
+before the auto-flagger, a single block or a single worker fall back to the
+lazy in-process path; `tests/test_flag_program.py` asserts both write the
+same flags.  Without the program, the eager path spills each block's flags to
+`.skarabina-spill-*` in `$TMPDIR` if set, else beside the input MS (never
+`/tmp` by default — often tmpfs), and later passes read them back; the
 directory is removed with the `DaskMS` instance.  Inside a block,
 `rflag.GROUP_VALUES` / `tfcrop.GROUP_VALUES` cap the vectorised temporaries
 (the per-lane medians come from `skarabina/nanstats.py`).

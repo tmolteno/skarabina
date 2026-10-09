@@ -479,6 +479,35 @@ dask-ms's `xds_to_table` would avoid materialising the entire `FLAG` array, and
 has been used elsewhere in this project for the subtable bookkeeping. It is a
 larger change, needs its own measurement, and is out of scope here.
 
+### 5.5 Where the auto-flaggers run (2026-10-10)
+
+The single-pass property says *who* reads `DATA`, not *where the time goes*:
+under dask's threaded scheduler the rflag/tfcrop blocks could not use more
+than a couple of cores (their numpy dispatch holds the GIL — §4.3's
+limitation, measured: 58 % of GIL-held time in `_wrapfunc`), so the one pass
+was a slow one.  The verbs that are a pure function of their block —
+`nan`, `clip`, `autos`, `spectral-window` and the auto-flaggers — now record
+into a *flag program* (`skarabina/flag_program.py`) that forked worker
+processes evaluate per row block: each child reads its own rows of the
+visibility column through casacure, runs the same block functions, and packs
+its flags at one bit per visibility into shared memory.
+
+The IO accounting of §4.1 survives intact — the children's bytes are counted
+with the parent's (`tests/test_single_pass.py`), and a flags-only write still
+reads `DATA` exactly once — with one addition: a *full* `--msout` write with
+an auto-flagger in the list reads `DATA` twice (the workers once, the write's
+own column once), where the shared lazy pass read it once.  That is the price
+of the parallel flagging, and the reason `--write-changed-only` remains the
+recommended write for a flagging run.
+
+`SKARABINA_FLAG_POOL=0`, `extend` before the auto-flagger (its growth crosses
+rows), a single block, or a single worker keep the auto-flaggers on the lazy
+in-process path; both paths write identical flags (`tests/test_flag_program.py`).
+BENCHMARKS.md (2026-10-10) has the measurements: 9.1 s → 7.0 s wall and
+305 % → 425 % CPU for the stage-0 list plus rflag on the 430k-row bench MS,
+with the flagging pass scaling near-linearly to four workers where the
+threads stopped at two.
+
 ## 6. Acceptance criteria
 
 1. `--flag "save:before, uv-above 2000, save:after"` runs `restore`/`save`

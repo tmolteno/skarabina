@@ -103,6 +103,15 @@ def _row_chunk(opts, ops):
     print(result.lines[0].replace("limit", f"limit ({source})", 1))
     for line in result.lines[1:]:
         print(line)
+    if any(op.verb in ("tfcrop", "rflag", "tf-nn", "nn-flagger") for op in ops) \
+            and workers > 1 and dask_ms.flag_program.pool_enabled_by_env():
+        # The flag program's result buffer (skarabina.flag_program): one bit
+        # per visibility, held once for the run, not per worker.
+        shared = nrow * nchan * ncorr / 8
+        unit, shown = ("GB", shared / 2**30) if shared >= 2**30 \
+            else ("MiB", shared / 2**20)
+        print(f"  autofit flags    {shown:7.1f} {unit}  in shared memory"
+              " (one bit per visibility)")
     for warning in result.warnings:
         logger.warning(warning)
     return result.row_chunk
@@ -272,10 +281,12 @@ def _row_chunk(opts, ops):
     "--workers",
     type=int,
     default=0,
-    help="Number of dask threads (0 = dask default, all CPU cores). Running"
-    " flagging with many workers materialises one chunk per thread at once,"
-    " so capping this (e.g. --workers 4) is the main lever for bounding peak"
-    " RAM on a large MS. Mirrors tricolour's --nworkers.",
+    help="Number of dask threads (0 = dask default, all CPU cores), and of"
+         " the flag program's worker processes when the --flag list has an"
+         " auto-flagger (rflag/tfcrop/tf-nn/nn-flagger). Running flagging"
+         " with many workers materialises one chunk per thread at once, so"
+         " capping this (e.g. --workers 4) is the main lever for bounding"
+         " peak RAM on a large MS. Mirrors tricolour's --nworkers.",
 )
 @click.version_option(
     version=get_version("skarabina"),
@@ -330,7 +341,15 @@ def main(**kw):
         _run_caltable(opts, ops)
         return
 
-    ms = dask_ms.DaskMS(opts.ms, row_chunk=_row_chunk(opts, ops))
+    # Fork the flag program's worker pool before anything opens a table or
+    # spawns a dask thread -- the cleanest moment to fork (the auto-flaggers'
+    # blocks run in it; see skarabina.flag_program).  No-op unless the list
+    # holds an auto-flagger and the run asked for more than one worker.
+    workers = memory.effective_workers(opts.workers)
+    if any(op.verb in ("tfcrop", "rflag", "tf-nn", "nn-flagger") for op in ops):
+        dask_ms.flag_program.prepare_pool(workers)
+
+    ms = dask_ms.DaskMS(opts.ms, row_chunk=_row_chunk(opts, ops), workers=workers)
     fov_str = opts.field_of_view if opts.field_of_view is not None else "1.0 deg"
     # Full width, in radians; summary() halves it to get the distance from the
     # phase centre to the edge of the field.

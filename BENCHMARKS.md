@@ -11,7 +11,59 @@ and keep `bench/meerkat-flags.yml` in step with the `flag-average` step of
 
 ---
 
-## Recalibrating the memory plan for streamed writes, 2026-09-26
+## The auto-flaggers in worker processes (the flag program), 2026-10-10
+
+**Why** — the rflag/tfcrop blocks are hundreds of medium-size numpy calls, and
+the Python-level dispatch of each holds the GIL, so the threaded scheduler
+dask runs them in cannot use more than a couple of cores no matter how many
+workers there are.  `py-spy --gil` on a 4-worker run: ~58 % of the GIL-held
+time is `numpy`'s `_wrapfunc` alone, 16 % `ndarray_putcol`.  The worker-count
+sweep below is the same flag list at 1/2/4/8 `--workers`: wall time stops
+improving beyond two workers and *regresses* at eight (on 37 % more CPU) —
+convoy effects, not a lack of work.
+
+**Change** — `skarabina/flag_program.py`: the verbs that are a pure function
+of their block record into a *program*, and the auto-flaggers execute it per
+row block in forked worker processes that read their own rows of the
+visibility column through casacure and return the flags through shared
+memory (one bit per visibility, no disk spill, no pickled payloads).  DATA is
+still read exactly once for a flags-only write; a full `--msout` write reads
+it a second time for its own column.  `SKARABINA_FLAG_POOL=0` restores the
+lazy in-process path (tests assert the two write identical flags).
+
+**Method** — the stage-0 list plus `rflag` over `.bench/data/synth.ms`
+(430 000 rows x 79 channels x 2 correlations, 1.16 GiB), `--write-changed-only`,
+`--summary`, A/B with `SKARABINA_FLAG_POOL` on the same build
+(skarabina 1.0.18 + the change, casacure 3.8.31).  Host moist (Intel Core
+Ultra 7 258V, 8 cores, 30.8 GiB) — a laptop-class chip whose memory bandwidth
+saturates before its cores; **load 0.6-1.0 for the table below** (a background
+job burst to 4-5 later in the day: under that load the 8 default workers
+oversubscribe the ~4 free cores and the pool's edge shrinks to nothing — cap
+`--workers` to the cores you actually have, which is what the threaded path
+effectively did for free).
+
+| path | wall (s) | CPU | parent peak RSS | rflag pass alone |
+|---|---|---|---|---|
+| threads (`SKARABINA_FLAG_POOL=0`) | 9.10-9.16 | ~305 % | 2.99-3.06 GiB | ~6.5 s |
+| flag program (default) | 6.96-7.13 | ~425 % | 447 MiB | 4.8-5.0 s |
+
+The same run's worker sweep, timed on the program's own pass
+(`program.run`) with the row chunk set to keep every worker busy:
+
+| workers | program.run (s) |
+|---|---|
+| 2 | 9.9 |
+| 4 | 5.9 |
+| 8 | 5.0 |
+
+2 → 4 workers is near-linear; 4 → 8 is bandwidth-bound *on this host* — a
+server part (the 12-core schmalzburg, the pipeline's DGX) has the bandwidth to
+keep scaling where this does not.  The threaded path's best case, for
+comparison, was 8.3 s at four workers and 9.1 s at eight.
+
+Raw runs: `bench/results/baseline-casacure31.json` (before, threaded),
+`bench/results/pool-casacure31.json` (after; the per-op numbers there were
+taken under bursty load — quote the table above, not that file's seq row).
 
 **Why** — handover §3.1.  `CONCURRENT_WRITE_COST["write"]` (8 B per input
 visibility) was measured while casacure buffered a whole written table, and the
