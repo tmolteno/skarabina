@@ -200,3 +200,7 @@ cargo/uv.lock
 
 # Local benchmark outputs (see bench/flag_timing.py)
 bench/results/
+
+# Session-local agent state
+.zcode/
+.qwen/
