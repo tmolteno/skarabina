@@ -5,7 +5,9 @@ Following the example of ../casacure's tasks.py: ``invoke release`` runs the
 test gate locally before any tag is pushed to GitHub, so a CI failure on a
 release tag becomes a local failure the operator sees first -- and it writes
 the release commit for you, so the version bump checklist in AGENTS.md is a
-command rather than a list of files to edit by hand.
+command rather than a list of files to edit by hand.  It refuses on a dirty
+tree before it touches anything: no gate, no bump, no commit -- a refused
+release leaves the tree exactly as it was.
 
 Usage (from the repo root, in the project venv):
 
@@ -64,7 +66,8 @@ WORKFLOWS = ("deploy_module.yaml", "cargo-publish.yml", "docker-publish.yml")
 # version + git helpers
 # ---------------------------------------------------------------------------
 
-def _read_version(root: Path = REPO) -> str:
+def _read_version(root: Path | None = None) -> str:
+    root = root or REPO
     text = (root / "pyproject.toml").read_text()
     m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
     return m.group(1) if m else "?"
@@ -75,7 +78,8 @@ def _bump_patch(version: str) -> str:
     return f"{major}.{minor}.{int(patch) + 1}"
 
 
-def _bump_version(new: str, old: str, root: Path = REPO) -> list[str]:
+def _bump_version(new: str, old: str, root: Path | None = None) -> list[str]:
+    root = root or REPO
     """Rewrite the version in every file of the release checklist.
 
     The TOMLs carry ``version = "X.Y.Z"``; the cab's base YAML carries the
@@ -110,7 +114,8 @@ def _bump_version(new: str, old: str, root: Path = REPO) -> list[str]:
     return changed
 
 
-def _bump_uv_lock(new: str, old: str, root: Path = REPO) -> list[str]:
+def _bump_uv_lock(new: str, old: str, root: Path | None = None) -> list[str]:
+    root = root or REPO
     """Bump the two local packages' entries in uv.lock.
 
     The lock holds one ``[[package]]`` block per package; only the blocks
@@ -132,13 +137,15 @@ def _bump_uv_lock(new: str, old: str, root: Path = REPO) -> list[str]:
     return ["uv.lock"]
 
 
-def _changelog_has(version: str, root: Path = REPO) -> bool:
+def _changelog_has(version: str, root: Path | None = None) -> bool:
+    root = root or REPO
     """True when doc/CHANGES.md already has a ``## [version]`` section."""
     text = (root / "doc" / "CHANGES.md").read_text()
     return bool(re.search(rf"^## \[{re.escape(version)}\]", text, re.MULTILINE))
 
 
-def _stamp_changelog(new: str, root: Path = REPO) -> bool:
+def _stamp_changelog(new: str, root: Path | None = None) -> bool:
+    root = root or REPO
     """Move the ``[Unreleased]`` entries under ``## [new]``.
 
     doc/CHANGES.md is written newest-first and its release headings carry no
@@ -298,11 +305,15 @@ def test(c) -> None:
     print("=== test gate PASS (pytest + flake8)")
 
 
-@task(pre=[test])
+@task
 def release(c, version: str | None = None, bump: bool = True) -> None:
     """Run the full skarabina release chain.
 
-    1. run the test gate (this task's ``pre=[test]``).
+    0. refuse on a dirty tree -- before the gate and the bump, so a refused
+       release leaves nothing behind (this used to commit the bump and only
+       then notice, stranding a ``chore(release)`` commit on a tree nobody
+       had finished).
+    1. run the test gate (:func:`test`).
     2. bump the patch version in every file of AGENTS.md's checklist, stamp
        doc/CHANGES.md, and commit as ``chore(release): X.Y.Z`` (the default;
        skip with --no-bump, or override with --version X.Y.Z which implies
@@ -320,6 +331,19 @@ def release(c, version: str | None = None, bump: bool = True) -> None:
     # not be touched or the tag and tree would drift apart.
     if version is not None:
         bump = False
+
+    # Before anything runs -- the gate, the bump, all of it: the tag is
+    # built from HEAD, so anything uncommitted here would not be in the
+    # release, and the bump commit must never land on a tree the operator
+    # has not finished.
+    status = _git("status", "--porcelain").strip()
+    if status:
+        raise RuntimeError(
+            "tree is dirty; commit (or stash) everything first -- the"
+            " release tags HEAD, so it would not contain what you see\n"
+            + status)
+
+    test(c)
 
     if bump:
         old = _read_version()
@@ -344,13 +368,15 @@ def release(c, version: str | None = None, bump: bool = True) -> None:
               f" tag will be published without release notes (add one, or"
               f" let the default bump stamp it)")
 
-    # After the bump commit: anything still dirty is not this release's to
-    # carry, and the workflows would build a tree nobody has seen.
+    # After the bump commit: the tree was clean entering the release, so
+    # anything dirty now appeared during the gate or the bump, and the tag
+    # must not be cut from it.
     status = _git("status", "--porcelain").strip()
     if status:
         raise RuntimeError(
-            "tree is dirty; commit the release (the version files and"
-            " doc/CHANGES.md) first\n" + status)
+            "tree became dirty during the release (the gate or the bump"
+            " wrote something); commit or remove it, then re-run with"
+            " --no-bump\n" + status)
 
     commit = _git("rev-parse", "HEAD").strip()
     if _tag_exists(tag):

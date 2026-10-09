@@ -3,6 +3,21 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`invoke release` refuses on a dirty tree before it touches anything**
+  -- before the test gate and the version bump, so a refused release
+  leaves the tree exactly as it was.  It used to commit the bump and only
+  then notice (which is how 1.0.19's `chore(release)` commit landed on a
+  half-finished tree, stranding the session's uncommitted work under it).
+  The tag is built from HEAD, so uncommitted work would not be in the
+  release anyway.  The release task's own behaviour is now under test
+  (tests/test_release_tasks.py runs it against a scratch git clone with a
+  bare origin: dirty refusal, the whole chain, the stale-local-tag
+  refusal), which flushed out a real trap -- the version helpers bound
+  `root: Path = REPO` at definition time, so redirecting the module at a
+  scratch repo left them pointed at the real one.
+
 ## [1.0.19]
 
 ### Changed

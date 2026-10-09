@@ -24,24 +24,29 @@ plumbum-based orchestration `../casacure` uses):
     invoke test                       # the gate: pytest + flake8, via uv --frozen
     invoke release                    # gate, bump, stamp, commit, tag, push, wait
 
-`invoke release` runs the gate first (a CI failure becomes a local failure
-before any tag exists), then writes the release commit itself and pushes it
-through to PyPI.  In detail:
+`invoke release` refuses on a dirty tree **before anything runs** — no gate,
+no bump, no commit: a refused release leaves the tree exactly as it was (the
+bump commit once landed on a half-finished tree and only then noticed,
+stranding `chore(release): 1.0.19` mid-work).  The tag is built from HEAD,
+so anything uncommitted would not be in the release anyway.  Then it runs
+the gate (a CI failure becomes a local failure before any tag exists), and
+writes the release commit itself and pushes it through to PyPI.  In detail:
 
-1. bump the patch version in every file of the checklist below, move
+0. refuse on a dirty tree (`git status --porcelain`, untracked included).
+1. run the gate (`invoke test`).
+2. bump the patch version in every file of the checklist below, move
    `doc/CHANGES.md`'s `## [Unreleased]` entries under a new `## [X.Y.Z]`
    heading (a fresh empty `## [Unreleased]` stays on top), and commit as
    `chore(release): X.Y.Z`.  `--no-bump` tags the current version as-is;
    `--version X.Y.Z` tags that exact version.
-2. tag `vX.Y.Z` (annotated, message `skarabina X.Y.Z`) and push `main` plus
-   the tag — refusing on a dirty tree, skipping a tag already on origin,
-   and pushing a local tag whose push previously failed (a re-run after an
-   interrupted release; a local tag at a different commit is refused with
-   the commit to inspect).
-3. wait for the tag's three workflows (`.github/workflows/`): PyPI
+3. tag `vX.Y.Z` (annotated, message `skarabina X.Y.Z`) and push `main` plus
+   the tag — skipping a tag already on origin, and pushing a local tag whose
+   push previously failed (a re-run after an interrupted release; a local
+   tag at a different commit is refused with the commit to inspect).
+4. wait for the tag's three workflows (`.github/workflows/`): PyPI
    `skarabina` (`deploy_module.yaml`), PyPI `skarabina-cargo`
    (`cargo-publish.yml`) and the Docker image (`docker-publish.yml`).
-4. confirm both packages list the version on PyPI
+5. confirm both packages list the version on PyPI
    (`https://pypi.org/pypi/<package>/json`).
 
 What the bump rewrites (all of it must carry the same version number, and
