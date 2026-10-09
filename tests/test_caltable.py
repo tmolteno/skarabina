@@ -85,8 +85,12 @@ def test_table_kind_distinguishes_cal_and_ms(tmp_path):
     assert table_kind(ms) == "ms"
     junk = tmp_path / "junk"
     junk.mkdir()
+    # The message for a non-table directory comes from the backend
+    # (python-casacore: "does not exist"; casacure >= 3.8.18:
+    # "No such file or directory (os error 2)").
     with pytest.raises(RuntimeError,
-                       match="neither a measurement set|does not exist"):
+                       match="neither a measurement set|does not exist"
+                             "|No such file or directory"):
         table_kind(str(junk))
 
 
