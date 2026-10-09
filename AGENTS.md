@@ -15,34 +15,53 @@ and container config (`stimela.conf`).
 `skarabina` has no dependency on `stimela` — all CLI parameters are
 defined as explicit `@click.option` decorators in `main.py`.
 
-## Version bump checklist
+## Releasing: `invoke release`
 
-When bumping the version for a release, update these files to match:
+The release is one command from the repo root (`tasks.py`, the same
+plumbum-based orchestration `../casacure` uses):
+
+    invoke version                    # show what a release would do
+    invoke test                       # the gate: pytest + flake8, via uv --frozen
+    invoke release                    # gate, bump, stamp, commit, tag, push, wait
+
+`invoke release` runs the gate first (a CI failure becomes a local failure
+before any tag exists), then writes the release commit itself and pushes it
+through to PyPI.  In detail:
+
+1. bump the patch version in every file of the checklist below, move
+   `doc/CHANGES.md`'s `## [Unreleased]` entries under a new `## [X.Y.Z]`
+   heading (a fresh empty `## [Unreleased]` stays on top), and commit as
+   `chore(release): X.Y.Z`.  `--no-bump` tags the current version as-is;
+   `--version X.Y.Z` tags that exact version.
+2. tag `vX.Y.Z` (annotated, message `skarabina X.Y.Z`) and push `main` plus
+   the tag — refusing on a dirty tree, skipping a tag already on origin,
+   and pushing a local tag whose push previously failed (a re-run after an
+   interrupted release; a local tag at a different commit is refused with
+   the commit to inspect).
+3. wait for the tag's three workflows (`.github/workflows/`): PyPI
+   `skarabina` (`deploy_module.yaml`), PyPI `skarabina-cargo`
+   (`cargo-publish.yml`) and the Docker image (`docker-publish.yml`).
+4. confirm both packages list the version on PyPI
+   (`https://pypi.org/pypi/<package>/json`).
+
+What the bump rewrites (all of it must carry the same version number, and
+`tests/test_release_tasks.py` fails the gate when the tree disagrees):
 
 | File | Field |
 |---|---|
 | `pyproject.toml` | `project.version` |
 | `cargo/pyproject.toml` | `project.version` |
 | `cargo/skarabina_cargo/genesis/skarabina-cargo-base.yml` | `vars.skarabina-cargo.images.version` |
-| `uv.lock` | the `version` under `name = "skarabina"` (not the cargo package) |
+| `uv.lock` | the `version` under `name = "skarabina"` and `name = "skarabina-cargo"` |
 
-All of them must reference the same version number (e.g. `0.6.2` in both
-`pyproject.toml` files and `0.6.2` in the YAML).  Do **not** include a
-`v` prefix in the YAML version — CI's `docker/metadata-action` uses
-`type=semver` which strips the `v` from the git tag, so the published
-Docker image tag is `0.6.2`, not `v0.6.2`.  The YAML value must match
-the image tag exactly.
+Do **not** include a `v` prefix in the YAML version — CI's
+`docker/metadata-action` uses `type=semver` which strips the `v` from the
+git tag, so the published Docker image tag is `0.6.2`, not `v0.6.2`.  The
+YAML value must match the image tag exactly.
 
-Also add a changelog entry to `doc/CHANGES.md`.  Do not create or use a
-`CHANGES.md` at the top level — the canonical changelog lives under `doc/`.
-Move the `## [Unreleased]` entries under a new `## [X.Y.Z]` heading (keep an
-empty `## [Unreleased]` above it).
-
-Then, as for 1.0.5-1.0.7: commit `chore(release): X.Y.Z`, create an annotated
-tag `vX.Y.Z` with message `skarabina X.Y.Z`, push `main`, then push the tag.
-The tag triggers all three workflows (`.github/workflows/`): PyPI
-`skarabina`, PyPI `skarabina-cargo`, and the Docker image.  Check them with
-`gh run list`, and PyPI with `https://pypi.org/pypi/<package>/json`.
+Do not create or use a `CHANGES.md` at the top level — the canonical
+changelog lives under `doc/`, and entries accumulate under `## [Unreleased]`
+between releases so `invoke release` can stamp them.
 
 ## Docker
 
