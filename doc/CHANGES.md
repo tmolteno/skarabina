@@ -3,6 +3,90 @@
 
 ## [Unreleased]
 
+## [1.0.19]
+
+### Changed
+
+- **casacure 3.8.31** (from 3.8.17; `uv.lock` and the venv).  Between the
+  two: the read-only auto-lock yield tolerates a missing or short
+  `table.lock` (issue #17 -- the `RuntimeError: pread` the dask-ms backend
+  suite hit on its 26th operation), `query()`/`sort()` return casacore-style
+  reference tables instead of materialised copies (the killMS "memory
+  balloon" fix), `getcolslicenp` takes the raw bulk path on whole-cell
+  slices (~25x), and freed glibc arenas are returned to the OS after
+  SELECT/sort.  skarabina's own version-gated behaviour
+  (`memory.writes_stream`, `BUFFERING_CASACURE = 3.8.7`) is unchanged.
+
+### Added
+
+- **The auto-flaggers run in worker processes** (`skarabina.flag_program`).
+  A block of rflag/tfcrop is hundreds of medium-size numpy calls whose
+  Python-level dispatch holds the GIL, so dask's threads capped the whole
+  flag list at ~3 of 8 cores and wall time regressed beyond two workers.
+  The verbs that are a pure function of their block (nan, clip, autos,
+  spectral-window, and the auto-flaggers) now record into a *program*
+  evaluated per row block by forked workers: each child opens the input
+  read-only with its own casacure handle, reads its rows of the visibility
+  column, replays the masks, runs the auto-flaggers, and packs its flags at
+  one bit per visibility into shared memory — nothing is pickled across the
+  boundary and nothing spills to disk.  Measured on the 430k-row bench MS:
+  the stage-0 list plus rflag went from 9.1 s / 305 % CPU / 3.0 GiB parent
+  RSS to 7.0 s / 425 % / 447 MiB, and the flagging pass scales near-linearly
+  to four workers where threads stopped at two (BENCHMARKS.md, 2026-10-10).
+  IO is unchanged where it matters most: a flags-only write or a no-write
+  run still reads the visibility column exactly once (the children do the
+  reading; tests/test_single_pass.py counts both).  A full `--msout` write
+  with an auto-flagger reads it twice — once in the workers, once for the
+  write's own DATA column — which is the one IO cost of the pool and is
+  documented as such.  Fallbacks, all producing identical flags
+  (tests/test_flag_program.py): `extend` before the auto-flagger (its growth
+  crosses rows), fewer than two blocks or one worker, no fork, or
+  `SKARABINA_FLAG_POOL=0`.  The reports of the replayed verbs come back
+  from the children as per-block sums, so they cost no second pass.
+
+### Fixed
+
+- **The test suite died with `OSError: [Errno 24] Too many open files`** at
+  the default 1024 soft fd limit (a full run's high-water is ~3 000 fds).
+  The suite opens thousands of distinct table paths -- every test builds its
+  own MS, and casacure holds one `table.lock` fd per path for the life of
+  the process (its lock registry's documented design: "the fd lives until
+  the last referencing handle drops", and a registry entry outlives the
+  handle) -- so a long pytest session accumulates until `os.listdir` itself
+  fails.  `tests/conftest.py` now raises the soft limit to the hard limit
+  at session start (the usual 1024/1048576 pairing makes that always
+  available; a host that caps the hard limit keeps the old behaviour).
+  Pre-existing and backend-side: the 1.0.18 tree on casacure 3.8.17 leaks
+  identically, and which runs leak varies with fork order (an in-place
+  `--apply` write leaked +22 fds without a prior fork and +0 with one;
+  dask-ms and plain casacure open/close loops in isolation leak nothing) --
+  worth a casacure-side look with fd accounting.  A production run is one
+  process over one MS, so the per-run total is a bounded few dozen fds
+  either way.
+
+### Added (tooling)
+
+- **`invoke release`** (`tasks.py`, the plumbum-based orchestration
+  `../casacure` uses): the release is one command.  It runs the gate first
+  (`invoke test`: pytest + flake8 through `uv run --frozen`, so the
+  lockfile is never rewritten mid-release), then bumps the patch version in
+  every file of AGENTS.md's checklist (`pyproject.toml`,
+  `cargo/pyproject.toml`, the cab base YAML's image version, and the
+  `skarabina`/`skarabina-cargo` entries of `uv.lock`), moves
+  `doc/CHANGES.md`'s `[Unreleased]` entries under the new version's
+  heading, commits as `chore(release): X.Y.Z`, tags `vX.Y.Z`
+  ("skarabina X.Y.Z") and pushes — refusing on a dirty tree, skipping a tag
+  already on origin, and recovering a local tag whose push previously
+  failed (a re-run after an interrupted release; a local tag at a different
+  commit is refused with the commit to inspect) — then waits for the tag's
+  three workflows (PyPI
+  skarabina, PyPI skarabina-cargo, Docker) and confirms both packages are
+  live on PyPI.  `invoke version` previews it; `--no-bump` / `--version
+  X.Y.Z` override the bump.  `tests/test_release_tasks.py` holds the
+  rewriting to its contract (scoped to our entries, idempotent changelog
+  stamp, and the tree carrying one version everywhere) so the gate catches
+  a hand-edited drift before a tag does.
+
 ## [1.0.18]
 
 ### Added

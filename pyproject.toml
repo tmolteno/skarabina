@@ -1,7 +1,7 @@
 # Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz)
 [project]
 name = "skarabina"
-version = "1.0.18"
+version = "1.0.19"
 description = "Skarabina (dungbeetle): An all purpose 1GC flagger"
 authors = [
     { name = "Tim Molteno", email = "tim@elec.ac.nz" }
@@ -44,6 +44,10 @@ nn = ["pyarrow>=14"]
 dev = [
     "pytest>=8.4.0",
     "flake8>=7.0",
+    # `invoke test` / `invoke release` (tasks.py): the local release gate
+    # and the version-bump + tag + CI-wait orchestration.
+    "invoke>=2.0",
+    "plumbum>=1.8",
     # The schema/contract tests (tests/test_analyze_contract.py,
     # cargo/tests/test_schema.py) load the stimela cab definitions, so the
     # cargo package must be importable in the dev environment.

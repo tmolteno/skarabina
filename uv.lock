@@ -52,32 +52,32 @@ wheels = [
 
 [[package]]
 name = "casacure"
-version = "3.8.17"
+version = "3.8.31"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/52/3f/05ab77c36e41130e24a120636528928b306be8b3c55f887cc3d030e1b7ae/casacure-3.8.17.tar.gz", hash = "sha256:863447a2cac41892d88ed1376790eb8c01a005cf9603e69d8d2cabe35ae1f999", size = 323857, upload-time = "2026-10-03T07:20:48.718Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/37/e5/5b01f0e689c586493b2bcf4630fe6fdf23c5f8e4cd6e162e0bc3e80bf919/casacure-3.8.31.tar.gz", hash = "sha256:46091a7ccf46eb3bd13d1aca71d750a3e122c63917d3212b4b1a73c1c9879226", size = 416793, upload-time = "2026-10-09T10:03:33.302Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d9/3d/f159fd73e59d613ccd2b4f450a0208e8fc5f2b4999fad37c5c5592a233c7/casacure-3.8.17-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:436eb045577bbc1674ec93dc88b603e667e35be7fd6963b8418b2dcc40166709", size = 1182990, upload-time = "2026-10-03T07:20:11.074Z" },
-    { url = "https://files.pythonhosted.org/packages/29/71/58768f154cd0f83b49cc7a0b654e3622afe97a6148adffa9192afdbc0816/casacure-3.8.17-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:24407f0994ad65805a4a42baf5bd0d32fe96d4347f20397a139c0fb444260708", size = 1241638, upload-time = "2026-10-03T07:20:12.69Z" },
-    { url = "https://files.pythonhosted.org/packages/82/b6/c870ea5acb42fb57c3937c212022f7fe02b1d08d10f8cf498f70c151a086/casacure-3.8.17-cp310-cp310-win_amd64.whl", hash = "sha256:26eb2f53f0cb9079a90b4ba23a5047ddc61c0bf546277890d0f2ed609f3434c2", size = 1132482, upload-time = "2026-10-03T07:20:14.415Z" },
-    { url = "https://files.pythonhosted.org/packages/6a/3c/2da1a2a5f256b36d689732b0127e204fcfeaddbb9d8d567f241b2bbbbc8f/casacure-3.8.17-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:2b38d5ca25de5510217b304225fbd68f4b535ad20b992abc5cedbd5e68e4933f", size = 1144114, upload-time = "2026-10-03T07:20:15.826Z" },
-    { url = "https://files.pythonhosted.org/packages/38/80/86e411317823b5df439e8491ec08e2de78240fc907ba80c15c2da8bd05fc/casacure-3.8.17-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:d1e5c7ac7561a608c120e6d08df9ac0f3a855d0cba2ea2de61073016f9c423aa", size = 1182592, upload-time = "2026-10-03T07:20:17.209Z" },
-    { url = "https://files.pythonhosted.org/packages/61/c4/f1973447a1e12fc5d75e378e02504037a3b9cf4baa31ca9d2dbd8c850453/casacure-3.8.17-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e4ae2f23bb74b780dcf4f27c3be716bd31bc747b2d08c89d48192678643d1e1b", size = 1241085, upload-time = "2026-10-03T07:20:18.66Z" },
-    { url = "https://files.pythonhosted.org/packages/40/fc/4bce8107f3c4c2ffaf926bc9bb420b28de88f7298ee2c94166ca60dd591a/casacure-3.8.17-cp311-cp311-win_amd64.whl", hash = "sha256:ee670a62b7a11bb6086c8a6d96967b112a1be72a476c955c325881dd687b4c49", size = 1131743, upload-time = "2026-10-03T07:20:20.114Z" },
-    { url = "https://files.pythonhosted.org/packages/df/78/366cbdcf26b932780b5fa01c51cadd8f1cfa6da41cbe68d725d4653ca923/casacure-3.8.17-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:bc4a34435ebb2c3fa36c7ab42b25daf8fd2c58c00f0efdc9179f6d3604dacff2", size = 1140358, upload-time = "2026-10-03T07:20:21.766Z" },
-    { url = "https://files.pythonhosted.org/packages/88/33/ec677e7358ce8addc5c35a5ff491138e5ce2d35603c709aa7ce3a8578dac/casacure-3.8.17-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:23ca54c451043cddb11b279690276e5b61ee0dd3bdeafa6c204827263a62fbf9", size = 1179483, upload-time = "2026-10-03T07:20:23.221Z" },
-    { url = "https://files.pythonhosted.org/packages/6e/c4/41fd65acd1fe5494c6a3c29caab31ace95aa559d430c6a520c18dcc0c8f2/casacure-3.8.17-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1afc378d531a1050e55ef3f9b579c4b5501d66acca39d7c5a3ca81d4e4b9e023", size = 1239888, upload-time = "2026-10-03T07:20:24.627Z" },
-    { url = "https://files.pythonhosted.org/packages/eb/19/b5896264078c3f7166928fbd1ab195da9104dc0c95d4659f0ba06f2092e1/casacure-3.8.17-cp312-cp312-win_amd64.whl", hash = "sha256:c8c028bbe2198bc27cd5f0e873f8347ea616fcd6abab4b01ebfb5fb58ec2da8a", size = 1134201, upload-time = "2026-10-03T07:20:26.152Z" },
-    { url = "https://files.pythonhosted.org/packages/2e/48/1bad9dfb446bc6e6b6c91a0c900b40650f19666da7ee3a62e7ede4769329/casacure-3.8.17-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:27493bfdd959156ffecf4450e30b82bc7ae83cba5afcec798622252536476370", size = 1141028, upload-time = "2026-10-03T07:20:27.64Z" },
-    { url = "https://files.pythonhosted.org/packages/cc/25/37cbb06dfb617ba72545dd3582e4823fb9f03097e52641cda5f854f9a7be/casacure-3.8.17-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5c184075045335813988284cdfe4447e4da7547fb4b8169adcb9d5cbeeac513e", size = 1179988, upload-time = "2026-10-03T07:20:29.121Z" },
-    { url = "https://files.pythonhosted.org/packages/a7/70/6bc146da7c78c7feadbee021f5c5d9b01b550a2dbdb2c2316f5a35d2d3d6/casacure-3.8.17-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0611debf86bb0ad44bcddab56e3586bf9041192e4b6c9d348e5ba29ba534e778", size = 1240798, upload-time = "2026-10-03T07:20:30.528Z" },
-    { url = "https://files.pythonhosted.org/packages/bb/ab/1fd9ea4d369fb15403962f5cf64b3ecc2b2ec7407cd6a69ac915881f472b/casacure-3.8.17-cp313-cp313-win_amd64.whl", hash = "sha256:3977da5a0e11cc0dc2ed41ba9326230e55c8586fe8189bb4e092c08edf374eef", size = 1135770, upload-time = "2026-10-03T07:20:31.906Z" },
-    { url = "https://files.pythonhosted.org/packages/15/9c/4d24e0ac48d2bc7a327e72728cb2e0fd2eb393a3e47199306340051a5143/casacure-3.8.17-pp311-pypy311_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:da1d7d3398e7b0fa0ce0ee9650cd9ffb1fbd0adea8aa91d8f8aa0089dfb608a3", size = 1183342, upload-time = "2026-10-03T07:20:45.176Z" },
-    { url = "https://files.pythonhosted.org/packages/8a/18/6cf5b40f134b50f2a97de4e76635eb415a281adc358a5dc7fb7dc37d64b9/casacure-3.8.17-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:834f4797dce3a41b9fee0f910ff51fdcbb863959ba4656174010899114d8596c", size = 1242056, upload-time = "2026-10-03T07:20:46.569Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/5f/e4c46075755abdf68566b80f762d85f52676dcb0d38b72c694f286cd1838/casacure-3.8.31-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:208a5b771dc7545fff718ceaf62e0f8c570ff925f50fe59b49f7afc64f6540eb", size = 2088950, upload-time = "2026-10-09T10:02:53.4Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/c7/49fc8e9ca7910a000d8976846a825348205b743ec5ab4a25c2165d1afd3d/casacure-3.8.31-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2a47046b6e68102b0f6e95874ed4033cc3c115860aad73311826a90982b1378e", size = 2224023, upload-time = "2026-10-09T10:02:55.239Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/65/1531914cf9b305842275d63c3e2d8e5b7ffa5ae1434993db93e56e5cdf7c/casacure-3.8.31-cp310-cp310-win_amd64.whl", hash = "sha256:b136b487a07a1d5b3b3814852a897d4e6be37ab5c0e91d774bc3bb30b872f22a", size = 2028794, upload-time = "2026-10-09T10:02:56.756Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/05/eb24651eda7c6bf8b22b2dcaf097c5f410aada9c5d7e278183e4782ab1ae/casacure-3.8.31-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:6a09bc38b11c6347748544e52c1fcea85daeb9aaf9d512f9bce601dd959c529c", size = 2037137, upload-time = "2026-10-09T10:02:58.453Z" },
+    { url = "https://files.pythonhosted.org/packages/39/f9/0d00e7755fbf80e4f9fa7cb3399a63d13dae411b8e364c971b49c686f987/casacure-3.8.31-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:197551f4c25907538c6cc897671eb125240d620c022b0e8d35ceddd4204bbec4", size = 2089322, upload-time = "2026-10-09T10:03:00.252Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/a6/f732349c5a76b66712e2e0df7200174d17ce886f4570fa8c0a4491743071/casacure-3.8.31-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f479f5a2436898ab81f9c68e8310723286f1bb92b262468ab60d49e36e412253", size = 2223901, upload-time = "2026-10-09T10:03:01.587Z" },
+    { url = "https://files.pythonhosted.org/packages/20/86/0f2e2c788412637a26a5d8970ded0fc64bf2cc3872ac22c8eda90b9be0d4/casacure-3.8.31-cp311-cp311-win_amd64.whl", hash = "sha256:d377f60d4d54d8737660492257fd23bd8ef232896a526d15059257423e15de85", size = 2028706, upload-time = "2026-10-09T10:03:03.198Z" },
+    { url = "https://files.pythonhosted.org/packages/88/4e/ae35a13992d274a223d3ee4c4dcb6d5bbeb15a057b25d19d6ee94eac53ac/casacure-3.8.31-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:c49275b272f5aa2ec445b27ed7a4bd85f49ffcddd9f98f28bfaa0135b4f94882", size = 2035105, upload-time = "2026-10-09T10:03:04.782Z" },
+    { url = "https://files.pythonhosted.org/packages/26/cb/47f8ee976c6360f2d0f7145673064571d171b2ea760a3ff0b12f122cd0f2/casacure-3.8.31-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:fbcd964f214a3c2e91ec177e29c215dc443308dcc4bb80dd35605338285543ac", size = 2080929, upload-time = "2026-10-09T10:03:06.43Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/33/08000876ceefe725132eb9554aa460d78482c524f348edf31c6935616d90/casacure-3.8.31-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b99189fdd1d4bb99b84993a0a13774265bdbd43d5ea36648707b423128ff098c", size = 2220497, upload-time = "2026-10-09T10:03:07.89Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/d2/77553684125a0122e0f1708cef26e5fe5607993157c5e7eb653a5e9dfdd2/casacure-3.8.31-cp312-cp312-win_amd64.whl", hash = "sha256:50a87a2e25851229e7d63369fb95ada71e1ec802fd24589237b27aa99690d42d", size = 2027081, upload-time = "2026-10-09T10:03:09.465Z" },
+    { url = "https://files.pythonhosted.org/packages/af/ab/01a507d8e0eaf189d597d56be0e56da5f8f2b34ed1e8df173ce1392a5258/casacure-3.8.31-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:cd425c24357e70ae9cb9ee6bc87e4d4f238d90129bed5f28f8c4aa7244cec5ef", size = 2037255, upload-time = "2026-10-09T10:03:10.806Z" },
+    { url = "https://files.pythonhosted.org/packages/53/76/47ce23ae1fc61054991d7edc75aa08f25341b698e3d117c40b4a7c67646c/casacure-3.8.31-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2b1be66d68b45776515f4fc82c1e7b81781849bc10deec038e0e8c7f62732da9", size = 2082301, upload-time = "2026-10-09T10:03:12.301Z" },
+    { url = "https://files.pythonhosted.org/packages/78/67/4c86ed7453f0148fa67733c69d8c5c9a8d573ded57df6937adb2ef522dca/casacure-3.8.31-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e245be4c716f52489f477a5ac77a17d853fb4a3a9324e60cfa552aa29a47c949", size = 2221790, upload-time = "2026-10-09T10:03:13.705Z" },
+    { url = "https://files.pythonhosted.org/packages/42/bd/f17f3702b75568ac849948483d980336cf75bcbe716e861e345273827084/casacure-3.8.31-cp313-cp313-win_amd64.whl", hash = "sha256:0baba44d3064a2437e9319142fb098b15862b5477cbc27b8afc8ef2e99d18f5d", size = 2029449, upload-time = "2026-10-09T10:03:15.599Z" },
+    { url = "https://files.pythonhosted.org/packages/07/12/e57ad15ffb9de57d6cbbd2b66ebbec6f9ae1244a297022c6ef8bfa0a0560/casacure-3.8.31-pp311-pypy311_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:eab9f1cba88e1158052044e9ea5b9eb71ec5003b73367c727224ed9f8af36747", size = 2088365, upload-time = "2026-10-09T10:03:29.987Z" },
+    { url = "https://files.pythonhosted.org/packages/21/cc/26754eed1f2df95d9ead02bb8afa141ddabddc41499a03a291cb470e3f59/casacure-3.8.31-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a5b73e28872bd970f748ff15700c4462dab3a304a23f5955b8f3fcf79dd9f9d0", size = 2223043, upload-time = "2026-10-09T10:03:31.869Z" },
 ]
 
 [[package]]
@@ -642,6 +642,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "invoke"
+version = "3.0.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/f6/227c48c5fe47fa178ccf1fda8f047d16c97ba926567b661e9ce2045c600c/invoke-3.0.3.tar.gz", hash = "sha256:437b6a622223824380bfb4e64f612711a6b648c795f565efc8625af66fb57f0c", size = 343419, upload-time = "2026-04-07T15:17:48.307Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5a/de/bbc12563bbf979618d17625a4e753ff7a078523e28d870d3626daa97261a/invoke-3.0.3-py3-none-any.whl", hash = "sha256:f11327165e5cbb89b2ad1d88d3292b5113332c43b8553b494da435d6ec6f5053", size = 160958, upload-time = "2026-04-07T15:17:46.875Z" },
 ]
 
 [[package]]
@@ -1348,6 +1357,18 @@ wheels = [
 ]
 
 [[package]]
+name = "plumbum"
+version = "2.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6c/d2/578712a979a50e9aba08ea173a38e7598461130d3c9899f176373bc03280/plumbum-2.0.2.tar.gz", hash = "sha256:233751d7819c9e6743ec1c2405927eb4fa52a284c7b894bd10e28106a9309a92", size = 390799, upload-time = "2026-07-22T04:13:12.157Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b5/55/fdd01894807d20fb6181f13590ae247585b10e909b42e6ada833379fe520/plumbum-2.0.2-py3-none-any.whl", hash = "sha256:a865771826c1d2cce0ca8b2a2c48aa0447ed7a518859e389a95f158e9c369547", size = 168804, upload-time = "2026-07-22T04:13:10.76Z" },
+]
+
+[[package]]
 name = "psutil"
 version = "5.9.8"
 source = { registry = "https://pypi.org/simple" }
@@ -1625,7 +1646,7 @@ wheels = [
 
 [[package]]
 name = "skarabina"
-version = "1.0.18"
+version = "1.0.19"
 source = { editable = "." }
 dependencies = [
     { name = "angle-parser" },
@@ -1648,6 +1669,8 @@ nn = [
 [package.dev-dependencies]
 dev = [
     { name = "flake8" },
+    { name = "invoke" },
+    { name = "plumbum" },
     { name = "pytest" },
     { name = "skarabina-cargo" },
 ]
@@ -1667,13 +1690,15 @@ provides-extras = ["casacure", "nn"]
 [package.metadata.requires-dev]
 dev = [
     { name = "flake8", specifier = ">=7.0" },
+    { name = "invoke", specifier = ">=2.0" },
+    { name = "plumbum", specifier = ">=1.8" },
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "skarabina-cargo", editable = "cargo" },
 ]
 
 [[package]]
 name = "skarabina-cargo"
-version = "1.0.18"
+version = "1.0.19"
 source = { editable = "cargo" }
 dependencies = [
     { name = "stimela" },
