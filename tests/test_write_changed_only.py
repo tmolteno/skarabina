@@ -59,13 +59,20 @@ def real_layout_ms(path, nrow=24, nchan=4, ncorr=2):
         values = t.getcol(column)
         if column in set(t.colnames()):
             t.removecols(column)
+        # No DEFAULTTILESHAPE in the manager spec: casacure 3.8.33's
+        # addcols+dminfo path mis-shapes the cells when one is applied
+        # ("unsupported tile shape [4, 2] for cells of shape [2, 4]" at
+        # flush, the tile and cell shapes transposed), on a pattern real
+        # casacore -- and dask-ms's add-columns write -- uses daily.  The
+        # fixture only needs one TSM store per column, which TYPE/NAME
+        # alone provides; the dminfo semantics are casacure's own tests'
+        # to pin (its tests/test_dminfo.py).
         t.addcols(
             maketabdesc(
                 makearrcoldesc(column, [], ndim=cell.ndim, shape=list(cell.shape),
                                valuetype=_CASACORE_TYPE[cell.dtype.kind])
             ),
-            {"TYPE": "TiledShapeStMan", "NAME": group,
-             "SPEC": {"DEFAULTTILESHAPE": np.array(cell.shape, dtype=np.int32)}},
+            {"TYPE": "TiledShapeStMan", "NAME": group},
         )
         t.putcol(column, values)
     t.close()

@@ -5,6 +5,21 @@
 
 ### Changed
 
+- **casacure 3.8.33** (from 3.8.31; the pin rises to `>= 3.8.33`).  3.8.32's
+  dminfo-on-create validation failed every `save:` create ("unsupported tile
+  shape ... for cells of shape []") -- the pin was capped below it in the
+  interim; 3.8.33 defers a requested tile shape the way casacore's lazy
+  hypercube does.  The two releases also conform `getcell` to the column's
+  declared ndim (python-casacore's behaviour, so dask-ms keeps CHAN_FREQ on
+  casacure-created SPECTRAL_WINDOW tables) and honour dminfo on every
+  creation path.  One casacure 3.8.33 regression remains, dodged here:
+  `addcols` with a `DEFAULTTILESHAPE` spec mis-shapes the cells at flush
+  (tile and cell shapes transposed) -- tests/test_write_changed_only.py's
+  fixture drops the spec it never needed (one TSM store per column comes
+  from TYPE/NAME alone).  The production paths are unaffected: `save:` is
+  the create path (3.8.33's own test is skarabina's exact call), and
+  skarabina adds no columns with a tile spec.
+
 - **`invoke release` refuses on a dirty tree before it touches anything**
   -- before the test gate and the version bump, so a refused release
   leaves the tree exactly as it was.  It used to commit the bump and only
