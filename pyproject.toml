@@ -17,7 +17,13 @@ dependencies = [
     # ANTENNA POSITION/OFFSET, FEED POSITION) in casacore's inline layout --
     # 3.8.8 could not read them from a casacore MS and wrote them in a form
     # casacore misreads.
-    "casacure>=3.8.17",
+    #
+    # < 3.8.32: 3.8.32's dminfo-on-create validation tests a requested tile
+    # shape against a flag-version table's not-yet-existing cells and fails
+    # every `save:` create ("unsupported tile shape [79, 51] for cells of
+    # shape []").  casacure 3.8.33 defers the shape as casacore does -- raise
+    # the floor to >= 3.8.33 once it is on PyPI.
+    "casacure>=3.8.17,<3.8.32",
     "zarr>=2.0",
     "angle-parser>=0.1.0",
     "matplotlib>=3.10.9",
@@ -35,7 +41,7 @@ skarabina-plotms = "skarabina.plotms:main"
 # way to ask for the Rust backend: pip install skarabina[casacure].  Runs select
 # it with DASK_MS_BACKEND=casacure; without casacure installed, dask-ms falls
 # back to real python-casacore.
-casacure = ["casacure>=3.8.17"]
+casacure = ["casacure>=3.8.17,<3.8.32"]
 # The tf-nn verb streams each data chunk to a served neural flagger over
 # Arrow Flight (radio-nn's nn-flag-server); only that verb needs pyarrow.
 nn = ["pyarrow>=14"]

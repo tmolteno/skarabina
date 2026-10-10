@@ -1678,8 +1678,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "angle-parser", specifier = ">=0.1.0" },
-    { name = "casacure", specifier = ">=3.8.17" },
-    { name = "casacure", marker = "extra == 'casacure'", specifier = ">=3.8.17" },
+    { name = "casacure", specifier = ">=3.8.17,<3.8.32" },
+    { name = "casacure", marker = "extra == 'casacure'", specifier = ">=3.8.17,<3.8.32" },
     { name = "dask-ms", extras = ["casacure", "xarray", "zarr"], git = "https://github.com/tmolteno/dask-ms.git" },
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "pyarrow", marker = "extra == 'nn'", specifier = ">=14" },
