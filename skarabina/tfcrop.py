@@ -904,7 +904,7 @@ def _combine(freq_flags, time_flags, flagdimension):
     return np.logical_or(freq_flags, time_flags)
 
 
-def tfcrop_plane(plane, params, flagged=None, baselines=None):
+def tfcrop_plane(plane, params, flagged=None, baselines=None, fit_rows=None):
     """Run TFCrop on one ``(time, chan)`` plane.
 
     ``plane`` is the visibility amplitude of one correlation; ``flagged`` the
@@ -916,50 +916,130 @@ def tfcrop_plane(plane, params, flagged=None, baselines=None):
     A measurement-set chunk is many baselines interleaved, and ``baselines``
     (a :class:`skarabina.baselines.Baselines` for the rows) says which: see
     :func:`_tfcrop_baselines`.
+
+    ``fit_rows`` (an integer or None) partitions the plane into canonical fit
+    blocks for threshold calculation, independent of the plane's chunk size.
+    This ensures reproducible flagging across different hosts/worker counts
+    (#13). If None, the entire plane is one fit block (default, backward compatible).
     """
-    if baselines is not None:
-        return _tfcrop_baselines(plane, params, flagged, baselines)
-    plane = np.asarray(plane, dtype=float)
-    if flagged is None:
-        flagged = np.zeros(plane.shape, dtype=bool)
-    else:
-        flagged = np.asarray(flagged, dtype=bool)
-    flagged = flagged | ~np.isfinite(plane)
-    pre_existing = flagged.copy()
+    if fit_rows is None or fit_rows <= 0:
+        # No fit-block partitioning: use existing behavior
+        if baselines is not None:
+            return _tfcrop_baselines(plane, params, flagged, baselines)
+        plane = np.asarray(plane, dtype=float)
+        if flagged is None:
+            flagged = np.zeros(plane.shape, dtype=bool)
+        else:
+            flagged = np.asarray(flagged, dtype=bool)
+        flagged = flagged | ~np.isfinite(plane)
+        pre_existing = flagged.copy()
 
-    freq_flags = np.zeros_like(flagged)
-    time_flags = np.zeros_like(flagged)
-    flat_freq = flat_time = None
-    if params.flagdimension in ("freqtime", "freq"):
-        freq_flags, flat_freq = _fit_and_flag_freq(plane, flagged, params)
-    if params.flagdimension in ("freqtime", "timefreq", "time"):
-        # CASA's freqtime runs the time direction after the frequency one,
-        # with the frequency flags already applied (they are excluded from
-        # the time direction's statistics); a time-only run is unchanged.
-        time_flags, flat_time = _fit_and_flag_time(
-            plane, flagged | freq_flags, params
-        )
-
-    combined = _combine(freq_flags, time_flags, params.flagdimension)
-
-    window_extra = np.zeros_like(combined)
-    if params.usewindowstats != "none":
-        # Window statistics run on a bandpass-flattened plane, so the window
-        # sees deviations rather than the band shape.
-        reference = flat_freq if flat_freq is not None else flat_time
-        if reference is not None:
-            window_extra = _window_pass(
-                reference, combined, params.usewindowstats, params.halfwin,
-                params.timecutoff,
+        freq_flags = np.zeros_like(flagged)
+        time_flags = np.zeros_like(flagged)
+        flat_freq = flat_time = None
+        if params.flagdimension in ("freqtime", "freq"):
+            freq_flags, flat_freq = _fit_and_flag_freq(plane, flagged, params)
+        if params.flagdimension in ("freqtime", "timefreq", "time"):
+            # CASA's freqtime runs the time direction after the frequency one,
+            # with the frequency flags already applied (they are excluded from
+            # the time direction's statistics); a time-only run is unchanged.
+            time_flags, flat_time = _fit_and_flag_time(
+                plane, flagged | freq_flags, params
             )
 
-    flag = pre_existing | combined | window_extra
-    stats = {
-        "new": int(np.count_nonzero(flag & ~pre_existing)),
-        "total": int(flag.size),
-        "pre_existing": int(np.count_nonzero(pre_existing)),
+        combined = _combine(freq_flags, time_flags, params.flagdimension)
+
+        window_extra = np.zeros_like(combined)
+        if params.usewindowstats != "none":
+            # Window statistics run on a bandpass-flattened plane, so the window
+            # sees deviations rather than the band shape.
+            reference = flat_freq if flat_freq is not None else flat_time
+            if reference is not None:
+                window_extra = _window_pass(
+                    reference, combined, params.usewindowstats, params.halfwin,
+                    params.timecutoff,
+                )
+
+        flag = pre_existing | combined | window_extra
+        stats = {
+            "new": int(np.count_nonzero(flag & ~pre_existing)),
+            "total": int(flag.size),
+            "pre_existing": int(np.count_nonzero(pre_existing)),
+        }
+        return flag, stats
+
+    # Re-block by fit_rows for threshold calculation
+    return _tfcrop_fit_blocks(plane, params, flagged, baselines, fit_rows)
+
+
+def _tfcrop_fit_blocks(plane, params, flagged, baselines, fit_rows):
+    """Run TFCrop with canonical fit blocks for reproducible thresholds.
+
+    Partition the plane into blocks of fit_rows for threshold calculation.
+    Each fit block's thresholds are computed independently, ensuring
+    reproducible results across different host configurations (#13).
+    """
+    n_time, n_chan = plane.shape
+    if n_time == 0:
+        if flagged is None:
+            flagged = np.zeros((0, n_chan), dtype=bool)
+        return flagged, {}
+
+    plane = np.asarray(plane, dtype=float)
+    if flagged is None:
+        flagged_out = np.zeros(plane.shape, dtype=bool)
+    else:
+        flagged_out = np.asarray(flagged.copy(), dtype=bool)
+
+    # Process plane in fit-block-sized chunks, applying tfcrop to each
+    all_flagged = np.zeros_like(flagged_out)
+    accumulated_stats = {
+        "new": 0,
+        "total": plane.size,
+        "pre_existing": np.count_nonzero(flagged_out),
     }
-    return flag, stats
+
+    # Split baseline groups if needed
+    if baselines is not None:
+        # For baseline-aware chunking, extract antenna info
+        from skarabina.baselines import Baselines
+        bl_a1, bl_a2 = baselines.antenna1, baselines.antenna2
+        bl_scan = baselines.scan if hasattr(baselines, 'scan') else None
+
+    # Process fit blocks
+    n_blocks = max(1, (n_time + fit_rows - 1) // fit_rows)
+
+    for block_idx in range(n_blocks):
+        start_time = block_idx * fit_rows
+        end_time = min((block_idx + 1) * fit_rows, n_time)
+
+        block_plane = plane[start_time:end_time, :]
+        block_flagged = flagged_out[start_time:end_time, :]
+
+        # For baseline-aware: extract subset of baselines for this time range
+        if baselines is not None:
+            # The antenna arrays are in the same order as the plane rows
+            # (time-major interleaved), so we can use direct slicing
+            block_bl_a1 = bl_a1[start_time:end_time]
+            block_bl_a2 = bl_a2[start_time:end_time]
+            block_bl_scan = bl_scan[start_time:end_time] if bl_scan is not None else None
+            block_baselines = Baselines(block_bl_a1, block_bl_a2, block_bl_scan)
+            block_flags, block_stats = _tfcrop_baselines(
+                block_plane, params, block_flagged, block_baselines
+            )
+        else:
+            # Non-baseline-aware path: call tfcrop_plane recursively with fit_rows=None
+            block_flags, block_stats = tfcrop_plane(
+                block_plane, params, block_flagged, baselines=None, fit_rows=None
+            )
+
+        # Update output
+        all_flagged[start_time:end_time, :] = block_flags
+
+        # Accumulate stats
+        accumulated_stats["new"] += block_stats.get("new", 0)
+
+    return all_flagged, accumulated_stats
 
 
 #: Most channels a row contributes to its relative-scatter estimate in
