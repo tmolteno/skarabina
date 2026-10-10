@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.20]
+
 ### Changed
 
 - **casacure 3.8.33** (from 3.8.31; the pin rises to `>= 3.8.33`).  3.8.32's
