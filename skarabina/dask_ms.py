@@ -60,12 +60,10 @@ def _autofit_block(plane_function, data, existing, params, rows=None):
     without it the rows are taken to be one baseline's time series.
     """
     baselines = None if rows is None else Baselines(*rows)
-    fit_rows = getattr(params, 'fit_rows', None)
     planes = []
     for corr in range(data.shape[2]):
         flag, _ = plane_function(
-            data[:, :, corr], params, existing[:, :, corr], baselines=baselines,
-            fit_rows=fit_rows
+            data[:, :, corr], params, existing[:, :, corr], baselines=baselines
         )
         planes.append(flag)
     return np.stack(planes, axis=2)
@@ -1520,34 +1518,22 @@ class DaskMS:
         columns.append(da.asarray(self.ds.TIME.data).rechunk((row_chunks,)))
         return columns
 
-    def flag_rflag(self, params, fit_rows=None):
+    def flag_rflag(self, params):
         """Flag outliers from sliding-window statistics (a CASA ``rflag``).
 
         See :mod:`skarabina.rflag` for the algorithm and its deviations from the
         published one.  Shares its chunking with :meth:`flag_tfcrop`.
-
-        ``fit_rows`` (optional): if provided, use canonical fit blocks of this
-        size for threshold calculation, ensuring reproducible results across
-        different hosts/worker counts (#13).
         """
-        if fit_rows is not None and fit_rows > 0:
-            params.fit_rows = fit_rows
         self._run_autofit(params, rflag_plane, _rflag_block, "flag_rflag")
 
-    def flag_tfcrop(self, params, fit_rows=None):
+    def flag_tfcrop(self, params):
         """Flag outliers on the 2-D time-frequency plane (a CASA ``tfcrop``).
 
         See :mod:`skarabina.tfcrop` for the algorithm and its deviations from
         the published one.  Shares its chunking with :meth:`flag_rflag`, which
         needs the same time-chunked, whole-band blocks; the chunk is the fit
         unit, so its length *is* CASA's ``ntime``.
-
-        ``fit_rows`` (optional): if provided, use canonical fit blocks of this
-        size for threshold calculation, ensuring reproducible results across
-        different hosts/worker counts (#13).
         """
-        if fit_rows is not None and fit_rows > 0:
-            params.fit_rows = fit_rows
         self._run_autofit(params, tfcrop_plane, _tfcrop_block, "flag_tfcrop")
 
     def flag_tf_nn(self, params):

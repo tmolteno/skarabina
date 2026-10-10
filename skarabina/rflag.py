@@ -491,7 +491,7 @@ def _time_step(plane, flagged, params, floor, groups=None, scale=None):
     return flagged_out, thresholds
 
 
-def rflag_plane(plane, params, flagged=None, baselines=None, fit_rows=None):
+def rflag_plane(plane, params, flagged=None, baselines=None):
     """Run RFlag on one ``(time, chan)`` plane of complex visibilities.
 
     ``plane`` holds the visibilities of one correlation; ``flagged`` the flags
@@ -507,20 +507,10 @@ def rflag_plane(plane, params, flagged=None, baselines=None, fit_rows=None):
     baseline's time series, and both steps measure their threshold in units of
     each baseline's noise as predicted by the per-antenna model, so a single
     threshold serves the whole chunk (doc/RFLAG.md).
-
-    ``fit_rows`` (an integer or None) partitions the plane into canonical fit
-    blocks for threshold calculation, independent of the plane's chunk size.
-    This ensures reproducible flagging across different hosts/worker counts
-    (#13). If None, the entire plane is one fit block (default, backward compatible).
     """
-    if fit_rows is None or fit_rows <= 0:
-        # No fit-block partitioning: use existing behavior
-        if baselines is not None:
-            return _rflag_baselines(plane, params, flagged, baselines)
-        return _rflag(plane, params, flagged)
-
-    # Re-block by fit_rows for threshold calculation
-    return _rflag_fit_blocks(plane, params, flagged, baselines, fit_rows)
+    if baselines is not None:
+        return _rflag_baselines(plane, params, flagged, baselines)
+    return _rflag(plane, params, flagged)
 
 
 def _rflag_baselines(plane, params, flagged, baselines):
@@ -574,90 +564,6 @@ def _rflag(plane, params, flagged, groups=None, scale=None):
         "freq_deviation": float(freq_deviation),
     }
     return flagged, stats
-
-
-def _rflag_fit_blocks(plane, params, flagged, baselines, fit_rows):
-    """Run RFlag with canonical fit blocks for reproducible thresholds.
-
-    Partition the plane into blocks of fit_rows for threshold calculation.
-    Each fit block's thresholds are computed independently, ensuring
-    reproducible results across different host configurations (#13).
-    """
-    n_time, n_chan = plane.shape
-    if n_time == 0:
-        if flagged is None:
-            flagged = np.zeros((0, n_chan), dtype=bool)
-        return flagged, {}
-
-    plane = np.asarray(plane)
-    if flagged is None:
-        flagged_out = np.zeros(plane.shape, dtype=bool)
-    else:
-        flagged_out = np.asarray(flagged.copy(), dtype=bool)
-
-    # Process plane in fit-block-sized chunks, applying rflag to each
-    all_flagged = np.zeros_like(flagged_out)
-    accumulated_stats = {
-        "new": 0,
-        "total": plane.size,
-        "pre_existing": np.count_nonzero(flagged_out),
-        "time_threshold_median": np.nan,
-        "freq_deviation": np.nan,
-    }
-
-    # For baseline-aware: reconstruct per-row antenna arrays
-    bl_labels = None
-    bl_a1_full = None
-    bl_a2_full = None
-    bl_scan_full = None
-    if baselines is not None:
-        from skarabina.baselines import Baselines
-        # Reconstruct per-row antenna arrays from the Baselines labels and unique pairs
-        bl_labels = baselines.labels
-        bl_a1_unique = baselines.antenna1
-        bl_a2_unique = baselines.antenna2
-        bl_a1_full = bl_a1_unique[bl_labels]
-        bl_a2_full = bl_a2_unique[bl_labels]
-        if hasattr(baselines, 'scan'):
-            bl_scan_full = baselines.scan
-
-    # Process fit blocks
-    n_blocks = max(1, (n_time + fit_rows - 1) // fit_rows)
-    time_thresholds_all = []
-
-    for block_idx in range(n_blocks):
-        start_time = block_idx * fit_rows
-        end_time = min((block_idx + 1) * fit_rows, n_time)
-
-        block_plane = plane[start_time:end_time, :]
-        block_flagged = flagged_out[start_time:end_time, :]
-
-        # For baseline-aware: extract subset of baselines for this time range
-        if bl_a1_full is not None:
-            # Extract the antenna arrays for this time range
-            block_bl_a1 = bl_a1_full[start_time:end_time]
-            block_bl_a2 = bl_a2_full[start_time:end_time]
-            block_bl_scan = bl_scan_full[start_time:end_time] if bl_scan_full is not None else None
-            block_baselines = Baselines(block_bl_a1, block_bl_a2, block_bl_scan)
-            block_flags, block_stats = _rflag_baselines(
-                block_plane, params, block_flagged, block_baselines
-            )
-        else:
-            block_flags, block_stats = _rflag(block_plane, params, block_flagged)
-
-        # Update output
-        all_flagged[start_time:end_time, :] = block_flags
-
-        # Accumulate stats
-        accumulated_stats["new"] += block_stats.get("new", 0)
-        if np.isfinite(block_stats.get("time_threshold_median", np.nan)):
-            time_thresholds_all.append(block_stats["time_threshold_median"])
-
-    # Finalize stats
-    if time_thresholds_all:
-        accumulated_stats["time_threshold_median"] = float(np.median(time_thresholds_all))
-
-    return all_flagged, accumulated_stats
 
 
 class RFlagParams:
