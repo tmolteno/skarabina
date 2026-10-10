@@ -133,7 +133,8 @@ def test_effective_workers():
 def _opts(path, **kw):
     base = dict(ms=path, row_chunk=None, memory_limit_gb=0.0, workers=2, msout=None,
                 apply=False, write_changed_only=False, optimize=False, barber=False,
-                frequency_average_factor=None, time_average_factor=None)
+                frequency_average_factor=None, time_average_factor=None,
+                fit_rows=0)
     base.update(kw)
     return SimpleNamespace(**base)
 

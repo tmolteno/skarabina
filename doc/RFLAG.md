@@ -374,17 +374,43 @@ Both were in the single-baseline algorithm and are fixed for it too:
 
 | | CASA `flagdata(mode='rflag')` | skarabina `rflag` |
 |---|---|---|
-| unit of work | one baseline, `ntime` chunk (default: scan) | one dask row chunk (~5 integrations of every MeerKAT baseline at 10 000 rows), grouped by baseline |
-| thresholds from | first pass over the whole selection, per (field, spw) | each chunk, per correlation |
-| time threshold | one per (field, spw): `(median + 1.4826 MAD over channels of per-channel mean scatter) * timedevscale` | per channel: `timedevscale * median(scatter / modelled noise)` over the chunk |
+| unit of work | one baseline, `ntime` chunk (default: scan) | one **fit block** of `--fit-rows` rows (default 20 000, ~10 integrations of every MeerKAT baseline), aligned to absolute row 0 and grouped by baseline; see below |
+| thresholds from | first pass over the whole selection, per (field, spw) | each fit block, per correlation |
+| time threshold | one per (field, spw): `(median + 1.4826 MAD over channels of per-channel mean scatter) * timedevscale` | per channel: `timedevscale * median(scatter / modelled noise)` over the fit block |
 | spectral reference | median over **all** channels of the spectrum | median of the **neighbouring** channels |
-| spectral threshold | one per (field, spw), as for time | `freqdevscale * median(|departure| / modelled noise)` over the chunk |
+| spectral threshold | one per (field, spw), as for time | `freqdevscale * median(|departure| / modelled noise)` over the fit block |
 | per-baseline noise | none (one pooled value) | per-antenna model, `s_i s_j` |
 | window at chunk edges | skipped (spectral only) | clipped, every row gets a window |
 | supplied `timedev`/`freqdev` | number or `[field, spw, dev]` matrix | number |
 | `spectralmax`/`spectralmin` | per spectrum; inert in MEDIAN mode (§2) | per plane, on the measured deviation |
 | `optype` | MEDIAN, RMEAN (RMEDIAN, MEAN fall back to MEDIAN) | none (neighbour median) |
 | pre-existing flags | excluded from statistics | excluded from statistics |
+
+### Reproducibility: the fit block is not the dask chunk (issue #13)
+
+Up to 1.0.20 the unit the thresholds were measured over was the dask row
+chunk, whose default length is rows/workers, so the same MS flagged
+differently on hosts with different core counts (and with a different
+`--row-chunk`).  The unit is now a canonical **fit block** of `--fit-rows`
+rows (default 20 000), block *k* being rows `[k*F, (k+1)*F)` of the dataset
+whatever the chunking.  The row chunk (from the memory plan or `--row-chunk`)
+is **rounded down to a whole number of fit blocks**, at least one, so a block
+is never split between two chunks and nothing is re-blocked across chunk
+boundaries; inside a chunk the flagger just walks its blocks in turn.  The
+same MS and `--flag` list therefore flag identically for any `--workers` and
+`--row-chunk` (tests/test_fit_rows.py).  `--fit-rows` is the reproducibility
+knob: pin it (the default is fine) and the result is host-independent; `0`
+restores the old per-chunk thresholds, host-dependent again.
+
+Costs and caveats: there is no extra pass or copy.  A `--row-chunk` (or a
+memory-planned chunk) below `--fit-rows` is raised to one block, so a very
+tight `--memory-limit-GB` can be exceeded by one block (a warning is
+printed); lowering `--fit-rows` trades statistics per block for memory.  The
+block boundaries are fixed row counts, not integration boundaries, so a block
+may begin or end part-way through an integration (the baselines of the
+partial integration are grouped within the block as before).  The dataset's
+rows are what is counted: a `--scan` selection or averaging before the
+flagger changes which rows are row 0.
 
 ## 10. Open points
 

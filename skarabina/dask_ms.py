@@ -50,6 +50,40 @@ ROW_CHUNK_ROWS = 10000
 AUTOFIT_BASELINES = True
 
 
+#: Rows per fit block of rflag/tfcrop: the unit their thresholds are measured
+#: over, aligned to absolute row 0 of the dataset and independent of
+#: ``--workers`` and ``--row-chunk`` (issue #13).  Every dask row chunk is a
+#: whole number of fit blocks (:func:`aligned_row_chunk`), so a block is never
+#: cut by a chunk boundary and the same MS flags identically on every host.
+#: 0 measures over each whole chunk instead (the behaviour up to 1.0.20).
+#: A module setting, not an argument, because the flag program's forked
+#: workers resolve the block function by name and inherit it.
+FIT_ROWS = 20000
+
+
+def set_fit_rows(fit_rows):
+    """Set :data:`FIT_ROWS` (rows per rflag/tfcrop fit block; 0 = per chunk)."""
+    global FIT_ROWS
+    fit_rows = int(fit_rows or 0)
+    if fit_rows < 0:
+        raise ValueError(f"fit rows must be >= 0, got {fit_rows}")
+    FIT_ROWS = fit_rows
+
+
+def aligned_row_chunk(row_chunk, fit_rows=None):
+    """``row_chunk`` rounded down to a whole number of fit blocks (at least one).
+
+    The round-down keeps the memory plan's bound; a request smaller than one
+    block is raised to one block, which is the only way a fit block is never
+    split between two chunks.
+    """
+    fit_rows = FIT_ROWS if fit_rows is None else fit_rows
+    row_chunk = max(1, int(row_chunk))
+    if fit_rows <= 0:
+        return row_chunk
+    return max(fit_rows, row_chunk // fit_rows * fit_rows)
+
+
 def _autofit_block(plane_function, data, existing, params, rows=None):
     """Run a plane-wise auto-flagger over one ``(row, chan, corr)`` block.
 
@@ -59,14 +93,25 @@ def _autofit_block(plane_function, data, existing, params, rows=None):
     possibly None -- tells the algorithm which baseline each row belongs to;
     without it the rows are taken to be one baseline's time series.
     """
-    baselines = None if rows is None else Baselines(*rows)
-    planes = []
-    for corr in range(data.shape[2]):
-        flag, _ = plane_function(
-            data[:, :, corr], params, existing[:, :, corr], baselines=baselines
+    fit = FIT_ROWS if FIT_ROWS > 0 else max(1, data.shape[0])
+    pieces = []
+    # The block starts at a multiple of FIT_ROWS in the dataset (the chunking
+    # guarantees it), so these pieces are the same rows on every host.
+    for start in range(0, max(1, data.shape[0]), fit):
+        stop = start + fit
+        piece_rows = None if rows is None else tuple(
+            None if column is None else column[start:stop] for column in rows
         )
-        planes.append(flag)
-    return np.stack(planes, axis=2)
+        baselines = None if piece_rows is None else Baselines(*piece_rows)
+        planes = []
+        for corr in range(data.shape[2]):
+            flag, _ = plane_function(
+                data[start:stop, :, corr], params, existing[start:stop, :, corr],
+                baselines=baselines,
+            )
+            planes.append(flag)
+        pieces.append(np.stack(planes, axis=2))
+    return np.concatenate(pieces, axis=0)
 
 
 def _tfcrop_block(amplitude, existing, params, rows=None):
@@ -582,9 +627,12 @@ class DaskMS:
             self.chan_axis_hz = {}
         self.chan_axis_hz["RESOLUTION"] = value
 
-    def __init__(self, ms_name, row_chunk=ROW_CHUNK_ROWS, workers=None):
+    def __init__(self, ms_name, row_chunk=ROW_CHUNK_ROWS, workers=None,
+                 fit_rows=None):
         self.name = ms_name
-        self.row_chunk = max(1, int(row_chunk))
+        if fit_rows is not None:
+            set_fit_rows(fit_rows)
+        self.row_chunk = aligned_row_chunk(row_chunk)
         #: dask thread count the run plans for (see skarabina.memory), used
         #: to size the flag program's worker pool to the same parallelism.
         self.workers = workers if workers and workers > 0 \
@@ -1295,6 +1343,8 @@ class DaskMS:
         # the MS, 100 %, from a change that looked like a tidy-up.
         chunk = max(1, self.AUTOFIT_BLOCK_VALUES // max(1, n_chan * n_corr))
         chunk = min(chunk, max(1, n_time))
+        if FIT_ROWS > 0 and chunk < n_time:
+            chunk = min(aligned_row_chunk(chunk), n_time)
 
         def cube(array):
             """The data cube as (time, chan, corr), chunked along time.
@@ -1307,7 +1357,10 @@ class DaskMS:
             the data in time, and on a 340k-row MS that pass is most of the run.
             """
             data = _da.asarray(array)
-            if data.chunks[1:] == ((n_chan,), (n_corr,)):
+            aligned = FIT_ROWS <= 0 or all(
+                n % FIT_ROWS == 0 for n in data.chunks[0][:-1]
+            )
+            if aligned and data.chunks[1:] == ((n_chan,), (n_corr,)):
                 return data
             return _da.rechunk(data, (chunk, n_chan, n_corr))
 

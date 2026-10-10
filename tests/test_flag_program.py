@@ -64,7 +64,7 @@ def work_ms(tmp_path):
 def _run(path, out, flags, extra=()):
     result = CliRunner().invoke(
         main,
-        ["--ms", str(path), "--row-chunk", "300", "--flag", flags,
+        ["--ms", str(path), "--row-chunk", "300", "--fit-rows", "0", "--flag", flags,
          "--msout", str(out), "--clobber", "--write-changed-only", *extra],
         catch_exceptions=False,
     )

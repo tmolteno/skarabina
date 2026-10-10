@@ -114,7 +114,16 @@ def _row_chunk(opts, ops):
               " (one bit per visibility)")
     for warning in result.warnings:
         logger.warning(warning)
-    return result.row_chunk
+    aligned = dask_ms.aligned_row_chunk(result.row_chunk, opts.fit_rows)
+    if aligned != result.row_chunk:
+        print(f"Row chunk: {aligned} rows (a whole number of {opts.fit_rows}"
+              "-row fit blocks, --fit-rows)")
+        if aligned > result.row_chunk:
+            logger.warning(
+                "--fit-rows %d exceeds the planned row chunk %d: the chunk is"
+                " raised to one fit block, above the memory plan",
+                opts.fit_rows, result.row_chunk)
+    return aligned
 
 
 @click.command("skarabina")
@@ -265,6 +274,18 @@ def _row_chunk(opts, ops):
     " it is used as is. Mirrors tricolour's --row-chunks.",
 )
 @click.option(
+    "--fit-rows",
+    type=int,
+    default=dask_ms.FIT_ROWS,
+    show_default=True,
+    help="Rows per fit block of rflag/tfcrop: the unit their thresholds are"
+    " measured over, aligned to absolute row 0 of the MS. Row chunks are"
+    " rounded to a whole number of blocks, so the flags do not depend on"
+    " --workers, --row-chunk or the host's core count. A --row-chunk below"
+    " this is raised to it. 0 = measure over each whole row chunk (the"
+    " behaviour up to 1.0.20: host-dependent).",
+)
+@click.option(
     "--memory-limit-GB",
     "memory_limit_gb",
     type=float,
@@ -345,6 +366,7 @@ def main(**kw):
     # spawns a dask thread -- the cleanest moment to fork (the auto-flaggers'
     # blocks run in it; see skarabina.flag_program).  No-op unless the list
     # holds an auto-flagger and the run asked for more than one worker.
+    dask_ms.set_fit_rows(opts.fit_rows)
     workers = memory.effective_workers(opts.workers)
     if any(op.verb in ("tfcrop", "rflag", "tf-nn", "nn-flagger") for op in ops):
         dask_ms.flag_program.prepare_pool(workers)

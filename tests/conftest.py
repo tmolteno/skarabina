@@ -31,3 +31,19 @@ try:
 except (OSError, ValueError):
     pass  # a host that caps the hard limit keeps today's behaviour
 
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _fit_rows_per_chunk():
+    """Library-level tests cut tiny chunks on purpose (chunk mechanics, spill
+    files, read counts), so the fit block (``skarabina.dask_ms.FIT_ROWS``,
+    issue #13) defaults to 0 = per chunk here and is restored afterwards.
+    tests/test_fit_rows.py exercises the real default through the CLI."""
+    from skarabina import dask_ms
+
+    saved = dask_ms.FIT_ROWS
+    dask_ms.FIT_ROWS = 0
+    yield
+    dask_ms.FIT_ROWS = saved

@@ -3,6 +3,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **rflag/tfcrop thresholds no longer depend on `--workers` / `--row-chunk`**
+  (#13).  They are measured per canonical fit block of `--fit-rows` rows
+  (default 20 000) aligned to absolute row 0, and every row chunk is rounded
+  to a whole number of blocks.  Flag counts change versus 1.0.20 on any MS
+  larger than one block; `--fit-rows 0` restores the per-chunk behaviour.
+  See doc/RFLAG.md section 9.
+
 ## [1.0.20]
 
 ### Changed

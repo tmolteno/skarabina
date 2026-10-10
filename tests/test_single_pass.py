@@ -70,7 +70,7 @@ def _run(args):
 ])
 def test_nan_clip_autos_and_the_write_read_data_once(tmp_path, column_reads, extra):
     path, data_bytes = _ms(tmp_path)
-    _run(["--ms", path, "--row-chunk", "300", "--flag", "nan, clip 0 100, autos",
+    _run(["--ms", path, "--row-chunk", "300", "--fit-rows", "0", "--flag", "nan, clip 0 100, autos",
           "--msout", str(tmp_path / "out.ms"), "--clobber"] + extra)
     assert column_reads["DATA"] == data_bytes, "DATA was read more than once"
     assert 0 < column_reads["FLAG"] <= data_bytes
@@ -78,14 +78,14 @@ def test_nan_clip_autos_and_the_write_read_data_once(tmp_path, column_reads, ext
 
 def test_apply_reads_data_once(tmp_path, column_reads):
     path, data_bytes = _ms(tmp_path)
-    _run(["--ms", path, "--row-chunk", "300", "--flag", "nan, clip 0 100",
+    _run(["--ms", path, "--row-chunk", "300", "--fit-rows", "0", "--flag", "nan, clip 0 100",
           "--apply", "--clobber"])
     assert column_reads["DATA"] == data_bytes
 
 
 def test_rflag_shares_its_pass_with_the_verbs_before_it(tmp_path, column_reads):
     path, data_bytes = _ms(tmp_path)
-    _run(["--ms", path, "--row-chunk", "300", "--flag", "nan, clip 0 100, autos, rflag",
+    _run(["--ms", path, "--row-chunk", "300", "--fit-rows", "0", "--flag", "nan, clip 0 100, autos, rflag",
           "--msout", str(tmp_path / "out.ms"), "--clobber", "--write-changed-only"])
     assert column_reads["DATA"] == data_bytes
 
@@ -101,7 +101,7 @@ def test_a_full_write_and_averaging_share_the_pass(tmp_path, column_reads, flags
     """The write reads DATA for its own column; the flags, rflag/tfcrop, the
     averaging and the summary are computed in that same pass."""
     path, data_bytes = _ms(tmp_path)
-    _run(["--ms", path, "--row-chunk", "300", "--flag", flags,
+    _run(["--ms", path, "--row-chunk", "300", "--fit-rows", "0", "--flag", flags,
           "--msout", str(tmp_path / "out.ms"), "--clobber"] + extra)
     assert column_reads["DATA"] == data_bytes, "DATA was read more than once"
 
@@ -117,7 +117,7 @@ def test_a_full_write_with_an_autoflagger_reads_data_twice(tmp_path, column_read
     (test_flags_only_writes_share_the_pass below).
     """
     path, data_bytes = _ms(tmp_path)
-    _run(["--ms", path, "--row-chunk", "300",
+    _run(["--ms", path, "--row-chunk", "300", "--fit-rows", "0",
           "--flag", f"nan, clip 0 100, autos, {autofit}",
           "--summary", "--frequency-average-factor", "4",
           "--msout", str(tmp_path / "out.ms"), "--clobber"])
@@ -132,14 +132,14 @@ def test_flags_only_writes_share_the_pass(tmp_path, column_reads, flags, write):
     one pass, with the summary and the verbs' reports."""
     path, data_bytes = _ms(tmp_path)
     target = [] if write == ["--apply"] else ["--msout", str(tmp_path / "out.ms")]
-    _run(["--ms", path, "--row-chunk", "300", "--flag", flags, "--summary", "--clobber"]
+    _run(["--ms", path, "--row-chunk", "300", "--fit-rows", "0", "--flag", flags, "--summary", "--clobber"]
          + target + write)
     assert column_reads["DATA"] == data_bytes, "DATA was read more than once"
 
 
 def test_a_flag_list_with_nothing_after_it_reads_data_once(tmp_path, column_reads):
     path, data_bytes = _ms(tmp_path)
-    _run(["--ms", path, "--row-chunk", "300", "--flag", "nan, rflag, clip 0 100"])
+    _run(["--ms", path, "--row-chunk", "300", "--fit-rows", "0", "--flag", "nan, rflag, clip 0 100"])
     assert column_reads["DATA"] == data_bytes
 
 
@@ -152,7 +152,7 @@ def test_a_non_leading_save_snapshots_within_the_single_pass(tmp_path, column_re
     once, as it does without the marker (#5).
     """
     path, data_bytes = _ms(tmp_path)
-    _run(["--ms", path, "--row-chunk", "300",
+    _run(["--ms", path, "--row-chunk", "300", "--fit-rows", "0",
           "--flag", "clip 0 100, save:mid, autos", "--apply", "--clobber"])
     assert column_reads["DATA"] == data_bytes, "the snapshot re-read DATA"
 
