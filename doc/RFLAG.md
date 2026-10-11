@@ -419,6 +419,10 @@ flagger changes which rows are row 0.
   a chunking that follows baselines across integrations would remove the
   limit.
 - Scan boundaries split the groups; field changes follow scans.
-- The thresholds are measured per chunk, not over the whole selection as in
-  CASA.  A two-pass mode (measure, then flag) would need a second pass over
-  `DATA`.
+- The thresholds are measured per fit block, not over the whole selection as
+  in CASA.  **Decided (2026-10-12, issue #9): this stays.**  A two-pass mode
+  (measure globally, then flag) would close part of the remaining count gap
+  against CASA (rflag 1.44x, extend 1.21x on the J0408 leg), but it costs a
+  second read of `DATA` and gives up the single-pass, chunk-parallel path.
+  Count parity with CASA is not a goal; the per-block thresholds are the
+  design, and the excess is a documented difference (§9), not a bug.
