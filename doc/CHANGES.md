@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.21]
+
 ### Changed
 
 - **rflag/tfcrop thresholds no longer depend on `--workers` / `--row-chunk`**
