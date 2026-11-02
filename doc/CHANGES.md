@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.22]
+
 ### Changed
 
 - **The dask-ms-2 casacure backend is permanent.** skarabina depends on
