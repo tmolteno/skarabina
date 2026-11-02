@@ -104,7 +104,7 @@ def test_the_plan_says_which_backend_it_assumed(monkeypatch):
     line = [ln for ln in buffered.lines if ln.strip().startswith("backend")]
     assert line and "casacure 3.8.7" in line[0] and "buffered whole" in line[0]
 
-    monkeypatch.delenv("DASK_MS_BACKEND")
+    monkeypatch.setattr(memory, "on_casacure", lambda: False)
     plain = memory.plan(["nan"], 62 * GB, 12, **MEERKAT)
     line = [ln for ln in plain.lines if ln.strip().startswith("backend")]
     assert line and "python-casacore" in line[0]
@@ -189,9 +189,9 @@ def test_a_streaming_backend_has_no_whole_table_steps():
 
 def test_writes_stream_follows_the_backend(monkeypatch):
     from importlib import metadata
-    monkeypatch.delenv("DASK_MS_BACKEND", raising=False)
+    monkeypatch.setattr(memory, "on_casacure", lambda: False)
     assert memory.writes_stream()               # python-casacore
-    monkeypatch.setenv("DASK_MS_BACKEND", "casacure")
+    monkeypatch.setattr(memory, "on_casacure", lambda: True)
     for installed, streams in (("3.8.7", False), ("3.8.8", True), ("3.9.0", True)):
         monkeypatch.setattr(metadata, "version", lambda _name, v=installed: v)
         assert memory.writes_stream() is streams, installed

@@ -1,6 +1,8 @@
 <!-- Copyright (c) 2025-2026 Tim Molteno (tim@elec.ac.nz) -->
 # Skarabina
 
+[![PyPI - dask-ms-2](https://img.shields.io/pypi/v/dask-ms-2)](https://pypi.org/project/dask-ms-2/)
+
 ```
  =,                .=
 =.|      ,---.      |.=
@@ -33,6 +35,24 @@ See [doc/](doc/index.md) for full documentation:
 - [Measurement set analyzer](doc/ANALYZE.md)
 - [Plotting (skarabina-plotms)](doc/PLOTTING.md)
 - [Changelog](doc/CHANGES.md)
+
+## Dependencies
+
+skarabina depends on two packages from the same author:
+
+- [casacure](https://github.com/tmolteno/casacure) — a pure-Rust drop-in for
+  python-casacore's table system, and skarabina's default I/O backend.  It
+  comes with the package (no system casacore needed), on x86_64 and arm64
+  alike.
+- [dask-ms-2](https://pypi.org/project/dask-ms-2/) — the
+  [tmolteno/dask-ms](https://github.com/tmolteno/dask-ms) fork of dask-ms
+  (import package `daskms`, same as upstream), which carries the casacure
+  I/O backend and the `DASK_MS_BACKEND` backend selection.
+
+`pip install skarabina` pulls both in automatically (as
+`dask-ms-2[casacure,xarray,zarr]` plus `casacure`); the backend is pinned
+at import and python-casacore is not a skarabina backend.  See
+[INSTALL.md](doc/INSTALL.md) for details.
 
 ## Install
 

@@ -3,6 +3,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The dask-ms-2 casacure backend is permanent.** skarabina depends on
+  `dask-ms-2` (the tmolteno/dask-ms fork, import package `daskms`) and its
+  casacure backend, and importing skarabina now pins
+  `DASK_MS_BACKEND=casacure` unconditionally — a pre-set variable no longer
+  selects python-casacore, which is not a skarabina backend (it does not
+  work on arm64, where the pipeline hosts run).  `memory.plan` /
+  `writes_stream` detect the backend from the installed daskms
+  (`daskms.casacure_backend`) instead of the environment variable, and the
+  bench harness's `--backend casacore` comparison mode is gone with the
+  fallback it relied on.
+
 ## [1.0.21]
 
 ### Changed

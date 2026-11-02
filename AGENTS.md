@@ -99,7 +99,7 @@ real MeerKAT bandpass-calibrator MS:
 python bench/flag_timing.py                     # seq, casacure, bpcal.ms
 python bench/flag_timing.py --mode both         # + one process per operation
 python bench/flag_timing.py --ms .bench/ms_cure_2k.ms --drop-save-imported
-python bench/flag_timing.py --backend casacore --rflag-args "winsize=5"
+python bench/flag_timing.py --rflag-args "winsize=5"
 ```
 
 - `--mode seq` (default) runs the whole list in one process — the number the
@@ -148,11 +148,10 @@ DASK_MS_BACKEND=casacure \
 
 Notes on this command:
 
-- **`DASK_MS_BACKEND=casacure` is required** — dask-ms only aliases
-  `casacore` -> `casacure` when this is set (see `daskms.casacure_backend`).
-  Without it skarabina cannot import (there is no python-casacore in the
-  benchmark venv, and `from casacore.tables import table` must resolve to
-  casacure).
+- **`DASK_MS_BACKEND=casacure` is pinned** — importing skarabina sets it
+  unconditionally (see `skarabina/__init__.py`), so the command below no
+  longer needs to; dask-ms-2's casacure backend is the only backend
+  (see `daskms.casacure_backend`).
 - **Quote the multi-token `--flag` entries.** `--flag "uv-above 2500"` etc.
   are each a single argument; unquoted, click sees the trailing tokens
   (`2500 0 100 ...`) as stray positional arguments and exits with

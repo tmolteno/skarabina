@@ -10,9 +10,9 @@ import dask.array as da
 import numpy as np
 from angle_parser import parse_angle
 
-# Import dask-ms before casacore.tables so that, when the casacure backend is
-# selected (DASK_MS_BACKEND=casacure), daskms's casacore->casacure aliasing is
-# installed before the `casacore` import resolves (see skarabina/dask_ms.py).
+# Import dask-ms before casacore.tables so daskms's casacore->casacure
+# aliasing is installed before the `casacore` import resolves (the backend is
+# pinned in skarabina/__init__.py; see skarabina/dask_ms.py).
 import daskms  # noqa: F401,E402
 from casacore.tables import table  # noqa: E402
 from daskms import xds_from_ms  # noqa: E402

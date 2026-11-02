@@ -166,15 +166,32 @@ def _version_tuple(text):
     return tuple(parts + [0] * (3 - len(parts)))
 
 
+def on_casacure():
+    """Whether the installed daskms carries the casacure backend.
+
+    The backend is permanent (skarabina/__init__.py pins
+    ``DASK_MS_BACKEND=casacure``), so the question is about the *installed*
+    daskms: the dask-ms-2 fork ships ``daskms.casacure_backend``; upstream
+    dask-ms with python-casacore does not.
+    """
+    try:
+        from daskms.casacure_backend import activate_casacure_backend  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 def writes_stream():
     """Whether the table backend writes a new table chunk by chunk.
 
     python-casacore writes through bounded bucket caches.  casacure up to
     3.8.7 buffered a new table's cells until it was complete; later casacure
-    grows the table in place at each flush.  The backend is casacure when
-    DASK_MS_BACKEND=casacure selects it (see skarabina/dask_ms.py).
+    grows the table in place at each flush.  The backend is whatever the
+    installed daskms provides (permanently dask-ms-2's casacure for a
+    normal skarabina install, see skarabina/__init__.py).
     """
-    if os.environ.get("DASK_MS_BACKEND", "").lower() != "casacure":
+    if not on_casacure():
         return True
     try:
         from importlib.metadata import version
@@ -190,7 +207,7 @@ def backend_note():
     next to the casacure (or python-casacore) it was planned for.
     """
     last = ".".join(str(part) for part in BUFFERING_CASACURE)
-    if os.environ.get("DASK_MS_BACKEND", "").lower() != "casacure":
+    if not on_casacure():
         return "python-casacore: writes through bounded bucket caches"
     try:
         from importlib.metadata import version

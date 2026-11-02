@@ -72,6 +72,10 @@ DEFAULT_SPECTRAL = HERE / "spectral-flags-L.yml"
 SCRATCH = REPO / ".bench" / "scratch" / "flag_timing"
 RESULTS = HERE / "results"
 
+#: skarabina runs on dask-ms-2's casacure backend, permanently
+#: (skarabina/__init__.py pins it); the bench measures that backend.
+BACKEND = "casacure"
+
 
 # --------------------------------------------------------------------------
 # environment and workload description
@@ -375,8 +379,6 @@ def main() -> int:
     ap.add_argument("--mode", choices=["seq", "per-op", "both"], default="seq")
     ap.add_argument("--ops-file", type=Path, default=DEFAULT_OPS,
                     help="YAML list of flag operations to time")
-    ap.add_argument("--backend", choices=["casacure", "casacore"],
-                    default="casacure")
     ap.add_argument("--python", default=None,
                     help="interpreter for the child (default: .venv-bench)")
     ap.add_argument("--repeat", type=int, default=1,
@@ -433,10 +435,10 @@ def main() -> int:
         capture_output=True, text=True,
     ).stdout.strip() or "unknown"
 
+    # The backend is permanent (skarabina/__init__.py pins it); set it here
+    # too so run_stage.py's report and the child's own daskms import agree.
     env = dict(os.environ)
-    env.pop("DASK_MS_BACKEND", None)
-    if opts.backend == "casacure":
-        env["DASK_MS_BACKEND"] = "casacure"
+    env["DASK_MS_BACKEND"] = "casacure"
     env["PYTHONUNBUFFERED"] = "1"
 
     ops = load_ops(opts.ops_file.resolve(), opts.uv_max,
@@ -444,7 +446,7 @@ def main() -> int:
                    opts.extra_op, opts.drop_save_imported)
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    tag = opts.tag or f"{ms.name}-{opts.backend}-{stamp}"
+    tag = opts.tag or f"{ms.name}-{BACKEND}-{stamp}"
     log_dir = SCRATCH / "logs" / tag
     msout = SCRATCH / f"out_{tag}.ms"
 
@@ -453,7 +455,7 @@ def main() -> int:
         "host": host_info(),
         "python": python,
         "python_version": python_version,
-        "backend": opts.backend,
+        "backend": BACKEND,
         "ms": str(ms),
         "workload": describe_ms(python, env, ms),
         "ops": ops,

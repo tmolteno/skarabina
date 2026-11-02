@@ -14,10 +14,9 @@ import dask.array as da
 import numpy as np
 import yaml
 
-# Import dask-ms before casacore.tables so that, when the casacure backend is
-# selected (DASK_MS_BACKEND=casacure), daskms's casacore->casacure aliasing
-# (daskms.activate_casacure_backend) is set up before the `casacore` import
-# below resolves.
+# Import dask-ms before casacore.tables so daskms's casacore->casacure
+# aliasing (daskms.activate_casacure_backend) is set up before the `casacore`
+# import below resolves (the backend is pinned in skarabina/__init__.py).
 import daskms  # noqa: F401
 from casacore.tables import table  # noqa: E402
 from dask.array import coarsen as da_coarsen

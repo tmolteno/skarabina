@@ -8,9 +8,12 @@ authors = [
 ]
 license = { text = "GPLv3" }
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
-    "dask-ms[casacure,xarray,zarr]",
+    # dask-ms-2: the tmolteno/dask-ms fork (the casacure I/O backend and the
+    # DASK_MS_BACKEND selection) published on PyPI. It installs the same
+    # `daskms` import package as upstream dask-ms.
+    "dask-ms-2[casacure,xarray,zarr]",
     # 3.8.8: tables grow in place on write (save: and --msout are
     # chunk-bounded) and the IncrementalStMan writer no longer loses
     # SCAN_NUMBER / FIELD_ID values.  3.8.9: Direct array columns (the MS's
@@ -39,12 +42,12 @@ skarabina-analyze = "skarabina.analyze:main"
 skarabina-plotms = "skarabina.plotms:main"
 
 [project.optional-dependencies]
-# The pure-Rust drop-in replacement for casacore, used as dask-ms's I/O backend
-# when it is installed -- dask-ms's own `casacure` extra is requested above, but
-# that extra only exists in the tmolteno/dask-ms fork, so this is the explicit
-# way to ask for the Rust backend: pip install skarabina[casacure].  Runs select
-# it with DASK_MS_BACKEND=casacure; without casacure installed, dask-ms falls
-# back to real python-casacore.
+# The pure-Rust drop-in replacement for casacore, used as dask-ms-2's I/O
+# backend when it is installed -- dask-ms-2's own `casacure` extra is
+# requested above, so this is the explicit way to ask for the Rust backend
+# when installing skarabina with extras: pip install skarabina[casacure].
+# Runs select it with DASK_MS_BACKEND=casacure; without casacure installed,
+# dask-ms-2 falls back to real python-casacore.
 casacure = ["casacure>=3.8.33"]
 # The tf-nn verb streams each data chunk to a served neural flagger over
 # Arrow Flight (radio-nn's nn-flag-server); only that verb needs pyarrow.
@@ -66,9 +69,6 @@ dev = [
 
 [tool.uv.sources]
 skarabina-cargo = { path = "cargo", editable = true }
-# dask-ms from the upstream git repo (master) with the pure-Rust casacure
-# backend selected at runtime via DASK_MS_BACKEND=casacure.
-dask-ms = { git = "https://github.com/tmolteno/dask-ms.git" }
 
 [tool.hatch.metadata]
 allow-direct-references = true

@@ -29,9 +29,9 @@ import os
 
 import numpy as np
 
-# Import dask-ms before casacore.tables so that, when the casacure backend is
-# selected (DASK_MS_BACKEND=casacure), daskms's casacore->casacure aliasing is
-# installed before the `casacore` import resolves (see skarabina/dask_ms.py).
+# Import dask-ms before casacore.tables so daskms's casacore->casacure
+# aliasing is installed before the `casacore` import resolves (the backend is
+# pinned in skarabina/__init__.py; see skarabina/dask_ms.py).
 # Nothing else on the console script's import path loads daskms first, so
 # without this a plain `skarabina --version` failed with "No module named
 # 'casacore'" (the bench and the tests import daskms first, hiding it).

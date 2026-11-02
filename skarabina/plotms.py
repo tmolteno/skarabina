@@ -29,9 +29,9 @@ from datetime import datetime
 import click
 import numpy as np
 
-# Import dask-ms before casacore.tables so that, when the casacure backend is
-# selected (DASK_MS_BACKEND=casacure), daskms's casacore->casacure aliasing is
-# installed before the `casacore` import resolves (see skarabina/dask_ms.py).
+# Import dask-ms before casacore.tables so daskms's casacore->casacure
+# aliasing is installed before the `casacore` import resolves (the backend is
+# pinned in skarabina/__init__.py; see skarabina/dask_ms.py).
 import daskms  # noqa: F401,E402
 from casacore.tables import table  # noqa: E402
 
