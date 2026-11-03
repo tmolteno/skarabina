@@ -1,0 +1,30 @@
+# Reject AI-assistant attribution: no commit message, tracked file or tracked
+# file name may credit an AI assistant as a contributor.  Runs
+# tools/check-no-ai-attribution.py, which .githooks/commit-msg also runs on
+# every local commit (git config core.hooksPath .githooks).
+# This repository's history is not scrubbed (its old trailers sit under release
+# tags), so the whole-history check is deliberately absent: files and the
+# pushed range only.
+name: guard
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  attribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: tracked files
+        run: python3 tools/check-no-ai-attribution.py
+      - name: commit messages of the pushed range
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        run: |
+          if git cat-file -e "${{ github.event.before }}^{commit}" 2>/dev/null; then
+            python3 tools/check-no-ai-attribution.py --commits "${{ github.event.before }}..${{ github.sha }}"
+          else
+            echo "previous head unreachable; range check skipped"
+          fi

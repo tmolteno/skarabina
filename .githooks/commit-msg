@@ -1,0 +1,14 @@
+#!/bin/sh
+# commit-msg hook -- reject a commit that credits an AI assistant as a
+# contributor, in the message or in the content it would carry.
+#
+# Enable in every clone with:  git config core.hooksPath .githooks
+set -e
+root=$(git rev-parse --show-toplevel)
+script="$root/tools/check-no-ai-attribution.py"
+if [ ! -f "$script" ]; then
+    echo "commit-msg hook: $script is missing -- the attribution guard must not be deleted." >&2
+    exit 1
+fi
+python3 "$script"                 # the index: what this commit would carry
+python3 "$script" --message "$1"  # the message being committed

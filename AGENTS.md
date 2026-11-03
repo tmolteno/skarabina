@@ -1,5 +1,18 @@
 # Agent Instructions
 
+## Attribution
+
+**No AI attribution (enforced 2026-11-04).**  An AI assistant is never a
+contributor in this repository: no co-author trailers in commit messages, no
+assistant-authored instruction files committed, and no assistant or model names
+in docs used to say who did the work.  The guard is
+`tools/check-no-ai-attribution.py`; the commit-msg hook `.githooks/commit-msg`
+runs it on every commit once `git config core.hooksPath .githooks` is set (set
+in this checkout — run it in every clone), and the `guard` workflow runs it on
+every push.  This repository's history is deliberately not scrubbed (its old
+trailers sit under release tags), so the workflow checks files and the pushed
+range only.  Delete neither the script nor the hook: both fail if it goes.
+
 ## Package structure
 
 The repo contains two Python packages:
