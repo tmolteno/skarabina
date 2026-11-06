@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.23]
+
 ### Changed
 
 - **casacure 3.8.38 in the lock** (from 3.8.33): python-casacore parity

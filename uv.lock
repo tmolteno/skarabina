@@ -1168,7 +1168,7 @@ wheels = [
 
 [[package]]
 name = "skarabina"
-version = "1.0.22"
+version = "1.0.23"
 source = { editable = "." }
 dependencies = [
     { name = "angle-parser" },
@@ -1218,7 +1218,7 @@ dev = [
 
 [[package]]
 name = "skarabina-cargo"
-version = "1.0.22"
+version = "1.0.23"
 source = { editable = "cargo" }
 dependencies = [
     { name = "stimela" },
