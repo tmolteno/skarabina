@@ -1,5 +1,7 @@
 venv
 *.ms
+# Local bench data: the input MS, its rotated flag versions, scratch (bench/flag_timing.py)
+.bench/
 *.deps
 *.full
 # Byte-compiled / optimized / DLL files

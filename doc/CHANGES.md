@@ -3,6 +3,21 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **casacure 3.8.38 in the lock** (from 3.8.33): python-casacore parity
+  fixes to the binding skarabina runs on — `getcol` refuses columns whose
+  rows differ in shape, the slice APIs validate like casacore and take its
+  scalar corners, fixed-shape string arrays store the way casacore does,
+  `getvarcol` keys from row 0, and another writer's added columns are
+  visible on reopen — plus `iscelldefined`, `getcellslicenp` /
+  `putcellslice`, and one abi3 wheel per platform.  The flag bench measures
+  identically on the synthetic 430k-row workload (interleaved A/B, medians
+  42.0 s on 3.8.33 vs 41.3 s on 3.8.38, same 75.05 % flagged).
+- The local bench tree `.bench/` (the input MS, its rotated flag versions,
+  the scratch directory) is gitignored — AGENTS.md already described it as
+  such.
+
 ## [1.0.22]
 
 ### Changed
