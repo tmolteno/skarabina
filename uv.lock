@@ -322,20 +322,21 @@ array = [
 
 [[package]]
 name = "dask-ms-2"
-version = "0.2.33"
+version = "0.2.34"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "appdirs" },
     { name = "cacheout" },
+    { name = "casacure" },
     { name = "dask", extra = ["array"] },
     { name = "donfig" },
     { name = "fsspec" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/20/71/ce780ecd443428e493a3dcc84532862a5c8430d75dbc294d6287ee370587/dask_ms_2-0.2.33.tar.gz", hash = "sha256:a6f86970affe74276863e2ecb0557de7dbeca38e6e8ff14c9020cc3469e02577", size = 162571, upload-time = "2026-11-02T02:31:01.686Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5c/bc/9fb4e921bdac6fd8f2fb332624178aca54741130dea702a137f3f3f2c79c/dask_ms_2-0.2.34.tar.gz", hash = "sha256:270bb60a7621a7589d799722b2b5984416038509f9aaa8dcf30efb28da4014ae", size = 161175, upload-time = "2026-11-06T04:13:52.173Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/df/1ad0887ba11a867ebd7de417521ffd192dcd3632853fa066c7af9282e5a5/dask_ms_2-0.2.33-py3-none-any.whl", hash = "sha256:0553137044637d93e47538a7d234cb3a8586918dfbb3c947bf63189da2b55304", size = 172776, upload-time = "2026-11-02T02:31:00.213Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/ab/102a91e7053bc679c78404e6b39a21e4b43ad4a51c2d654956fa354432ca/dask_ms_2-0.2.34-py3-none-any.whl", hash = "sha256:14f0d6e51797c1d3bb933b88052521572cfbb87497d49abd43d0de39d3cdf5f9", size = 172865, upload-time = "2026-11-06T04:13:50.365Z" },
 ]
 
 [package.optional-dependencies]
