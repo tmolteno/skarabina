@@ -30,7 +30,13 @@ dependencies = [
     # dask-ms keeps CHAN_FREQ on casacure-created SPECTRAL_WINDOW tables)
     # and honour dminfo on every creation path (tiled fixtures, cell-split
     # tiles).
-    "casacure>=3.8.33",
+    #
+    # >= 3.8.40: 3.8.40 writes string-array keywords (QuantumUnits on TIME/
+    # UVW/INTERVAL, ...) as Array<String> instead of {shape, array}
+    # sub-records (casacure#40, this repo's #14) -- without it CASA refuses
+    # the averaged MS this tool writes outright (TableRecordRep::
+    # get_pointer - incorrect data type used for field QuantumUnits).
+    "casacure>=3.8.40",
     "zarr>=2.0",
     "angle-parser>=0.1.0",
     "matplotlib>=3.10.9",

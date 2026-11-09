@@ -231,3 +231,36 @@ def test_multi_ddid_ms_is_rejected(tmp_path):
 
     with pytest.raises(RuntimeError, match="DATA_DESC_ID"):
         DaskMS(in_ms)
+
+
+def test_written_ms_column_keywords_are_arrays(tmp_path):
+    """skarabina#14: column keywords must be arrays on disk, not sub-records.
+
+    casacure <= 3.8.39 wrote list keywords (``QuantumUnits``) as
+    ``{shape, array}`` sub-records where casacore declares ``Array<String>``,
+    and CASA then refuses the whole MS
+    (``TableRecordRep::get_pointer - incorrect data type used for field
+    QuantumUnits``).  Fixed in casacure 3.8.40 (casacure#40), which is why
+    the floor is now ``casacure>=3.8.40``.
+    """
+    in_ms = make_synthetic_ms(tmp_path / "in.ms", nchan=4, nrow=4)
+    ms = DaskMS(in_ms)
+    out_ms = str(tmp_path / "out.ms")
+    ms.write_new_ms(out_ms, clobber=True)
+
+    out = table(out_ms, ack=False)
+    try:
+        checked = 0
+        for col in out.colnames():
+            units = out.getcolkeywords(col).get("QuantumUnits")
+            if units is None:
+                continue
+            checked += 1
+            assert not isinstance(units, dict), (
+                f"{col}.QuantumUnits written as a sub-record {units!r} "
+                "(casacure#40) -- CASA cannot open this MS"
+            )
+            assert list(units), f"{col}.QuantumUnits is empty"
+        assert checked, "no column carried a QuantumUnits keyword"
+    finally:
+        out.close()

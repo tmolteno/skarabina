@@ -51,18 +51,18 @@ wheels = [
 
 [[package]]
 name = "casacure"
-version = "3.8.39"
+version = "3.8.40"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/49/9b/ba5975561eb1da3e62a4cb9f360ec1d3ff807fc46ed3de597d8212d1df21/casacure-3.8.39.tar.gz", hash = "sha256:bd690f5a14bc363c34599cbcc0374986a1db59b026c024239ead34aa35052e76", size = 464224, upload-time = "2026-11-07T03:08:25.194Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7f/bc/36d8ded963d1c9fa1fcfb7f35d4f1e6a039807f847b41f386c4ac37da582/casacure-3.8.40.tar.gz", hash = "sha256:c231d809f7ec52b586e6d1042678dfa5b0f260f7e13437912296e431ba332ae4", size = 466149, upload-time = "2026-11-09T04:25:10.192Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/dd/58/5521228c6f0a4db285c0232e5496730fd5a8c53cdbdad09d9f3fc0fb0a63/casacure-3.8.39-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:fc7ccd00505d931e8f5076b5a9e23bc550bc68e8fd5bd8f1e424c50bbc308b66", size = 2095252, upload-time = "2026-11-07T03:08:16.533Z" },
-    { url = "https://files.pythonhosted.org/packages/51/da/8668eb5621f9be79241c2f1e6374c759a65192b4b7bdde9ebccb4ecd3eee/casacure-3.8.39-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:61baad735eb2080de81ebfd2bcab59652833c8f780a3835c296a7b83f1e899f6", size = 2139909, upload-time = "2026-11-07T03:08:18.781Z" },
-    { url = "https://files.pythonhosted.org/packages/87/4a/9adabb947daa26e474ee86808d742efa43a66378408f8ced7d5becf33302/casacure-3.8.39-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:cb269c72bd77360948b30143cca9c762ddcb62bb61ca848c6fdbc6d274261aa0", size = 2278841, upload-time = "2026-11-07T03:08:20.931Z" },
-    { url = "https://files.pythonhosted.org/packages/7b/8f/1e466c07162a152db3f28c13a0cc697598030dcddb8e25c07a323d38d6ca/casacure-3.8.39-cp39-abi3-win_amd64.whl", hash = "sha256:0223f3be51abf8212c87d9c37463c981d112f65b21f3b740c92349712067daca", size = 2086003, upload-time = "2026-11-07T03:08:23.159Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/82/688128519c7c7e6799c19f6839f7c6f693f4acf6d35e37e245e121a8a184/casacure-3.8.40-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:299ed045f1f6ed1d11d7b4efa21a5ae934191ab15659ca961c35b12fcef27599", size = 2096735, upload-time = "2026-11-09T04:25:01.622Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/27/2d379593c4d7b84765115a9704755454d3a60b47543cf45679e0113ecc6a/casacure-3.8.40-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:f6fe553b2a79fb3043fd7a94285ca5f9be4b1fc62904a2df3bae965b72a89920", size = 2139257, upload-time = "2026-11-09T04:25:03.612Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/27/fe072d8af0f89632e6ef4ac6aec64721b65a99793e26bba22391ea22dc43/casacure-3.8.40-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7a79d5be9d7fa497771275a6aea9a12c8aae59d3f0e0d3e11b01d3a175ddc784", size = 2282955, upload-time = "2026-11-09T04:25:06.199Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/72/7291658924db78ce9cd078812c42445648367f6a790c0b4b549a3b964940/casacure-3.8.40-cp39-abi3-win_amd64.whl", hash = "sha256:9c333468e758252a57454ae52d22f4f1fe4914839359971ebd6104f3eca741af", size = 2087751, upload-time = "2026-11-09T04:25:08.368Z" },
 ]
 
 [[package]]
@@ -1199,7 +1199,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "angle-parser", specifier = ">=0.1.0" },
-    { name = "casacure", specifier = ">=3.8.33" },
+    { name = "casacure", specifier = ">=3.8.40" },
     { name = "casacure", marker = "extra == 'casacure'", specifier = ">=3.8.33" },
     { name = "dask-ms-2", extras = ["casacure", "xarray", "zarr"] },
     { name = "matplotlib", specifier = ">=3.10.9" },

@@ -3,6 +3,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The written MS's column keywords are arrays again (skarabina#14,
+  casacure#40).** casacure <= 3.8.39 wrote list keywords (`QuantumUnits` on
+  TIME/UVW/INTERVAL/...) as `{shape, array}` sub-records where casacore
+  declares `Array<String>`, and CASA refused the whole averaged MS
+  (`TableRecordRep::get_pointer - incorrect data type used for field
+  QuantumUnits`). casacure 3.8.40 fixes the write; the floor moves to
+  `casacure>=3.8.40` and `test_written_ms_column_keywords_are_arrays` pins
+  the round-trip through `write_new_ms`.
+
 ## [1.0.23]
 
 ### Changed
