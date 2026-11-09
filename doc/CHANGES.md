@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.26]
+
 ### Fixed
 
 - **`--time-average-factor` now averages per baseline, not per row
