@@ -117,7 +117,14 @@ def test_summary_uvw_after_time_average(capsys):
     uvw = np.zeros((nrow, 3))
     uvw[0, 0] = 100.0  # u of row 0
 
-    ms = _make_full_ms(data, flag, uvw)
+    # Two baselines alternating (time-major): rows 0,2 are baseline (0,1),
+    # rows 1,3 are (1,0) — time_average groups by baseline (skarabina#15),
+    # so the (0,1) bin averages rows 0+2 and halves u from 100 to 50.
+    ms = _make_full_ms(
+        data, flag, uvw,
+        antenna1=np.array([0, 1, 0, 1], dtype=np.int32),
+        antenna2=np.array([1, 0, 1, 0], dtype=np.int32),
+    )
     ms.time_average(2)
 
     # Sanity: the live dataset's UVW has been averaged.
@@ -147,7 +154,12 @@ def test_barber_reads_live_dataset_after_averaging(capsys):
     flag = np.zeros((nrow, nchan, ncorr), dtype=bool)
     uvw = np.zeros((nrow, 3))
 
-    ms = _make_full_ms(data, flag, uvw)
+    # Two baselines alternating (time-major), as in the issue's example.
+    ms = _make_full_ms(
+        data, flag, uvw,
+        antenna1=np.array([0, 1, 0, 1], dtype=np.int32),
+        antenna2=np.array([1, 0, 1, 0], dtype=np.int32),
+    )
     ms.time_average(2)
 
     # After averaging the live dataset has 2 rows.

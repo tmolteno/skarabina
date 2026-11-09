@@ -2187,17 +2187,24 @@ class DaskMS:
 
     def time_average(self, factor):
         """
-        Average every <factor> consecutive rows into a single row.
+        Average every <factor> consecutive time samples of each baseline.
+
+        Rows are grouped by (FIELD_ID, SCAN_NUMBER, ANTENNA1, ANTENNA2) — the
+        baseline plus the boundaries a bin may not cross — and each group's
+        rows are binned by time rank, ``factor`` integrations per bin.  The
+        output is ordered time-major (bin centre, then baseline), so every
+        output timestamp carries the full baseline set and the row count stays
+        a multiple of the baseline count (killMS's conformance requirement).
+        Incomplete trailing bins are dropped, matching the old row trim.
 
         DATA, WEIGHT_SPECTRUM, and SIGMA_SPECTRUM average only unflagged
         visibilities (flagged entries are excluded from the mean / sum;
         WEIGHT_SPECTRUM is summed, SIGMA_SPECTRUM uses inverse-variance
-        combining).  Per-row metadata (UVW, TIME, INTERVAL, EXPOSURE)
-        excludes fully-flagged rows (FLAG_ROW True, or every visibility
-        in FLAG True): UVW and TIME are masked means, INTERVAL and
-        EXPOSURE are masked sums.  FLAG and FLAG_ROW are OR'd
-        (any flagged -> flagged).  ANTENNA1/2 keep the first row of each
-        group.
+        combining).  Geometry (UVW, TIME, INTERVAL, EXPOSURE) is averaged
+        **unmasked** over the whole bin: a fully-flagged bin keeps a valid
+        timestamp and UVW instead of being zeroed, and stays flagged through
+        FLAG / FLAG_ROW (OR'd, any flagged -> flagged).  ANTENNA1/2 and the
+        other per-row metadata are constant within a bin (its first row).
         """
         if factor < 2:
             return
@@ -2209,102 +2216,122 @@ class DaskMS:
                 f" {nrow} rows in the MS — skipping"
             )
             return
-        n_new = nrow // factor
-        trim = n_new * factor
-
-        print(
-            "Time-averaging: factor %d"
-            " → %d rows (discarding %d trailing rows)" % (factor, n_new, nrow - trim)
-        )
 
         row_dim = self.ds.DATA.dims[0]
 
-        # Step 1: compute averaged arrays from the ORIGINAL data.
-        # Block reductions use dask.array.coarsen (via _block_reduce), which
-        # averages every `factor` consecutive rows.  Unlike a manual reshape,
-        # coarsen tolerates row-chunk sizes that are not divisible by `factor`
-        # without fragmenting chunks, so it builds a far smaller task graph —
-        # important for very large MSes.
-        #
-        # Hoist the FLAG / FLAG_ROW row-slices once: they are consumed by
-        # several columns below, and a single slice keeps the task graph
-        # small (each independent slice is a separate graph node over the
-        # same underlying array).
-        flag_trim = self.ds["FLAG"].data[:trim]
-        flag_row_trim = self.ds["FLAG_ROW"].data[:trim]
+        # Labels and times are read eagerly: five small per-row columns
+        # (tens of MB even on a 1.8M-row MS) build the whole grouping, while
+        # every visibility column below stays lazy.
+        def _meta(name, dtype, default=0):
+            if name in self.ds.data_vars:
+                return np.asarray(self.ds[name].values).astype(dtype, copy=False)
+            return np.full(nrow, default, dtype=dtype)
+
+        a1 = _meta("ANTENNA1", np.int64)
+        a2 = _meta("ANTENNA2", np.int64)
+        scan = _meta("SCAN_NUMBER", np.int64)
+        field = _meta("FIELD_ID", np.int64)
+        time = _meta("TIME", np.float64)
+
+        # One group per (field, scan, baseline): bins never cross a scan or
+        # field boundary, and each baseline averages only its own rows —
+        # never a neighbouring baseline's (skarabina#15).
+        key = np.stack([field, scan, a1, a2], axis=1)
+        uniq, labels = np.unique(key, axis=0, return_inverse=True)
+        labels = labels.reshape(-1)
+
+        # Rank each row within its group in ascending TIME (this also
+        # tolerates input that is not time-sorted).
+        order = np.lexsort((time, labels))
+        sizes = np.bincount(labels, minlength=uniq.shape[0])
+        starts = np.cumsum(sizes) - sizes
+        within = np.empty(nrow, dtype=np.int64)
+        within[order] = np.arange(nrow) - np.repeat(starts, sizes)
+
+        # Complete bins only, per group — the old "discarding trailing rows"
+        # behaviour, now per baseline instead of over the whole table.
+        n_bins = sizes // factor
+        full_limit = (n_bins * factor)[labels]
+        in_bin = within < full_limit
+        if not in_bin.any():
+            print(
+                f"Time-averaging: factor {factor} exceeds every baseline's"
+                f" integration count — skipping"
+            )
+            return
+        kept = np.nonzero(in_bin)[0]
+        n_new = int(n_bins.sum())
+        print(
+            "Time-averaging: factor %d → %d rows across %d baseline groups"
+            " (%d trailing rows dropped)" % (factor, n_new, len(uniq), nrow - len(kept))
+        )
+
+        # Output order: time-major.  Every row of a bin shares the bin's
+        # centre TIME, so sorting by (bin centre, baseline label) puts each
+        # timestamp's full baseline set together, consistently labelled, and
+        # keeps scans/fields in time order (killMS reshapes rows as
+        # (n_time_blocks, nbl, ...)).
+        binid = within // factor
+        maxb = int(binid.max()) + 1
+        gid = labels[kept].astype(np.int64) * maxb + binid[kept]
+        counts = np.bincount(gid)
+        bin_mean = np.bincount(gid, weights=time[kept]) / np.maximum(counts, 1)
+        centre = np.empty(nrow, dtype=np.float64)
+        centre[kept] = bin_mean[gid]
+        perm = kept[np.lexsort((labels[kept], centre[kept]))]
+
+        # Reorder the whole dataset first; afterwards every column lives in
+        # bins of exactly `factor` consecutive rows, so the block reductions
+        # below average one bin per output row.
+        self.ds = self.ds.isel({row_dim: perm})
+
+        flag = self.ds["FLAG"].data
+        flag_row = self.ds["FLAG_ROW"].data
 
         averaged = {}
         if "DATA" in self.ds.data_vars:
-            d = self.ds["DATA"].data[:trim]
-            d_masked = da.where(flag_trim, 0j, d)
-            n_unflagged = _block_reduce(np.sum, (~flag_trim).astype(np.float64), factor, 0)
+            d = self.ds["DATA"].data
+            d_masked = da.where(flag, 0j, d)
+            n_unflagged = _block_reduce(np.sum, (~flag).astype(np.float64), factor, 0)
             n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
             averaged["DATA"] = _block_reduce(np.sum, d_masked, factor, 0) / n_safe
 
         if "WEIGHT_SPECTRUM" in self.ds.data_vars:
-            w = self.ds["WEIGHT_SPECTRUM"].data[:trim]
+            w = self.ds["WEIGHT_SPECTRUM"].data
             # Weight = 1/σ². Combined weight = Σ wᵢ (sum of unflagged).
-            w_masked = da.where(flag_trim, 0, w)
+            w_masked = da.where(flag, 0, w)
             averaged["WEIGHT_SPECTRUM"] = _block_reduce(np.sum, w_masked, factor, 0)
 
         if "SIGMA_SPECTRUM" in self.ds.data_vars:
-            s = self.ds["SIGMA_SPECTRUM"].data[:trim]
+            s = self.ds["SIGMA_SPECTRUM"].data
             # σ̄ = 1 / √(Σ 1/σ²) — sum inverse variances, then invert.
-            inv_var = da.where(flag_trim, 0, 1.0 / (s * s))
+            inv_var = da.where(flag, 0, 1.0 / (s * s))
             sum_inv_var = _block_reduce(np.sum, inv_var, factor, 0)
             sum_safe = da.where(sum_inv_var == 0, 1, sum_inv_var)
             averaged["SIGMA_SPECTRUM"] = da.sqrt(1.0 / sum_safe)
 
-        # Per-row metadata (UVW, TIME, INTERVAL, EXPOSURE) excludes
-        # fully-flagged rows, using the same "row is bad" definition as
-        # optimize(): FLAG_ROW True, or every visibility in FLAG True.
-        # A partially-flagged row still carries a valid timestamp and
-        # baseline, so it continues to contribute.  UVW/TIME are masked
-        # means; INTERVAL/EXPOSURE are masked sums (combined exposure of
-        # N integrations is the sum of the unflagged ones).
-        row_bad = da.logical_or(
-            flag_row_trim,
-            da.all(flag_trim, axis=(1, 2)),
-        )
-        row_good = da.logical_not(row_bad).astype(np.float64)
-        n_good = _block_reduce(np.sum, row_good, factor, 0)
-        n_good_safe = da.where(n_good == 0, 1, n_good)
-
+        # Geometry is averaged UNMASKED over the bin: TIME/UVW take the bin
+        # centre (a mean of every sample, flagged or not), INTERVAL and
+        # EXPOSURE sum the bin's integrations.  A fully-flagged bin therefore
+        # keeps a valid timestamp and uvw (the old masked mean divided 0/1
+        # and zeroed them) and stays flagged through FLAG / FLAG_ROW.
         for col in ("UVW", "TIME"):
             if col in self.ds.data_vars:
-                v = self.ds[col].data[:trim]
-                # Broadcast the (nrow,) good-mask against v's trailing dims.
-                mask = da.reshape(
-                    row_good, (row_good.shape[0],) + (1,) * (v.ndim - 1)
-                )
-                v_masked = v * mask
-                summed = _block_reduce(np.sum, v_masked, factor, 0)
-                # n_good is (n_new,); broadcast to summed's trailing dims.
-                ng = da.reshape(
-                    n_good_safe, (n_good_safe.shape[0],) + (1,) * (summed.ndim - 1)
-                )
-                averaged[col] = summed / ng
+                averaged[col] = _block_reduce(np.mean, self.ds[col].data, factor, 0)
 
         for col in ("INTERVAL", "EXPOSURE"):
             if col in self.ds.data_vars:
-                v = self.ds[col].data[:trim]
-                mask = da.reshape(
-                    row_good, (row_good.shape[0],) + (1,) * (v.ndim - 1)
-                )
-                averaged[col] = _block_reduce(np.sum, v * mask, factor, 0)
+                averaged[col] = _block_reduce(np.sum, self.ds[col].data, factor, 0)
 
-        averaged["FLAG"] = _block_reduce(np.any, flag_trim, factor, 0)
-        averaged["FLAG_ROW"] = _block_reduce(np.any, flag_row_trim, factor, 0)
-
-        # ANTENNA1/2 are constant within a group of consecutive rows;
-        # keep the first of each group via strided indexing.
-        for col in ("ANTENNA1", "ANTENNA2"):
-            if col in self.ds.data_vars:
-                averaged[col] = self.ds[col].data[0:trim:factor]
+        averaged["FLAG"] = _block_reduce(np.any, flag, factor, 0)
+        averaged["FLAG_ROW"] = _block_reduce(np.any, flag_row, factor, 0)
 
         # Step 2: subsample the dataset to keep every <factor>-th row.
+        # ANTENNA1/2, SCAN_NUMBER, FIELD_ID and every other per-row column
+        # are constant within a bin, so first-of-bin keeps them (no
+        # strided special case: the reorder above made them constant).
         # isel gives consistent dimensions and chunking (no conflicts).
-        keep_idx = np.arange(0, trim, factor)
+        keep_idx = np.arange(0, n_new * factor, factor)
         self.ds = self.ds.isel({row_dim: keep_idx})
 
         # Step 3: replace the averaged columns.  Since isel already

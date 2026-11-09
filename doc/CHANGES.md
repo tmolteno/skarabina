@@ -3,6 +3,28 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--time-average-factor` now averages per baseline, not per row
+  (skarabina#15).** The old code reduced every N consecutive ROWS, which only
+  works for baseline-major input; real MSs are time-major, so a factor of 2
+  averaged two *different* baselines at the same timestamp together, kept the
+  first baseline's antenna labels (half the baseline set vanished), zeroed
+  TIME/INTERVAL/UVW on fully-flagged groups (0/1 masked mean) and produced a
+  row count killMS rejects ("MS is non conformant!"). Rows are now grouped by
+  `(FIELD_ID, SCAN_NUMBER, ANTENNA1, ANTENNA2)` and binned by time rank within
+  the group; the output is ordered time-major (bin centre, then baseline), so
+  every timestamp keeps the full baseline set and `rows % nbl == 0`.
+  Geometry (TIME/UVW/INTERVAL/EXPOSURE) is averaged unmasked — a fully-flagged
+  bin keeps a valid timestamp and uvw and stays flagged — and incomplete
+  trailing bins are dropped per baseline, matching the old row trim. Verified
+  end-to-end against killMS's `ClassMS.ReadMSInfo` conformance check;
+  `frequency_average` was never affected (it reduces channels within a row).
+  New `tests/test_time_average_time_major.py` pins the issue's repro (5
+  timestamps x 6 baselines after factor 2, per-baseline means, no TIME=0,
+  scan boundaries); the avg-validation references were rewritten to group by
+  baseline too.
+
 ## [1.0.25]
 
 ### Fixed

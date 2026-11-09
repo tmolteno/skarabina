@@ -89,19 +89,55 @@ def _ref_freq_flag(flag, factor):
     return np.stack(out, axis=1)
 
 
-def _ref_time_data(data, flag, factor):
-    nrow = data.shape[0] // factor * factor
-    d = data[:nrow].reshape(-1, factor, data.shape[1], data.shape[2])
-    f = flag[:nrow].reshape(-1, factor, data.shape[1], data.shape[2])
+def _time_average_plan(a1, a2, time, factor):
+    """Independent numpy model of ``time_average``'s grouping (skarabina#15).
+
+    Groups rows by (antenna1, antenna2) — the fixtures have no FIELD_ID /
+    SCAN_NUMBER, which the implementation treats as constant — bins each
+    group by time rank (``factor`` integrations per bin, incomplete tails
+    dropped) and returns ``(perm, n_new)``: the output row order (bin centre,
+    then baseline) and the output row count.
+    """
+    a1 = np.asarray(a1)
+    a2 = np.asarray(a2)
+    time = np.asarray(time, dtype=float)
+    key = np.stack([a1, a2], axis=1)
+    _, labels = np.unique(key, axis=0, return_inverse=True)
+    labels = labels.reshape(-1)
+    order = np.lexsort((time, labels))
+    lab = labels[order]
+    sizes = np.bincount(lab)
+    starts = np.cumsum(sizes) - sizes
+    within = np.arange(len(order)) - np.repeat(starts, sizes)
+    n_bins = sizes // factor
+    keep = within < (n_bins * factor)[lab]
+    kept = order[keep]
+    lab_k, within_k = lab[keep], within[keep]
+    binid = within_k // factor
+    maxb = int(binid.max()) + 1
+    gid = lab_k.astype(np.int64) * maxb + binid
+    counts = np.bincount(gid)
+    bin_mean = np.bincount(gid, weights=time[kept]) / np.maximum(counts, 1)
+    centre = np.empty(len(time), dtype=float)
+    centre[kept] = bin_mean[gid]
+    perm = kept[np.lexsort((lab_k, centre[kept]))]
+    return perm, int(n_bins.sum())
+
+
+def _ref_time_data(data, flag, factor, perm):
+    d = data[perm]
+    f = flag[perm]
+    d = d.reshape(-1, factor, d.shape[1], d.shape[2])
+    f = f.reshape(-1, factor, f.shape[1], f.shape[2])
     num = np.where(f, 0, d).sum(1)
     den = (~f).sum(1).astype(float)
     den[den == 0] = 1
     return num / den
 
 
-def _ref_time_flag(flag, factor):
-    nrow = flag.shape[0] // factor * factor
-    return np.any(flag[:nrow].reshape(-1, factor, flag.shape[1], flag.shape[2]), axis=1)
+def _ref_time_flag(flag, factor, perm):
+    f = flag[perm]
+    return np.any(f.reshape(-1, factor, f.shape[1], f.shape[2]), axis=1)
 
 
 # ---- numpy references: WEIGHT_SPECTRUM, SIGMA_SPECTRUM, metadata ----
@@ -142,49 +178,38 @@ def _ref_freq_sigma(sigma, flag, factor):
     return np.stack(out, axis=1)
 
 
-def _ref_time_weight(weight, flag, factor):
-    """WEIGHT_SPECTRUM over rows: sum of unflagged weights."""
-    nrow = weight.shape[0] // factor * factor
-    f = flag[:nrow].reshape(-1, factor, weight.shape[1], weight.shape[2])
-    w = weight[:nrow].reshape(-1, factor, weight.shape[1], weight.shape[2])
+def _ref_time_weight(weight, flag, factor, perm):
+    """WEIGHT_SPECTRUM over a bin: sum of unflagged weights."""
+    f = flag[perm]
+    w = weight[perm]
+    f = f.reshape(-1, factor, f.shape[1], f.shape[2])
+    w = w.reshape(-1, factor, w.shape[1], w.shape[2])
     return np.sum(np.where(f, 0, w), axis=1)
 
 
-def _ref_time_sigma(sigma, flag, factor):
-    """SIGMA_SPECTRUM over rows: sqrt(1 / sum(1/sigma^2)) over unflagged."""
-    nrow = sigma.shape[0] // factor * factor
-    f = flag[:nrow].reshape(-1, factor, sigma.shape[1], sigma.shape[2])
-    s = sigma[:nrow].reshape(-1, factor, sigma.shape[1], sigma.shape[2])
+def _ref_time_sigma(sigma, flag, factor, perm):
+    """SIGMA_SPECTRUM over a bin: sqrt(1 / sum(1/sigma^2)) over unflagged."""
+    f = flag[perm]
+    s = sigma[perm]
+    f = f.reshape(-1, factor, f.shape[1], f.shape[2])
+    s = s.reshape(-1, factor, s.shape[1], s.shape[2])
     inv_var = np.where(f, 0, 1.0 / (s ** 2))
     sum_inv = np.sum(inv_var, axis=1)
     sum_safe = np.where(sum_inv == 0, 1, sum_inv)
     return np.sqrt(1.0 / sum_safe)
 
 
-def _ref_time_metadata(values, flag_row, flag, factor, op):
-    """Masked mean/sum over rows, excluding fully-flagged rows.
-
-    A row is excluded if FLAG_ROW is True OR every visibility in FLAG is
-    True (same definition as optimize()).  ``op`` is ``"mean"`` or
-    ``"sum"``.  ``values`` has shape (nrow,) or (nrow, k); ``flag`` has
-    shape (nrow, nchan, ncorr); ``flag_row`` has shape (nrow,).
+def _ref_time_metadata(values, factor, perm, op):
+    """Unmasked geometry over a bin: mean (TIME, UVW) or sum (INTERVAL,
+    EXPOSURE), by skarabina#15's spec — flags mask DATA/WEIGHT/SIGMA only,
+    never the geometry, so a fully-flagged bin keeps a valid timestamp.
+    ``op`` is ``"mean"`` or ``"sum"``; ``values`` is (nrow,) or (nrow, k).
     """
-    nrow = values.shape[0] // factor * factor
-    v = values[:nrow]
-    all_data_flagged = np.all(flag[:nrow], axis=(1, 2))
-    row_bad = np.logical_or(flag_row[:nrow], all_data_flagged)
-    row_good = np.logical_not(row_bad).astype(np.float64)
-    # Broadcast good-mask across trailing dims of values.
-    mask = row_good.reshape(-1, *([1] * (v.ndim - 1)))
-    v_good = v * mask
-    n_new = nrow // factor
-    summed = v_good.reshape(n_new, factor, *v.shape[1:]).sum(axis=1)
-    n_good = row_good.reshape(n_new, factor).sum(axis=1)
-    n_good_safe = np.where(n_good == 0, 1, n_good)
-    ng = n_good_safe.reshape(-1, *([1] * (summed.ndim - 1)))
+    v = np.asarray(values)[perm]
+    blocks = v.reshape(-1, factor, *v.shape[1:])
     if op == "mean":
-        return summed / ng
-    return summed
+        return blocks.mean(axis=1)
+    return blocks.sum(axis=1)
 
 
 @pytest.mark.parametrize("factor", [2, 3, 5])
@@ -216,16 +241,18 @@ def test_time_average_matches_reference(factor, row_chunk):
     ms = _make_ms(nrow, nchan, ncorr, row_chunk, 16)
     orig_data = ms.ds.DATA.data.compute()
     orig_flag = ms.ds.FLAG.data.compute()
+    perm, n_new = _time_average_plan(
+        ms.ds.ANTENNA1.data.compute(), ms.ds.ANTENNA2.data.compute(),
+        ms.ds.TIME.data.compute(), factor)
 
     ms.time_average(factor)
 
-    ref_d = _ref_time_data(orig_data, orig_flag, factor)
-    ref_f = _ref_time_flag(orig_flag, factor)
+    ref_d = _ref_time_data(orig_data, orig_flag, factor, perm)
+    ref_f = _ref_time_flag(orig_flag, factor, perm)
 
     got_d = ms.ds.DATA.data.compute()
     got_f = ms.ds.FLAG.data.compute()
 
-    n_new = nrow // factor
     assert got_d.shape[0] == n_new
     assert got_d.shape == ref_d.shape
     assert np.allclose(got_d, ref_d)
@@ -233,12 +260,16 @@ def test_time_average_matches_reference(factor, row_chunk):
 
 
 def test_time_average_antenna_is_first_of_block():
+    """ANTENNA1/2 stay constant within their bin (skarabina#15: rows are
+    grouped by baseline, so first-of-bin is that baseline)."""
     nrow = 30
     ms = _make_ms(nrow, 8, 2, row_chunk=7, chan_chunk=8)
-    ant = ms.ds.ANTENNA1.data.compute()
     ms.time_average(3)
     got = ms.ds.ANTENNA1.data.compute()
-    assert np.array_equal(got, ant[0 : 30 : 3])
+    # a1 = arange % 4: baselines 0..3 with 8,8,7,7 samples; factor 3 keeps two
+    # bins each, emitted time-major -> the baseline label cycles 0,1,2,3 twice.
+    assert np.array_equal(got, np.tile([0, 1, 2, 3], 2)), got
+    assert np.array_equal(ms.ds.ANTENNA2.data.compute(), got)
 
 
 def test_frequency_average_with_tail():
@@ -411,11 +442,13 @@ def test_time_average_all_flagged_group_no_nan():
     assert got_f[0, 0, 0] and not got_f[1, 0, 0]
 
 
-def test_time_average_metadata_excludes_fully_flagged_rows():
-    """Fully-flagged rows (FLAG_ROW=True OR all-FLAG=True) must not
-    contribute to TIME/UVW (mean) or INTERVAL/EXPOSURE (sum).
-    Partially-flagged rows still contribute."""
-    # 6 rows, 2 chan, 1 corr; factor 2 -> 3 output rows.
+def test_time_average_geometry_ignores_flags():
+    """Geometry is averaged UNMASKED (skarabina#15's spec): TIME/UVW take
+    the bin centre and INTERVAL/EXPOSURE sum every sample, flagged or not,
+    so a fully-flagged bin keeps a valid timestamp instead of being zeroed.
+    Flags mask DATA/WEIGHT/SIGMA only (covered elsewhere) and set FLAG."""
+    # 6 rows, 2 chan, 1 corr; factor 2 -> 3 output rows, one baseline
+    # (the fixture carries no antenna columns -> a single group).
     nrow, nchan, ncorr = 6, 2, 1
     data = np.zeros((nrow, nchan, ncorr), dtype=complex)
     flag = np.zeros((nrow, nchan, ncorr), dtype=bool)
@@ -426,9 +459,9 @@ def test_time_average_metadata_excludes_fully_flagged_rows():
     interval = np.full(nrow, 2.0)
     exposure = np.full(nrow, 2.0)
 
-    # Row 0: fully flagged via FLAG_ROW. Group 0 = {row0(bad), row1(good)}.
+    # Row 0: fully flagged via FLAG_ROW. Bin 0 = {row0(bad), row1(good)}.
     flag_row[0] = True
-    # Row 4: fully flagged via all-FLAG. Group 2 = {row4(bad), row5(good)}.
+    # Row 4: fully flagged via all-FLAG. Bin 2 = {row4(bad), row5(good)}.
     flag[4, :, :] = True
 
     ms = _make_ms_with_flags(data, flag, uvw=uvw, time=time,
@@ -441,27 +474,33 @@ def test_time_average_metadata_excludes_fully_flagged_rows():
     got_int = ms.ds.INTERVAL.data.compute()
     got_exp = ms.ds.EXPOSURE.data.compute()
 
-    # Group 0: only row1 contributes. TIME=10, INTERVAL/EXPOSURE=2.
-    assert np.allclose(got_time[0], 10.0)
-    assert np.allclose(got_uvw[0], uvw[1])
-    assert np.allclose(got_int[0], 2.0)
-    assert np.allclose(got_exp[0], 2.0)
-    # Group 1: rows 2,3 both good. TIME=(20+30)/2=25, INTERVAL=2+2=4.
+    # Bin 0 {0,1}: centre (0+10)/2 = 5, UVW mean, INTERVAL 2+2 = 4.
+    assert np.allclose(got_time[0], 5.0)
+    assert np.allclose(got_uvw[0], (uvw[0] + uvw[1]) / 2.0)
+    assert np.allclose(got_int[0], 4.0)
+    assert np.allclose(got_exp[0], 4.0)
+    # Bin 1 {2,3}: TIME=(20+30)/2=25, UVW mean, INTERVAL=4.
     assert np.allclose(got_time[1], 25.0)
     assert np.allclose(got_uvw[1], (uvw[2] + uvw[3]) / 2.0)
     assert np.allclose(got_int[1], 4.0)
     assert np.allclose(got_exp[1], 4.0)
-    # Group 2: only row5 contributes. TIME=50, INTERVAL/EXPOSURE=2.
-    assert np.allclose(got_time[2], 50.0)
-    assert np.allclose(got_uvw[2], uvw[5])
-    assert np.allclose(got_int[2], 2.0)
-    assert np.allclose(got_exp[2], 2.0)
+    # Bin 2 {4,5}: the all-flagged row still contributes its geometry.
+    assert np.allclose(got_time[2], 45.0)
+    assert np.allclose(got_uvw[2], (uvw[4] + uvw[5]) / 2.0)
+    assert np.allclose(got_int[2], 4.0)
+    assert np.allclose(got_exp[2], 4.0)
+    # ...and the flags themselves survive.
+    assert np.array_equal(ms.ds.FLAG_ROW.data.compute(),
+                          [True, False, False])
 
 
 def test_time_average_flagged_row_then_all_flag_group():
-    """Mixed: some rows fully flagged, and one group entirely flagged.
-    Metadata = 0 there (guarded denominator), and no NaN anywhere."""
-    # 6 rows, 2 chan, 1 corr; factor 2 -> 3 output rows.
+    """Mixed: some rows fully flagged, and one bin entirely flagged.
+
+    The all-flagged bin keeps valid geometry (skarabina#15: the old masked
+    mean divided 0/1 and zeroed TIME/INTERVAL), stays flagged, and nothing
+    is NaN."""
+    # 6 rows, 2 chan, 1 corr; factor 2 -> 3 output rows, one baseline.
     nrow, nchan, ncorr = 6, 2, 1
     data = np.zeros((nrow, nchan, ncorr), dtype=complex)
     flag = np.zeros((nrow, nchan, ncorr), dtype=bool)
@@ -469,10 +508,10 @@ def test_time_average_flagged_row_then_all_flag_group():
     time = np.arange(nrow, dtype=np.float64) * 10.0
     interval = np.full(nrow, 2.0)
 
-    # Group 0 (rows 0,1): both fully flagged via FLAG_ROW.
+    # Bin 0 (rows 0,1): both fully flagged via FLAG_ROW.
     flag_row[0] = True
     flag_row[1] = True
-    # Group 1 (rows 2,3): row 2 bad, row 3 good.
+    # Bin 1 (rows 2,3): row 2 bad, row 3 good.
     flag_row[2] = True
 
     ms = _make_ms_with_flags(data, flag, time=time, interval=interval,
@@ -482,14 +521,21 @@ def test_time_average_flagged_row_then_all_flag_group():
     got_time = ms.ds.TIME.data.compute()
     got_int = ms.ds.INTERVAL.data.compute()
 
-    # Group 0 entirely bad -> guarded mean/sum = 0/0 = 0, no NaN.
-    assert np.allclose(got_time[0], 0.0)
-    assert np.allclose(got_int[0], 0.0)
+    # Bin 0 entirely flagged: geometry is the unmasked bin mean/sum.
+    assert np.allclose(got_time[0], 5.0)      # (0 + 10) / 2
+    assert np.allclose(got_int[0], 4.0)       # 2 + 2
     assert not np.any(np.isnan(got_time))
     assert not np.any(np.isnan(got_int))
-    # Group 1: only row 3 contributes. TIME=30, INTERVAL=2.
-    assert np.allclose(got_time[1], 30.0)
-    assert np.allclose(got_int[1], 2.0)
+    # ...and it stays flagged (FLAG_ROW is OR'd over the bin: bin 1 holds
+    # the partially-flagged row 2 as well).
+    assert np.array_equal(ms.ds.FLAG_ROW.data.compute(),
+                          [True, True, False])
+    # Bin 1: both rows contribute their geometry. TIME=(20+30)/2, INTERVAL=4.
+    assert np.allclose(got_time[1], 25.0)
+    assert np.allclose(got_int[1], 4.0)
+    # Bin 2: untouched rows. TIME=45, INTERVAL=4.
+    assert np.allclose(got_time[2], 45.0)
+    assert np.allclose(got_int[2], 4.0)
 
 
 @pytest.mark.parametrize("factor", [2, 3, 5])
@@ -527,16 +573,18 @@ def test_time_average_weight_sigma_match_reference(factor, row_chunk):
     orig_w = ms.ds.WEIGHT_SPECTRUM.data.compute()
     orig_s = ms.ds.SIGMA_SPECTRUM.data.compute()
     orig_f = ms.ds.FLAG.data.compute()
+    perm, n_new = _time_average_plan(
+        ms.ds.ANTENNA1.data.compute(), ms.ds.ANTENNA2.data.compute(),
+        ms.ds.TIME.data.compute(), factor)
 
     ms.time_average(factor)
 
-    ref_w = _ref_time_weight(orig_w, orig_f, factor)
-    ref_s = _ref_time_sigma(orig_s, orig_f, factor)
+    ref_w = _ref_time_weight(orig_w, orig_f, factor, perm)
+    ref_s = _ref_time_sigma(orig_s, orig_f, factor, perm)
 
     got_w = ms.ds.WEIGHT_SPECTRUM.data.compute()
     got_s = ms.ds.SIGMA_SPECTRUM.data.compute()
 
-    n_new = nrow // factor
     assert got_w.shape[0] == n_new
     assert got_s.shape[0] == n_new
     assert np.allclose(got_w, ref_w)
@@ -544,8 +592,8 @@ def test_time_average_weight_sigma_match_reference(factor, row_chunk):
 
 
 def test_time_average_metadata_matches_reference():
-    """TIME/UVW (masked mean) and INTERVAL/EXPOSURE (masked sum) over
-    rows match the numpy reference that excludes fully-flagged rows."""
+    """TIME/UVW (bin-centre mean) and INTERVAL/EXPOSURE (bin sum) match
+    the unmasked numpy reference (skarabina#15's geometry spec)."""
     nrow, nchan, ncorr = 40, 16, 2
     ms = _make_ms(nrow, nchan, ncorr, row_chunk=11, chan_chunk=16)
     # Mark some rows fully flagged via FLAG_ROW, some via all-FLAG.
@@ -564,15 +612,18 @@ def test_time_average_metadata_matches_reference():
     orig_uvw = ms.ds.UVW.data.compute()
     orig_int = ms.ds.INTERVAL.data.compute()
     orig_exp = ms.ds.EXPOSURE.data.compute()
-    flag = ms.ds.FLAG.data.compute()
 
     factor = 4
+    perm, n_new = _time_average_plan(
+        ms.ds.ANTENNA1.data.compute(), ms.ds.ANTENNA2.data.compute(),
+        orig_time, factor)
     ms.time_average(factor)
 
-    ref_time = _ref_time_metadata(orig_time, flag_row, flag, factor, "mean")
-    ref_uvw = _ref_time_metadata(orig_uvw, flag_row, flag, factor, "mean")
-    ref_int = _ref_time_metadata(orig_int, flag_row, flag, factor, "sum")
-    ref_exp = _ref_time_metadata(orig_exp, flag_row, flag, factor, "sum")
+    ref_time = _ref_time_metadata(orig_time, factor, perm, "mean")
+    ref_uvw = _ref_time_metadata(orig_uvw, factor, perm, "mean")
+    ref_int = _ref_time_metadata(orig_int, factor, perm, "sum")
+    ref_exp = _ref_time_metadata(orig_exp, factor, perm, "sum")
+    assert ms.ds.TIME.shape[0] == n_new
 
     assert np.allclose(ms.ds.TIME.data.compute(), ref_time)
     assert np.allclose(ms.ds.UVW.data.compute(), ref_uvw)
@@ -593,14 +644,17 @@ def test_time_then_frequency_average_matches_reference():
     orig_s = ms.ds.SIGMA_SPECTRUM.data.compute()
 
     tfactor, ffactor = 3, 4
+    perm, _ = _time_average_plan(
+        ms.ds.ANTENNA1.data.compute(), ms.ds.ANTENNA2.data.compute(),
+        ms.ds.TIME.data.compute(), tfactor)
     ms.time_average(tfactor)
     ms.frequency_average(ffactor)
 
     # Reference: apply time then freq references in sequence.
-    d = _ref_time_data(orig_data, orig_flag, tfactor)
-    f = _ref_time_flag(orig_flag, tfactor)
-    w = _ref_time_weight(orig_w, orig_flag, tfactor)
-    s = _ref_time_sigma(orig_s, orig_flag, tfactor)
+    d = _ref_time_data(orig_data, orig_flag, tfactor, perm)
+    f = _ref_time_flag(orig_flag, tfactor, perm)
+    w = _ref_time_weight(orig_w, orig_flag, tfactor, perm)
+    s = _ref_time_sigma(orig_s, orig_flag, tfactor, perm)
 
     d2 = _ref_freq_data(d, f, ffactor)
     f2 = _ref_freq_flag(f, ffactor)
@@ -631,19 +685,23 @@ def test_frequency_then_time_average_matches_reference():
     orig_s = ms.ds.SIGMA_SPECTRUM.data.compute()
 
     tfactor, ffactor = 3, 4
+    perm, _ = _time_average_plan(
+        ms.ds.ANTENNA1.data.compute(), ms.ds.ANTENNA2.data.compute(),
+        ms.ds.TIME.data.compute(), tfactor)
     ms.frequency_average(ffactor)
     ms.time_average(tfactor)
 
-    # Reference: apply freq then time references in sequence.
+    # Reference: apply freq then time references in sequence (frequency
+    # averaging does not move rows, so the same grouping plan applies).
     d = _ref_freq_data(orig_data, orig_flag, ffactor)
     f = _ref_freq_flag(orig_flag, ffactor)
     w = _ref_freq_weight(orig_w, orig_flag, ffactor)
     s = _ref_freq_sigma(orig_s, orig_flag, ffactor)
 
-    d2 = _ref_time_data(d, f, tfactor)
-    f2 = _ref_time_flag(f, tfactor)
-    w2 = _ref_time_weight(w, f, tfactor)
-    s2 = _ref_time_sigma(s, f, tfactor)
+    d2 = _ref_time_data(d, f, tfactor, perm)
+    f2 = _ref_time_flag(f, tfactor, perm)
+    w2 = _ref_time_weight(w, f, tfactor, perm)
+    s2 = _ref_time_sigma(s, f, tfactor, perm)
 
     got_d = ms.ds.DATA.data.compute()
     got_f = ms.ds.FLAG.data.compute()

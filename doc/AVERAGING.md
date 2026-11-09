@@ -78,16 +78,25 @@ The `summary()` function reports:
 convention as `skarabina-analyze --image-fov`.  ℓ -- the distance from the phase
 centre to its edge -- is half of it (0.5° ≈ 0.0087 rad by default).
 
-The `--time-average-factor N` option combines every N consecutive rows,
-averaging DATA/UVW/TIME, summing WEIGHT_SPECTRUM/INTERVAL/EXPOSURE,
-inverse-variance combining SIGMA_SPECTRUM, and OR-ing FLAG columns —
-excluding flagged data from each.  This reduces data volume before
-`--optimize`.
+The `--time-average-factor N` option combines every N consecutive time
+samples **of each baseline**, averaging DATA/UVW/TIME, summing
+WEIGHT_SPECTRUM/INTERVAL/EXPOSURE, inverse-variance combining
+SIGMA_SPECTRUM, and OR-ing FLAG columns — excluding flagged data from the
+visibilities.  This reduces data volume before `--optimize`.
 
 ## Time averaging (`--time-average-factor`)
 
-Averages every *N* consecutive rows into a single row, reducing the
-measurement set size by a factor of *N* (≈ *N*).
+Averages every *N* consecutive time samples **per baseline** into a single
+row, reducing the measurement set size by a factor of *N*.
+
+Rows are grouped by `(FIELD_ID, SCAN_NUMBER, ANTENNA1, ANTENNA2)` — so a bin
+never mixes baselines, scans or fields — and each group's rows are binned by
+time rank.  The output is ordered time-major (bin centre, then baseline):
+every output timestamp carries the full baseline set and the row count stays
+a multiple of the baseline count, which is what killMS's conformance check
+requires.  (Averaging *consecutive rows* instead — the behaviour before
+skarabina#15 — merged different baselines on a time-ordered MS, lost half the
+baseline labels and zeroed TIME on fully-flagged groups.)
 
 | Column          | Operation | Notes |
 |-----------------|-----------|-------|
@@ -95,15 +104,17 @@ measurement set size by a factor of *N* (≈ *N*).
 | WEIGHT_SPECTRUM | Sum         | w = 1/σ², combined: Σ wᵢ (flagged excluded) |
 | SIGMA_SPECTRUM  | 1/√(Σ 1/σ²) | Inverse-variance weighting (flagged excluded) |
 | FLAG, FLAG_ROW  | OR          | Any flagged → flagged |
-| UVW             | Masked mean | Fully-flagged rows excluded |
-| TIME            | Masked mean | Fully-flagged rows excluded |
-| INTERVAL        | Masked sum  | Fully-flagged rows excluded |
-| EXPOSURE        | Masked sum  | Fully-flagged rows excluded |
-| ANTENNA1/2      | First       | Same baseline in block |
+| UVW             | Mean       | Bin centre — unmasked, so a fully-flagged bin keeps a valid uvw |
+| TIME            | Mean       | Bin centre (mean of the bin's timestamps) — unmasked |
+| INTERVAL        | Sum        | The bin's integrations — unmasked |
+| EXPOSURE        | Sum        | The bin's integrations — unmasked |
+| ANTENNA1/2      | Group key  | Constant within the bin |
 
-A row is "fully flagged" when `FLAG_ROW` is True or every visibility in
-`FLAG` is True; partially-flagged rows still contribute to the per-row
-metadata.  Trailing rows (fewer than *N*) are discarded.  Run `--summary`
+Geometry (UVW/TIME/INTERVAL/EXPOSURE) is deliberately averaged **unmasked**:
+flags mask the visibilities only, so a fully-flagged bin keeps a valid
+timestamp and uvw instead of being zeroed, and stays flagged through
+FLAG/FLAG_ROW.  Incomplete trailing bins (fewer than *N* samples left in a
+baseline's group) are discarded, matching the old row trim.  Run `--summary`
 afterward to see the updated integration time.
 
 ## Frequency averaging (`--frequency-average-factor`)

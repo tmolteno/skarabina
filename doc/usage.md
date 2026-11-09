@@ -31,7 +31,8 @@
   --barber / --no-barber        Run barber flagging report (a read-only
                                 diagnostic; NOT a --flag verb)
   --barber-pol INTEGER          Polarization for barber
-  --time-average-factor INTEGER Average every N rows (see AVERAGING.md)
+  --time-average-factor INTEGER Average every N time samples per
+                                baseline (see AVERAGING.md)
   --frequency-average-factor INTEGER Average every N channels (see AVERAGING.md)
   --field-of-view FLOAT         Field-of-view FULL width (degrees,
                                 default 1.0). Same convention as

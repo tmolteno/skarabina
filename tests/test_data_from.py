@@ -84,8 +84,10 @@ def test_averaging_averages_the_substituted_column(tmp_path):
 
     data = _read(out, "DATA")
     assert data.shape == (2, nchan, 1)
-    assert np.allclose(data[0], 2.0), "mean of the first pair of corrected rows"
-    assert np.allclose(data[1], 6.0), "mean of the second pair"
+    # Rows are grouped by baseline (skarabina#15): the fixture alternates
+    # (0,1),(1,0), so pair 0 = rows 0+2 (times 0,20) and pair 1 = rows 1+3.
+    assert np.allclose(data[0], 3.0), "mean of corrected rows 0 and 2"
+    assert np.allclose(data[1], 5.0), "mean of corrected rows 1 and 3"
 
 
 def test_unknown_and_missing_sources():
