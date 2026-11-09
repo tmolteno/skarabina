@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.25]
+
 ### Fixed
 
 - **CASA can add MODEL_DATA to the written MS again (skarabina#14,
