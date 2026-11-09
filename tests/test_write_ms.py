@@ -7,6 +7,10 @@ describe the data that was actually written.  Getting that wrong produces an MS
 that no CASA task can read correctly, so it is worth testing against casacore
 rather than only against the bookkeeping arrays.
 """
+import glob
+import os
+import struct
+
 import dask.array as da
 import numpy as np
 import pytest
@@ -264,3 +268,56 @@ def test_written_ms_column_keywords_are_arrays(tmp_path):
         assert checked, "no column carried a QuantumUnits keyword"
     finally:
         out.close()
+
+
+_TABLE_RECORD = struct.pack(">I", len(b"TableRecord")) + b"TableRecord"
+
+
+def _record_types(ms):
+    """(table.dat, record type) of every framed TableRecord in the MS tree.
+
+    A framed ``TableRecord`` object is the type string, its version, a
+    ``RecordDesc`` object, and then the ``Int`` record type
+    (``RecordInterface``: 0 = Fixed, 1 = Variable).  ``table.dat`` is
+    canonical (big-endian) AipsIO.
+    """
+    out = []
+    for path in sorted(glob.glob(os.path.join(ms, "**", "table.dat"), recursive=True)):
+        with open(path, "rb") as f:
+            b = f.read()
+        i = b.find(_TABLE_RECORD)
+        while i >= 0:
+            rd = i + len(_TABLE_RECORD) + 4  # past the TableRecord version
+            assert b[rd + 8:rd + 18] == b"RecordDesc", path
+            (rd_len,) = struct.unpack(">I", b[rd:rd + 4])
+            (rtype,) = struct.unpack(">i", b[rd + rd_len:rd + rd_len + 4])
+            out.append((os.path.relpath(path, ms), rtype))
+            i = b.find(_TABLE_RECORD, i + 1)
+    return out
+
+
+def test_written_ms_keyword_records_are_variable(tmp_path):
+    """The written MS's keyword sets must be Variable records, as casacore
+    writes them.
+
+    casacure <= 3.8.40 wrote every keyword record as Fixed (record type 0).
+    casacore and CASA cannot add a field to a Fixed record, so CASA's
+    ``clearcal`` could not add MODEL_DATA to the averaged MS
+    (``TableDesc::add; columns not disjoint``) and python-casacore could not
+    add a keyword or a tiled column.  Fixed in casacure 3.8.41
+    (casacure#41), which is why the floor is now ``casacure>=3.8.41``.
+    casacure itself does not enforce the record type, so this reads it
+    from disk.
+    """
+    in_ms = make_synthetic_ms(tmp_path / "in.ms", nchan=4, nrow=4)
+    ms = DaskMS(in_ms)
+    out_ms = str(tmp_path / "out.ms")
+    ms.write_new_ms(out_ms, clobber=True)
+
+    types = _record_types(out_ms)
+    assert types, "no keyword records found in the written MS"
+    fixed = [path for path, rtype in types if rtype != 1]
+    assert not fixed, (
+        f"Fixed keyword records in {sorted(set(fixed))} (casacure#41) -- "
+        "CASA cannot add MODEL_DATA to this MS"
+    )

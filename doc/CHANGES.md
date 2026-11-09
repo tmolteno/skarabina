@@ -3,6 +3,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **CASA can add MODEL_DATA to the written MS again (skarabina#14,
+  casacure#41).** casacure <= 3.8.40 wrote every keyword record as a Fixed
+  record, where casacore writes Variable ones. casacore and CASA cannot add
+  a field to a Fixed record, so stage 1's `clearcal` failed on the averaged
+  MS (`TableDesc::add; columns not disjoint`, leaving a half-added
+  MODEL_DATA behind) and python-casacore could not add a keyword or a tiled
+  column. casacure 3.8.41 fixes the write; the floor moves to
+  `casacure>=3.8.41` and `test_written_ms_keyword_records_are_variable`
+  reads the record types of the written MS from disk (casacure itself does
+  not enforce them).
+
 ## [1.0.24]
 
 ### Fixed

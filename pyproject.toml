@@ -36,7 +36,12 @@ dependencies = [
     # sub-records (casacure#40, this repo's #14) -- without it CASA refuses
     # the averaged MS this tool writes outright (TableRecordRep::
     # get_pointer - incorrect data type used for field QuantumUnits).
-    "casacure>=3.8.40",
+    #
+    # >= 3.8.41: 3.8.41 writes keyword records Variable, as casacore does
+    # (casacure#41); with the Fixed records of <= 3.8.40, CASA clearcal
+    # cannot add MODEL_DATA to the averaged MS (TableDesc::add; columns not
+    # disjoint).
+    "casacure>=3.8.41",
     "zarr>=2.0",
     "angle-parser>=0.1.0",
     "matplotlib>=3.10.9",
