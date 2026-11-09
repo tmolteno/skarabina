@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.24]
+
 ### Fixed
 
 - **The written MS's column keywords are arrays again (skarabina#14,
