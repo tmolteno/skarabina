@@ -265,6 +265,50 @@ def _block_reduce(func, arr, factor, axis):
     return da_coarsen(func, arr, {axis: factor}, trim_excess=True)
 
 
+def _flag_aware_average(bsum, flag, data=None, weight=None, sigma=None):
+    """Average blocks of samples with CASA ``mstransform``'s flag semantics.
+
+    ``bsum(x)`` sums ``x`` over each block (the bin of a time average, the
+    channel group of a frequency average) and returns one value per output
+    sample.  ``flag`` is the input flag cube, already including FLAG_ROW
+    where that applies.
+
+    Per output sample (skarabina#16):
+
+    * if any input sample is unflagged, DATA is the mean of the unflagged
+      samples, WEIGHT_SPECTRUM the sum of their weights and SIGMA_SPECTRUM
+      ``1/sqrt(sum 1/sigma^2)`` over them, and the output is **unflagged**;
+    * if every input sample is flagged, DATA / WEIGHT_SPECTRUM /
+      SIGMA_SPECTRUM are taken over **all** samples and the output is
+      flagged -- the data are kept, not zeroed.
+
+    That is what ``mstransform`` does for ``timeaverage`` and
+    ``chanaverage``: an output sample is flagged only when all of its input
+    samples are.  (Before 1.0.27 the flag was OR'd: one flagged input
+    flagged an output whose unflagged average had just been computed.)
+
+    Returns a dict with FLAG and whichever of DATA / WEIGHT_SPECTRUM /
+    SIGMA_SPECTRUM were given.
+    """
+    n_unf = bsum((~flag).astype(np.float64))
+    has = n_unf > 0
+    out = {"FLAG": ~has}
+    if data is not None:
+        n_all = bsum(da.ones_like(flag, dtype=np.float64))
+        mean_unf = bsum(da.where(flag, 0j, data)) / da.where(has, n_unf, 1)
+        mean_all = bsum(data) / da.where(n_all == 0, 1, n_all)
+        out["DATA"] = da.where(has, mean_unf, mean_all)
+    if weight is not None:
+        out["WEIGHT_SPECTRUM"] = da.where(
+            has, bsum(da.where(flag, 0, weight)), bsum(weight)
+        )
+    if sigma is not None:
+        inv_var = 1.0 / (sigma * sigma)
+        sum_inv = da.where(has, bsum(da.where(flag, 0, inv_var)), bsum(inv_var))
+        out["SIGMA_SPECTRUM"] = da.sqrt(1.0 / da.where(sum_inv == 0, 1, sum_inv))
+    return out
+
+
 @contextmanager
 def _maybe_quiet_stderr():
     """Suppress stderr unless root logger is at DEBUG level."""
@@ -2197,14 +2241,17 @@ class DaskMS:
         a multiple of the baseline count (killMS's conformance requirement).
         Incomplete trailing bins are dropped, matching the old row trim.
 
-        DATA, WEIGHT_SPECTRUM, and SIGMA_SPECTRUM average only unflagged
-        visibilities (flagged entries are excluded from the mean / sum;
-        WEIGHT_SPECTRUM is summed, SIGMA_SPECTRUM uses inverse-variance
-        combining).  Geometry (UVW, TIME, INTERVAL, EXPOSURE) is averaged
-        **unmasked** over the whole bin: a fully-flagged bin keeps a valid
-        timestamp and UVW instead of being zeroed, and stays flagged through
-        FLAG / FLAG_ROW (OR'd, any flagged -> flagged).  ANTENNA1/2 and the
-        other per-row metadata are constant within a bin (its first row).
+        Flags follow CASA ``mstransform`` (skarabina#16,
+        :func:`_flag_aware_average`): a row with FLAG_ROW set counts as
+        flagged everywhere; DATA, WEIGHT_SPECTRUM and SIGMA_SPECTRUM are
+        taken over a bin's unflagged samples (mean / sum / inverse-variance)
+        and the output sample is unflagged; only a sample whose every input
+        is flagged is flagged, and it keeps the average of all of them.
+        FLAG_ROW is set where every output sample of the row is flagged.
+        Geometry (UVW, TIME, INTERVAL, EXPOSURE) is averaged **unmasked**
+        over the whole bin: a fully-flagged bin keeps a valid timestamp and
+        UVW.  ANTENNA1/2 and the other per-row metadata are constant within
+        a bin (its first row).
         """
         if factor < 2:
             return
@@ -2285,30 +2332,23 @@ class DaskMS:
         # below average one bin per output row.
         self.ds = self.ds.isel({row_dim: perm})
 
-        flag = self.ds["FLAG"].data
-        flag_row = self.ds["FLAG_ROW"].data
+        # A row-flagged row counts as flagged in every channel and
+        # correlation (CASA's flag cube): its samples join no average.
+        flag = self.ds["FLAG"].data | self.ds["FLAG_ROW"].data[:, None, None]
 
-        averaged = {}
-        if "DATA" in self.ds.data_vars:
-            d = self.ds["DATA"].data
-            d_masked = da.where(flag, 0j, d)
-            n_unflagged = _block_reduce(np.sum, (~flag).astype(np.float64), factor, 0)
-            n_safe = da.where(n_unflagged == 0, 1, n_unflagged)
-            averaged["DATA"] = _block_reduce(np.sum, d_masked, factor, 0) / n_safe
+        def _vars(name):
+            return self.ds[name].data if name in self.ds.data_vars else None
 
-        if "WEIGHT_SPECTRUM" in self.ds.data_vars:
-            w = self.ds["WEIGHT_SPECTRUM"].data
-            # Weight = 1/σ². Combined weight = Σ wᵢ (sum of unflagged).
-            w_masked = da.where(flag, 0, w)
-            averaged["WEIGHT_SPECTRUM"] = _block_reduce(np.sum, w_masked, factor, 0)
-
-        if "SIGMA_SPECTRUM" in self.ds.data_vars:
-            s = self.ds["SIGMA_SPECTRUM"].data
-            # σ̄ = 1 / √(Σ 1/σ²) — sum inverse variances, then invert.
-            inv_var = da.where(flag, 0, 1.0 / (s * s))
-            sum_inv_var = _block_reduce(np.sum, inv_var, factor, 0)
-            sum_safe = da.where(sum_inv_var == 0, 1, sum_inv_var)
-            averaged["SIGMA_SPECTRUM"] = da.sqrt(1.0 / sum_safe)
+        # mstransform's semantics (skarabina#16): an output sample is the
+        # mean of its unflagged inputs and unflagged; it is flagged only
+        # when every input is, and then keeps the mean of all of them.
+        averaged = _flag_aware_average(
+            lambda x: _block_reduce(np.sum, x, factor, 0),
+            flag,
+            data=_vars("DATA"),
+            weight=_vars("WEIGHT_SPECTRUM"),
+            sigma=_vars("SIGMA_SPECTRUM"),
+        )
 
         # Geometry is averaged UNMASKED over the bin: TIME/UVW take the bin
         # centre (a mean of every sample, flagged or not), INTERVAL and
@@ -2323,8 +2363,10 @@ class DaskMS:
             if col in self.ds.data_vars:
                 averaged[col] = _block_reduce(np.sum, self.ds[col].data, factor, 0)
 
-        averaged["FLAG"] = _block_reduce(np.any, flag, factor, 0)
-        averaged["FLAG_ROW"] = _block_reduce(np.any, flag_row, factor, 0)
+        # FLAG_ROW follows FLAG: an output row is row-flagged when every one
+        # of its samples is flagged (mstransform), so a bin with one bad
+        # integration no longer loses the good one.
+        averaged["FLAG_ROW"] = da.all(averaged["FLAG"], axis=(1, 2))
 
         # Step 2: subsample the dataset to keep every <factor>-th row.
         # ANTENNA1/2, SCAN_NUMBER, FIELD_ID and every other per-row column
@@ -2356,10 +2398,12 @@ class DaskMS:
         """
         Average every <factor> consecutive frequency channels into one.
 
-        DATA, WEIGHT_SPECTRUM, and SIGMA_SPECTRUM average only unflagged
-        visibilities (flagged entries are excluded; WEIGHT_SPECTRUM is
-        summed, SIGMA_SPECTRUM uses inverse-variance combining).
-        FLAG is OR'd (any flagged -> flagged).
+        Flags follow CASA ``mstransform`` (skarabina#16,
+        :func:`_flag_aware_average`): DATA, WEIGHT_SPECTRUM and
+        SIGMA_SPECTRUM are taken over a group's unflagged channels (mean /
+        sum / inverse-variance) and the output channel is unflagged; only a
+        channel whose every input is flagged is flagged, and it keeps the
+        average of all of them.
         Trailing channels (fewer than <factor>) are combined into a
         single narrower channel rather than discarded.
         """
@@ -2395,71 +2439,32 @@ class DaskMS:
         chan_dim = self.ds.DATA.dims[1]
 
         # --- Compute averaged arrays ---
-        # Block reductions use _block_reduce (dask.array.coarsen) over the
-        # channel axis.  Unlike a manual reshape it tolerates channel-chunk
-        # sizes that are not divisible by `factor` without fragmenting the
-        # chunk grid, giving a much smaller task graph for large MSes.
-        # Trailing channels (n_rem) are averaged separately and appended.
-        averaged = {}
-
-        # DATA: masked mean (exclude flagged)
-        if "DATA" in self.ds.data_vars:
-            d = self.ds["DATA"].data[:, :trim, :]
-            f = self.ds["FLAG"].data[:, :trim, :]
-            d_masked = da.where(f, 0j, d)
-            n_unf = _block_reduce(np.sum, (~f).astype(np.float64), factor, 1)
-            n_safe = da.where(n_unf == 0, 1, n_unf)
-            avg = _block_reduce(np.sum, d_masked, factor, 1) / n_safe
+        # Block sums use _block_reduce (dask.array.coarsen) over the channel
+        # axis.  Unlike a manual reshape it tolerates channel-chunk sizes that
+        # are not divisible by `factor` without fragmenting the chunk grid,
+        # giving a much smaller task graph for large MSes.  The trailing
+        # channels (n_rem) are summed separately and appended as one channel.
+        def _chan_sum(x):
+            s = _block_reduce(np.sum, x[:, :trim, :], factor, 1)
             if n_rem > 0:
-                d_rem = self.ds["DATA"].data[:, trim:, :]
-                f_rem = self.ds["FLAG"].data[:, trim:, :]
-                d_rem_m = da.where(f_rem, 0j, d_rem)
-                n_unf_r = da.sum(da.logical_not(f_rem), axis=1)
-                n_safe_r = da.where(n_unf_r == 0, 1, n_unf_r)
-                avg_rem = (da.sum(d_rem_m, axis=1) / n_safe_r)[:, None, :]
-                avg = da.concatenate([avg, avg_rem], axis=1)
-            averaged["DATA"] = avg
+                s_rem = da.sum(x[:, trim:, :], axis=1, keepdims=True)
+                s = da.concatenate([s, s_rem], axis=1)
+            return s
 
-        # WEIGHT_SPECTRUM: sum of unflagged weights (w = 1/σ², Σ w)
-        if "WEIGHT_SPECTRUM" in self.ds.data_vars:
-            s = self.ds["WEIGHT_SPECTRUM"].data[:, :trim, :]
-            f = self.ds["FLAG"].data[:, :trim, :]
-            s_masked = da.where(f, 0, s)
-            avg = _block_reduce(np.sum, s_masked, factor, 1)
-            if n_rem > 0:
-                s_rem = self.ds["WEIGHT_SPECTRUM"].data[:, trim:, :]
-                f_rem = self.ds["FLAG"].data[:, trim:, :]
-                s_rem_m = da.where(f_rem, 0, s_rem)
-                avg_rem = da.sum(s_rem_m, axis=1, keepdims=True)
-                avg = da.concatenate([avg, avg_rem], axis=1)
-            averaged["WEIGHT_SPECTRUM"] = avg
+        def _vars(name):
+            return self.ds[name].data if name in self.ds.data_vars else None
 
-        # SIGMA_SPECTRUM: σ̄ = 1 / √(Σ 1/σ²)
-        if "SIGMA_SPECTRUM" in self.ds.data_vars:
-            s = self.ds["SIGMA_SPECTRUM"].data[:, :trim, :]
-            f = self.ds["FLAG"].data[:, :trim, :]
-            inv_var = da.where(f, 0, 1.0 / (s * s))
-            sum_inv = _block_reduce(np.sum, inv_var, factor, 1)
-            sum_safe = da.where(sum_inv == 0, 1, sum_inv)
-            avg = da.sqrt(1.0 / sum_safe)
-            if n_rem > 0:
-                s_rem = self.ds["SIGMA_SPECTRUM"].data[:, trim:, :]
-                f_rem = self.ds["FLAG"].data[:, trim:, :]
-                inv_var_r = da.where(f_rem, 0, 1.0 / (s_rem * s_rem))
-                sum_inv_r = da.sum(inv_var_r, axis=1, keepdims=True)
-                sum_safe_r = da.where(sum_inv_r == 0, 1, sum_inv_r)
-                avg_rem = da.sqrt(1.0 / sum_safe_r)
-                avg = da.concatenate([avg, avg_rem], axis=1)
-            averaged["SIGMA_SPECTRUM"] = avg
-
-        if "FLAG" in self.ds.data_vars:
-            f = self.ds["FLAG"].data[:, :trim, :]
-            avg = _block_reduce(np.any, f, factor, 1)
-            if n_rem > 0:
-                f_rem = self.ds["FLAG"].data[:, trim:, :]
-                avg_rem = da.any(f_rem, axis=1, keepdims=True)
-                avg = da.concatenate([avg, avg_rem], axis=1)
-            averaged["FLAG"] = avg
+        # mstransform's semantics (skarabina#16, _flag_aware_average): an
+        # output channel is the mean of its unflagged inputs and unflagged; it
+        # is flagged only when every input channel is, and then keeps the mean
+        # of all of them.  FLAG_ROW is per row and unchanged by this.
+        averaged = _flag_aware_average(
+            _chan_sum,
+            self.ds["FLAG"].data,
+            data=_vars("DATA"),
+            weight=_vars("WEIGHT_SPECTRUM"),
+            sigma=_vars("SIGMA_SPECTRUM"),
+        )
 
         # --- Apply to dataset ---
         keep_idx = np.arange(0, trim, factor)

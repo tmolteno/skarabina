@@ -81,8 +81,31 @@ centre to its edge -- is half of it (0.5° ≈ 0.0087 rad by default).
 The `--time-average-factor N` option combines every N consecutive time
 samples **of each baseline**, averaging DATA/UVW/TIME, summing
 WEIGHT_SPECTRUM/INTERVAL/EXPOSURE, inverse-variance combining
-SIGMA_SPECTRUM, and OR-ing FLAG columns — excluding flagged data from the
-visibilities.  This reduces data volume before `--optimize`.
+SIGMA_SPECTRUM — excluding flagged data from the visibilities — and
+flagging an output sample only when all of its inputs are flagged, as CASA's
+`mstransform` does (see [Flags](#flags-mstransform-semantics)).  This reduces
+data volume before `--optimize`.
+
+## Flags (mstransform semantics)
+
+Both averages treat flags the way CASA's `mstransform` does for `timeaverage`
+and `chanaverage` (skarabina#16, 1.0.27):
+
+* an output sample with **at least one unflagged input** is the average of the
+  unflagged inputs (DATA mean, WEIGHT_SPECTRUM sum, SIGMA_SPECTRUM
+  inverse-variance) and is **unflagged**;
+* an output sample whose **every input is flagged** is flagged, and its DATA /
+  WEIGHT_SPECTRUM / SIGMA_SPECTRUM are taken over *all* of its inputs, so the
+  data are kept rather than zeroed;
+* in time averaging, a row with `FLAG_ROW` set counts as flagged in every
+  channel and correlation (CASA's flag cube), and an output row gets
+  `FLAG_ROW` only when every one of its samples is flagged.
+
+Before 1.0.27 the output flag was the **OR** of the inputs: one flagged
+integration or channel flagged the output sample even though its unflagged
+average had just been computed.  On MeerKAT L-band data that discarded 0.5–7
+percentage points of visibilities, growing with the factor, and far more
+where flags are sparse in time.
 
 ## Time averaging (`--time-average-factor`)
 
@@ -100,10 +123,11 @@ baseline labels and zeroed TIME on fully-flagged groups.)
 
 | Column          | Operation | Notes |
 |-----------------|-----------|-------|
-| DATA            | Masked mean | Flagged visibilities excluded |
+| DATA            | Masked mean | Flagged visibilities excluded (all of them if all are flagged) |
 | WEIGHT_SPECTRUM | Sum         | w = 1/σ², combined: Σ wᵢ (flagged excluded) |
 | SIGMA_SPECTRUM  | 1/√(Σ 1/σ²) | Inverse-variance weighting (flagged excluded) |
-| FLAG, FLAG_ROW  | OR          | Any flagged → flagged |
+| FLAG            | AND         | Flagged only if every input sample is (mstransform) |
+| FLAG_ROW        | AND         | Set only if every output sample of the row is flagged |
 | UVW             | Mean       | Bin centre — unmasked, so a fully-flagged bin keeps a valid uvw |
 | TIME            | Mean       | Bin centre (mean of the bin's timestamps) — unmasked |
 | INTERVAL        | Sum        | The bin's integrations — unmasked |
@@ -112,8 +136,7 @@ baseline labels and zeroed TIME on fully-flagged groups.)
 
 Geometry (UVW/TIME/INTERVAL/EXPOSURE) is deliberately averaged **unmasked**:
 flags mask the visibilities only, so a fully-flagged bin keeps a valid
-timestamp and uvw instead of being zeroed, and stays flagged through
-FLAG/FLAG_ROW.  Incomplete trailing bins (fewer than *N* samples left in a
+timestamp and uvw instead of being zeroed, and stays flagged.  Incomplete trailing bins (fewer than *N* samples left in a
 baseline's group) are discarded, matching the old row trim.  Run `--summary`
 afterward to see the updated integration time.
 
@@ -124,10 +147,10 @@ channel count by a factor of *N*.
 
 | Column          | Operation | Notes |
 |-----------------|-----------|-------|
-| DATA            | Masked mean | Flagged visibilities excluded |
-| WEIGHT_SPECTRUM | Sum         | w = 1/σ², combined: Σ wᵢ |
-| SIGMA_SPECTRUM  | 1/√(Σ 1/σ²) | Inverse-variance weighting |
-| FLAG            | OR          | Any flagged → flagged |
+| DATA            | Masked mean | Flagged visibilities excluded (all of them if all are flagged) |
+| WEIGHT_SPECTRUM | Sum         | w = 1/σ², combined: Σ wᵢ (flagged excluded) |
+| SIGMA_SPECTRUM  | 1/√(Σ 1/σ²) | Inverse-variance weighting (flagged excluded) |
+| FLAG            | AND         | Flagged only if every input channel is (mstransform) |
 | CHAN_FREQ       | Mean        | SPECTRAL_WINDOW updated |
 
 Trailing channels (fewer than *N*) are combined into a final narrower

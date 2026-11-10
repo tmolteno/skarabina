@@ -3,6 +3,23 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Averaging flags follow CASA `mstransform` (skarabina#16).**
+  `--time-average-factor` and `--frequency-average-factor` averaged DATA,
+  WEIGHT_SPECTRUM and SIGMA_SPECTRUM over a bin's unflagged samples but OR'd
+  FLAG (and, in time, FLAG_ROW): one flagged integration or channel flagged
+  an output sample whose unflagged average had just been computed.  An output
+  sample is now flagged only when every input is flagged, as in
+  `mstransform`'s `timeaverage` / `chanaverage`; then its DATA / weights are
+  taken over all inputs (kept, not zeroed).  In time averaging a FLAG_ROW row
+  counts as flagged everywhere and joins no average, and the output FLAG_ROW is
+  set only where every sample of the row is flagged.  On MeerKAT L-band data
+  the OR discarded 0.5-7 percentage points of visibilities (x2-x6).  New
+  shared helper `_flag_aware_average`; the avg-validation references and
+  `tests/test_frequency_average.py` model the new semantics, plus a FLAG_ROW
+  exclusion test.  Docs: `doc/AVERAGING.md` (Flags section).
+
 ## [1.0.26]
 
 ### Fixed

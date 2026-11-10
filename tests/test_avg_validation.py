@@ -54,39 +54,47 @@ def _make_ms(nrow, nchan, ncorr, row_chunk, chan_chunk):
 
 
 # ---- numpy references ----
+#
+# CASA mstransform's flag semantics (skarabina#16): an output sample is
+# taken over its unflagged inputs and is unflagged; only when every input is
+# flagged is it flagged, and then it is taken over all of them.
+
+def _ref_mean(d, f, axis):
+    """Unflagged mean along axis; the mean of all where all are flagged."""
+    n = (~f).sum(axis).astype(float)
+    m_unf = np.where(f, 0, d).sum(axis) / np.where(n == 0, 1, n)
+    return np.where(n > 0, m_unf, d.mean(axis))
+
+
+def _ref_sum(w, f, axis):
+    """Unflagged sum along axis; the sum of all where all are flagged."""
+    n = (~f).sum(axis)
+    return np.where(n > 0, np.where(f, 0, w).sum(axis), w.sum(axis))
+
+
+def _ref_sigma(s, f, axis):
+    """1/sqrt(sum 1/sigma^2) over the unflagged; over all where all are flagged."""
+    inv = 1.0 / (s ** 2)
+    tot = _ref_sum(inv, f, axis)
+    return np.sqrt(1.0 / np.where(tot == 0, 1, tot))
+
+
+def _chan_groups(nchan, factor):
+    n_full = nchan // factor
+    groups = [slice(i * factor, (i + 1) * factor) for i in range(n_full)]
+    if nchan % factor:
+        groups.append(slice(n_full * factor, nchan))
+    return groups
+
 
 def _ref_freq_data(data, flag, factor):
-    nrow, nchan, ncorr = data.shape
-    n_full = nchan // factor
-    n_rem = nchan % factor
-    trim = n_full * factor
-    out = []
-    for i in range(n_full):
-        d = data[:, i * factor : (i + 1) * factor, :]
-        f = flag[:, i * factor : (i + 1) * factor, :]
-        num = np.where(f, 0, d).sum(1)
-        den = (~f).sum(1).astype(float)
-        den[den == 0] = 1
-        out.append(num / den)
-    if n_rem:
-        d = data[:, trim:, :]
-        f = flag[:, trim:, :]
-        num = np.where(f, 0, d).sum(1)
-        den = (~f).sum(1).astype(float)
-        den[den == 0] = 1
-        out.append(num / den)
-    return np.stack(out, axis=1)
+    return np.stack([_ref_mean(data[:, g, :], flag[:, g, :], 1)
+                     for g in _chan_groups(data.shape[1], factor)], axis=1)
 
 
 def _ref_freq_flag(flag, factor):
-    nrow, nchan, ncorr = flag.shape
-    n_full = nchan // factor
-    n_rem = nchan % factor
-    trim = n_full * factor
-    out = [np.any(flag[:, i * factor : (i + 1) * factor, :], 1) for i in range(n_full)]
-    if n_rem:
-        out.append(np.any(flag[:, trim:, :], 1))
-    return np.stack(out, axis=1)
+    return np.stack([np.all(flag[:, g, :], 1)
+                     for g in _chan_groups(flag.shape[1], factor)], axis=1)
 
 
 def _time_average_plan(a1, a2, time, factor):
@@ -124,79 +132,41 @@ def _time_average_plan(a1, a2, time, factor):
     return perm, int(n_bins.sum())
 
 
+def _bins(x, factor, perm):
+    x = x[perm]
+    return x.reshape(-1, factor, *x.shape[1:])
+
+
 def _ref_time_data(data, flag, factor, perm):
-    d = data[perm]
-    f = flag[perm]
-    d = d.reshape(-1, factor, d.shape[1], d.shape[2])
-    f = f.reshape(-1, factor, f.shape[1], f.shape[2])
-    num = np.where(f, 0, d).sum(1)
-    den = (~f).sum(1).astype(float)
-    den[den == 0] = 1
-    return num / den
+    return _ref_mean(_bins(data, factor, perm), _bins(flag, factor, perm), 1)
 
 
 def _ref_time_flag(flag, factor, perm):
-    f = flag[perm]
-    return np.any(f.reshape(-1, factor, f.shape[1], f.shape[2]), axis=1)
+    return np.all(_bins(flag, factor, perm), axis=1)
 
 
 # ---- numpy references: WEIGHT_SPECTRUM, SIGMA_SPECTRUM, metadata ----
 
 def _ref_freq_weight(weight, flag, factor):
     """WEIGHT_SPECTRUM over channels: sum of unflagged weights (incl. tail)."""
-    nrow, nchan, ncorr = weight.shape
-    n_full = nchan // factor
-    n_rem = nchan % factor
-    trim = n_full * factor
-    out = []
-    for i in range(n_full):
-        slc = slice(i * factor, (i + 1) * factor)
-        out.append(np.sum(np.where(flag[:, slc, :], 0, weight[:, slc, :]), axis=1))
-    if n_rem:
-        out.append(np.sum(np.where(flag[:, trim:, :], 0, weight[:, trim:, :]), axis=1))
-    return np.stack(out, axis=1)
+    return np.stack([_ref_sum(weight[:, g, :], flag[:, g, :], 1)
+                     for g in _chan_groups(weight.shape[1], factor)], axis=1)
 
 
 def _ref_freq_sigma(sigma, flag, factor):
     """SIGMA_SPECTRUM over channels: sqrt(1 / sum(1/sigma^2)) over unflagged."""
-    nrow, nchan, ncorr = sigma.shape
-    n_full = nchan // factor
-    n_rem = nchan % factor
-    trim = n_full * factor
-    out = []
-    for i in range(n_full):
-        slc = slice(i * factor, (i + 1) * factor)
-        inv_var = np.where(flag[:, slc, :], 0, 1.0 / (sigma[:, slc, :] ** 2))
-        sum_inv = np.sum(inv_var, axis=1)
-        sum_safe = np.where(sum_inv == 0, 1, sum_inv)
-        out.append(np.sqrt(1.0 / sum_safe))
-    if n_rem:
-        inv_var = np.where(flag[:, trim:, :], 0, 1.0 / (sigma[:, trim:, :] ** 2))
-        sum_inv = np.sum(inv_var, axis=1)
-        sum_safe = np.where(sum_inv == 0, 1, sum_inv)
-        out.append(np.sqrt(1.0 / sum_safe))
-    return np.stack(out, axis=1)
+    return np.stack([_ref_sigma(sigma[:, g, :], flag[:, g, :], 1)
+                     for g in _chan_groups(sigma.shape[1], factor)], axis=1)
 
 
 def _ref_time_weight(weight, flag, factor, perm):
     """WEIGHT_SPECTRUM over a bin: sum of unflagged weights."""
-    f = flag[perm]
-    w = weight[perm]
-    f = f.reshape(-1, factor, f.shape[1], f.shape[2])
-    w = w.reshape(-1, factor, w.shape[1], w.shape[2])
-    return np.sum(np.where(f, 0, w), axis=1)
+    return _ref_sum(_bins(weight, factor, perm), _bins(flag, factor, perm), 1)
 
 
 def _ref_time_sigma(sigma, flag, factor, perm):
     """SIGMA_SPECTRUM over a bin: sqrt(1 / sum(1/sigma^2)) over unflagged."""
-    f = flag[perm]
-    s = sigma[perm]
-    f = f.reshape(-1, factor, f.shape[1], f.shape[2])
-    s = s.reshape(-1, factor, s.shape[1], s.shape[2])
-    inv_var = np.where(f, 0, 1.0 / (s ** 2))
-    sum_inv = np.sum(inv_var, axis=1)
-    sum_safe = np.where(sum_inv == 0, 1, sum_inv)
-    return np.sqrt(1.0 / sum_safe)
+    return _ref_sigma(_bins(sigma, factor, perm), _bins(flag, factor, perm), 1)
 
 
 def _ref_time_metadata(values, factor, perm, op):
@@ -358,8 +328,9 @@ def test_frequency_average_excludes_flagged_data():
     # group 1 = 1/sqrt(1/9 + 1/25)
     assert np.allclose(got_s[0, 0, 0], 2.0)
     assert np.allclose(got_s[0, 1, 0], 1.0 / np.sqrt(1.0 / 9 + 1.0 / 25))
-    # FLAG OR'd: group 0 flagged (channel 1), group 1 clean
-    assert got_f[0, 0, 0] and not got_f[0, 1, 0]
+    # mstransform (skarabina#16): group 0 still has an unflagged channel, so
+    # its average is valid and UNflagged; group 1 is clean.
+    assert not got_f[0, 0, 0] and not got_f[0, 1, 0]
 
 
 def test_time_average_excludes_flagged_data():
@@ -389,11 +360,15 @@ def test_time_average_excludes_flagged_data():
     # SIGMA: group 0 = 2.0 (only σ=2 unflagged), group 1 = 1/sqrt(1/9+1/25)
     assert np.allclose(got_s[0, 0, 0], 2.0)
     assert np.allclose(got_s[1, 0, 0], 1.0 / np.sqrt(1.0 / 9 + 1.0 / 25))
-    assert got_f[0, 0, 0] and not got_f[1, 0, 0]
+    # mstransform (skarabina#16): bin 0 keeps an unflagged sample -> unflagged.
+    assert not got_f[0, 0, 0] and not got_f[1, 0, 0]
+    assert not ms.ds.FLAG_ROW.data.compute().any()
 
 
 def test_frequency_average_all_flagged_group_no_nan():
-    """A group where every channel is flagged: DATA->0, FLAG->True, no NaN/Inf."""
+    """A group where every channel is flagged: flagged, and (mstransform) its
+    DATA / WEIGHT / SIGMA are taken over all of its channels -- kept, not
+    zeroed -- with no NaN/Inf."""
     data = np.full((1, 4, 1), 10.0 + 0j, dtype=complex)
     flag = np.zeros((1, 4, 1), dtype=bool)
     flag[0, 0, 0] = True
@@ -409,8 +384,10 @@ def test_frequency_average_all_flagged_group_no_nan():
     got_s = ms.ds.SIGMA_SPECTRUM.data.compute()
     got_f = ms.ds.FLAG.data.compute()
 
-    # All-flagged group: DATA = 0 (0/1 guarded denominator), no NaN/Inf
-    assert np.allclose(got_d[0, 0, 0], 0.0)
+    # All-flagged group: the mean / sum / inverse variance of ALL its channels
+    assert np.allclose(got_d[0, 0, 0], 10.0)
+    assert np.allclose(got_w[0, 0, 0], 4.0)
+    assert np.allclose(got_s[0, 0, 0], np.sqrt(2.0))
     assert np.all(np.isfinite(got_d))
     assert np.all(np.isfinite(got_w))
     assert np.all(np.isfinite(got_s))
@@ -418,7 +395,8 @@ def test_frequency_average_all_flagged_group_no_nan():
 
 
 def test_time_average_all_flagged_group_no_nan():
-    """A row group entirely flagged: no NaN/Inf in DATA/WEIGHT/SIGMA."""
+    """A row group entirely flagged: flagged, DATA/WEIGHT/SIGMA over all of
+    its samples (mstransform), no NaN/Inf."""
     data = np.full((4, 1, 1), 10.0 + 0j, dtype=complex)
     flag = np.zeros((4, 1, 1), dtype=bool)
     flag[0, 0, 0] = True
@@ -435,7 +413,9 @@ def test_time_average_all_flagged_group_no_nan():
     got_f = ms.ds.FLAG.data.compute()
 
     assert got_d.shape == (2, 1, 1)
-    assert np.allclose(got_d[0, 0, 0], 0.0)
+    assert np.allclose(got_d[0, 0, 0], 10.0)
+    assert np.allclose(got_w[0, 0, 0], 4.0)
+    assert np.allclose(got_s[0, 0, 0], np.sqrt(2.0))
     assert np.all(np.isfinite(got_d))
     assert np.all(np.isfinite(got_w))
     assert np.all(np.isfinite(got_s))
@@ -489,9 +469,11 @@ def test_time_average_geometry_ignores_flags():
     assert np.allclose(got_uvw[2], (uvw[4] + uvw[5]) / 2.0)
     assert np.allclose(got_int[2], 4.0)
     assert np.allclose(got_exp[2], 4.0)
-    # ...and the flags themselves survive.
+    # ...and (mstransform, skarabina#16) every bin keeps a good row, so no
+    # output row is flagged: the bad row's samples are simply left out.
     assert np.array_equal(ms.ds.FLAG_ROW.data.compute(),
-                          [True, False, False])
+                          [False, False, False])
+    assert not ms.ds.FLAG.data.compute().any()
 
 
 def test_time_average_flagged_row_then_all_flag_group():
@@ -526,10 +508,10 @@ def test_time_average_flagged_row_then_all_flag_group():
     assert np.allclose(got_int[0], 4.0)       # 2 + 2
     assert not np.any(np.isnan(got_time))
     assert not np.any(np.isnan(got_int))
-    # ...and it stays flagged (FLAG_ROW is OR'd over the bin: bin 1 holds
-    # the partially-flagged row 2 as well).
+    # ...and it stays flagged.  Bin 1 holds a good row (3) beside the
+    # row-flagged row 2, so it is NOT flagged (mstransform, skarabina#16).
     assert np.array_equal(ms.ds.FLAG_ROW.data.compute(),
-                          [True, True, False])
+                          [True, False, False])
     # Bin 1: both rows contribute their geometry. TIME=(20+30)/2, INTERVAL=4.
     assert np.allclose(got_time[1], 25.0)
     assert np.allclose(got_int[1], 4.0)
@@ -713,3 +695,19 @@ def test_frequency_then_time_average_matches_reference():
     assert np.array_equal(got_f, f2)
     assert np.allclose(got_w, w2)
     assert np.allclose(got_s, s2)
+
+
+def test_time_average_flag_row_excludes_samples():
+    """A row with FLAG_ROW set (FLAG cells clear) joins no average: CASA's
+    flag cube ORs FLAG_ROW into every cell (skarabina#16).  The bin keeps
+    the good row's DATA / weight, unflagged."""
+    data = np.array([[[100.0]], [[20.0]], [[30.0]], [[40.0]]], dtype=complex)
+    flag = np.zeros((4, 1, 1), dtype=bool)
+    flag_row = np.array([True, False, False, False])
+    weight = np.array([[[9.0]], [[3.0]], [[5.0]], [[7.0]]], dtype=np.float64)
+    ms = _make_ms_with_flags(data, flag, weight=weight, flag_row=flag_row)
+    ms.time_average(2)
+    assert np.allclose(ms.ds.DATA.data.compute()[:, 0, 0], [20.0, 35.0])
+    assert np.allclose(ms.ds.WEIGHT_SPECTRUM.data.compute()[:, 0, 0], [3.0, 12.0])
+    assert not ms.ds.FLAG.data.compute().any()
+    assert not ms.ds.FLAG_ROW.data.compute().any()

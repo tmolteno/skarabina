@@ -3,7 +3,9 @@ import numpy as np
 
 
 def _freq_avg_data(data, flag, factor):
-    """Reference implementation: average channels, excluding flagged."""
+    """Reference implementation (CASA mstransform, skarabina#16): average a
+    group's unflagged channels; a group with every channel flagged is the
+    mean of all of them."""
     nrow, nchan, ncorr = data.shape
     n_full = nchan // factor
     n_rem = nchan % factor
@@ -16,20 +18,18 @@ def _freq_avg_data(data, flag, factor):
         f = flag[:, slc, :]
         num = np.sum(np.where(f, 0, d), axis=1)
         den = np.sum(~f, axis=1)
-        den[den == 0] = 1
-        results.append(num / den)
+        results.append(np.where(den > 0, num / np.where(den == 0, 1, den), d.mean(axis=1)))
     if n_rem > 0:
         d = data[:, trim:, :]
         f = flag[:, trim:, :]
         num = np.sum(np.where(f, 0, d), axis=1)
         den = np.sum(~f, axis=1)
-        den[den == 0] = 1
-        results.append(num / den)
+        results.append(np.where(den > 0, num / np.where(den == 0, 1, den), d.mean(axis=1)))
     return np.stack(results, axis=1)
 
 
 def _freq_avg_flag(flag, factor):
-    """Reference: OR flags over groups of channels."""
+    """Reference (mstransform): a group is flagged only if every channel is."""
     nrow, nchan, ncorr = flag.shape
     n_full = nchan // factor
     n_rem = nchan % factor
@@ -38,9 +38,9 @@ def _freq_avg_flag(flag, factor):
     results = []
     for i in range(n_full):
         slc = slice(i * factor, (i + 1) * factor)
-        results.append(np.any(flag[:, slc, :], axis=1))
+        results.append(np.all(flag[:, slc, :], axis=1))
     if n_rem > 0:
-        results.append(np.any(flag[:, trim:, :], axis=1))
+        results.append(np.all(flag[:, trim:, :], axis=1))
     return np.stack(results, axis=1)
 
 
@@ -73,27 +73,30 @@ def test_excludes_flagged():
 
 
 def test_all_flagged_group():
-    """When all channels in a group are flagged, result should be 0."""
+    """When all channels in a group are flagged, the result is the mean of all
+    of them (mstransform), not 0."""
     data = np.full((1, 4, 1), 10.0 + 0j, dtype=complex)
     flag = np.zeros((1, 4, 1), dtype=bool)
     flag[0, 0, 0] = True
     flag[0, 1, 0] = True
     result = _freq_avg_data(data, flag, 2)
-    assert np.allclose(result[0, 0, 0], 0.0 + 0j)
+    assert np.allclose(result[0, 0, 0], 10.0 + 0j)
     assert np.allclose(result[0, 1, 0], 10.0 + 0j)
 
 
-def test_flag_or():
-    """FLAG should be OR'd over the factor dimension."""
-    flag = np.zeros((1, 4, 1), dtype=bool)
-    flag[0, 0, 0] = True  # only first channel flagged
+def test_flag_all():
+    """FLAG is set only where every channel of the group is flagged."""
+    flag = np.zeros((1, 6, 1), dtype=bool)
+    flag[0, 0, 0] = True  # group (0,1): one flagged -> output unflagged
+    flag[0, 2:4, 0] = True  # group (2,3): both flagged -> output flagged
     result = _freq_avg_flag(flag, 2)
-    assert result[0, 0, 0]  # group (0,1): one flagged → output flagged
-    assert not result[0, 1, 0]  # group (2,3): none flagged
+    assert not result[0, 0, 0]
+    assert result[0, 1, 0]
+    assert not result[0, 2, 0]  # group (4,5): none flagged
 
 
-def test_flag_or_trailing():
-    """FLAG OR with trailing channels."""
+def test_flag_all_trailing():
+    """FLAG with trailing channels: the 1-channel tail is flagged iff it is."""
     flag = np.zeros((1, 5, 1), dtype=bool)
     flag[0, 4, 0] = True  # only trailing channel flagged
     result = _freq_avg_flag(flag, 2)
