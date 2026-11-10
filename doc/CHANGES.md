@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.27]
+
 ### Fixed
 
 - **Averaging flags follow CASA `mstransform` (skarabina#16).**
