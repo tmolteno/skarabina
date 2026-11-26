@@ -1278,7 +1278,7 @@ dev = [
 requires-dist = [
     { name = "angle-parser", specifier = ">=0.1.0" },
     { name = "casacure", specifier = ">=3.8.41" },
-    { name = "casacure", marker = "extra == 'casacure'", specifier = ">=3.8.33" },
+    { name = "casacure", marker = "extra == 'casacure'", specifier = ">=3.8.41" },
     { name = "dask-ms-2", extras = ["casacure", "xarray", "zarr"] },
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "pyarrow", marker = "extra == 'nn'", specifier = ">=14" },

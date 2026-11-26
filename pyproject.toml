@@ -58,8 +58,10 @@ skarabina-plotms = "skarabina.plotms:main"
 # requested above, so this is the explicit way to ask for the Rust backend
 # when installing skarabina with extras: pip install skarabina[casacure].
 # Runs select it with DASK_MS_BACKEND=casacure; without casacure installed,
-# dask-ms-2 falls back to real python-casacore.
-casacure = ["casacure>=3.8.33"]
+# dask-ms-2 falls back to real python-casacore.  The floor matches the main
+# dependency (see above): 3.8.40/3.8.41 fix the written-MS keywords CASA and
+# python-casacore read.
+casacure = ["casacure>=3.8.41"]
 # The tf-nn verb streams each data chunk to a served neural flagger over
 # Arrow Flight (radio-nn's nn-flag-server); only that verb needs pyarrow.
 nn = ["pyarrow>=14"]
