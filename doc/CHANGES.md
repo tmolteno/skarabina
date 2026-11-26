@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [1.0.28]
+
 ### Fixed
 
 - **The memory plan no longer under-predicts a frequency-averaging write at
