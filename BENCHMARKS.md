@@ -11,6 +11,85 @@ and keep `bench/meerkat-flags.yml` in step with the `flag-average` step of
 
 ---
 
+## The averaging write's working set (skarabina#17), 2026-11-26
+
+**Why** — the NGC 7541 stage-0 `flag-average` run (master MS 2 151 072 rows x
+4096 chan x 4 corr, 534 GB) was planned at `memory-limit-GB 108`: a 22 518-row
+chunk, aligned to 20 000 by `--fit-rows`, worst step 86.4 GB.  It reached
+**117 GiB RSS** on spark (121 GiB, 20 workers) and earlyoom killed it
+(2026-11-17).  117 GiB over 20 workers x 20 000 rows x 16 384 vis is 19.1 B
+per input visibility in flight, where the plan charges 12.5 (worst verb 4 +
+write 4.5 + averaging 4).
+
+**Reproduction** (moist, casacure 3.8.45, dask-ms-2 0.2.37 editable; a
+synthetic 24 000 x 4096 x 4 MS with the master's column set,
+`.bench/scratch/issue17/shape24k.ms`; `bench/mem_recal.py --workers 4
+--frequency-average-factor 8 --fit-rows 0`, stage-0 flag list; medians of 3
+where given):
+
+| case | chunk | peak MiB | plan/measured |
+|---|---|---|---|
+| stage-0 list, no write | 500-4000 | 809-1568 | 0.98-1.78 |
+| + full write | 500-4000 | 1225-2674 | 0.84-1.17 |
+| + full write, x8 average | 500 / 1000 / 2000 | 2170 / 2511 / 3188 | **0.66 / 0.57 / 0.64** |
+
+Only the averaging write misses, by ~1.6x.  Its increment over the same run
+without averaging was ~11 B per input visibility in flight, against the 4 the
+plan charges -- a constant fitted at factor 32 on 2511x2 (scan 1), where the
+averaging step's per-input-visibility costs are four times smaller.
+
+**Cause** — `_flag_aware_average` counted the unflagged samples into a
+chunk-sized float64 array, summed a chunk-sized float64 `ones_like` just to
+learn the bin size, and divided complex64 sums by the float64 count, so the
+averaged DATA column came out complex128 (twice the output blocks, plus a
+cast in the write).  Fix: float32 counts, the bin size from the caller (every
+bin holds exactly `factor` samples; the frequency tail holds `n_rem`), and
+the DATA mean cast back to the input dtype.  Averaged output vs 1.0.27:
+FLAG / FLAG_ROW / WEIGHT_SPECTRUM / SIGMA_SPECTRUM bit-identical, DATA within
+1 ulp of complex64.
+
+**After the fix** (same harness, medians of 3):
+
+| case | chunk | peak MiB | increment over write | plan/measured |
+|---|---|---|---|---|
+| write, no average | 1000 / 2000 | 1367 / 1789 | -- | 1.05 / 0.86 |
+| write, x8 average | 1000 / 2000 | 1601 / 2357 | 3.6 / 4.3 B/vis | 0.90 / 0.87 |
+| write, x32 average | 1000 / 2000 | 1564 / 2240 | 3.0 / 4.1 B/vis | 0.92 / 0.91 |
+
+The x8 peaks fell by a third and the increment is now factor-independent --
+it is the transients' overlap, not the output blocks -- so
+`CONCURRENT_AVERAGING_COST = 4` stands and the plan brackets the medians
+within the usual 0.85-1.15.  A 79-chan x 2-corr control (synth.ms, chunk
+12 000) shows no measurable averaging increment either way (444 vs 459 MiB),
+as before.
+
+**End-to-end** — the exact failing command (same MS, flag list, 108 GB
+budget, 20 workers; the plan picks 22 518 rows, aligned to 20 000) rerun on
+spark 2026-11-26, RSS sampled every 5 s (VmHWM is the peak):
+
+| stack | peak RSS | outcome |
+|---|---|---|
+| fixed skarabina (this change), casacure 3.8.45 / dask 2026.11.0 / dask-ms-2 0.2.37 | **14.5 GiB** | completed, 22 min |
+| skarabina 1.0.27, same dependency versions | 17.6 GiB | completed |
+| the original `ghcr.io/tmolteno/skarabina:1.0.27` image (casacure 3.8.41, dask 2026.8.0, dask-ms-2 0.2.36, apptainer) | 16.8 GiB | completed |
+
+Two things follow.  The fix cuts the end-to-end peak ~18 % (17.6 -> 14.5 GiB
+against its own control).  And the 117 GiB event did not reproduce under ANY
+stack today: the pass is I/O-bound (~534 GB in 22-30 min), so only ~3 of the
+20 chunk slots are ever in flight (~5.5 GB per 20 000-row x 4096 x 4 chunk in
+the averaging write); 117 GiB is 19.1 B/vis with ALL 20 slots full, which is
+what a host serving 20 concurrent chunk reads at speed produces -- the
+conditions of the original night (the pipeline's `master-info` analyze step
+reads the MS just before `flag-average`, warming the cache).  The plan's
+`workers x row_chunk` model is exactly that worst case, which is why the
+per-visibility charge has to be right: at the pre-fix 19.1 B/vis a full house
+is 117 GiB (over the 108 GB budget, killed); at the post-fix ~15 B/vis it is
+~91 GiB (inside it).  The fix restores the budget's guarantee for the day the
+I/O is fast again; the 64 GB workaround in meerkat_imaging can be dropped
+once a release carries it.
+
+---
+
 ## The auto-flaggers in worker processes (the flag program), 2026-10-10
 
 **Why** — the rflag/tfcrop blocks are hundreds of medium-size numpy calls, and

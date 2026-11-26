@@ -265,13 +265,17 @@ def _block_reduce(func, arr, factor, axis):
     return da_coarsen(func, arr, {axis: factor}, trim_excess=True)
 
 
-def _flag_aware_average(bsum, flag, data=None, weight=None, sigma=None):
+def _flag_aware_average(bsum, flag, counts, data=None, weight=None, sigma=None):
     """Average blocks of samples with CASA ``mstransform``'s flag semantics.
 
     ``bsum(x)`` sums ``x`` over each block (the bin of a time average, the
     channel group of a frequency average) and returns one value per output
     sample.  ``flag`` is the input flag cube, already including FLAG_ROW
-    where that applies.
+    where that applies.  ``counts`` is the number of input samples in each
+    output block, broadcastable to ``bsum``'s output shape (a scalar where
+    every block holds the same number of samples): the all-samples mean
+    divides by it rather than summing an array of ones, which used to hold a
+    whole float64 chunk per worker for a number the caller already knows.
 
     Per output sample (skarabina#16):
 
@@ -287,17 +291,22 @@ def _flag_aware_average(bsum, flag, data=None, weight=None, sigma=None):
     samples are.  (Before 1.0.27 the flag was OR'd: one flagged input
     flagged an output whose unflagged average had just been computed.)
 
+    The counts are float32 and the DATA mean is cast back to the input's
+    dtype: counting in float64 and dividing complex64 by it held
+    chunk-sized float64/complex128 temporaries per worker, which is what
+    made an 8x frequency average cost ~11 bytes per input visibility in
+    flight against the 4 the memory plan charged (skarabina#17).
+
     Returns a dict with FLAG and whichever of DATA / WEIGHT_SPECTRUM /
     SIGMA_SPECTRUM were given.
     """
-    n_unf = bsum((~flag).astype(np.float64))
+    n_unf = bsum((~flag).astype(np.float32))
     has = n_unf > 0
     out = {"FLAG": ~has}
     if data is not None:
-        n_all = bsum(da.ones_like(flag, dtype=np.float64))
         mean_unf = bsum(da.where(flag, 0j, data)) / da.where(has, n_unf, 1)
-        mean_all = bsum(data) / da.where(n_all == 0, 1, n_all)
-        out["DATA"] = da.where(has, mean_unf, mean_all)
+        mean_all = bsum(data) / counts
+        out["DATA"] = da.where(has, mean_unf, mean_all).astype(data.dtype)
     if weight is not None:
         out["WEIGHT_SPECTRUM"] = da.where(
             has, bsum(da.where(flag, 0, weight)), bsum(weight)
@@ -2342,9 +2351,11 @@ class DaskMS:
         # mstransform's semantics (skarabina#16): an output sample is the
         # mean of its unflagged inputs and unflagged; it is flagged only
         # when every input is, and then keeps the mean of all of them.
+        # Every bin holds exactly `factor` samples (trailing rows dropped).
         averaged = _flag_aware_average(
             lambda x: _block_reduce(np.sum, x, factor, 0),
             flag,
+            np.float32(factor),
             data=_vars("DATA"),
             weight=_vars("WEIGHT_SPECTRUM"),
             sigma=_vars("SIGMA_SPECTRUM"),
@@ -2458,9 +2469,14 @@ class DaskMS:
         # output channel is the mean of its unflagged inputs and unflagged; it
         # is flagged only when every input channel is, and then keeps the mean
         # of all of them.  FLAG_ROW is per row and unchanged by this.
+        # Samples per output channel: `factor`, but n_rem in the tail.
+        counts = np.full(n_new, factor, dtype=np.float32)
+        if n_rem > 0:
+            counts[-1] = n_rem
         averaged = _flag_aware_average(
             _chan_sum,
             self.ds["FLAG"].data,
+            counts[None, :, None],
             data=_vars("DATA"),
             weight=_vars("WEIGHT_SPECTRUM"),
             sigma=_vars("SIGMA_SPECTRUM"),

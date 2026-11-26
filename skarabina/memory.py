@@ -82,6 +82,12 @@ CONCURRENT_WRITE_COST = {"write": 4.5, "write-flags": 0.5}
 #: and 9.3 B/vis in total, 40 000-row ones less).  4 leaves the plan at the
 #: measured peaks of the runs the constants were fitted on; see BENCHMARKS.md
 #: for the residuals, which are largest at the largest chunks.
+#: Re-measured 2026-11-26 after the skarabina#17 averaging fix (float32
+#: counts, no ones-like chunk, DATA kept at the input dtype) on a 4096-chan,
+#: 4-corr MS: 3.0-4.3 B/vis at BOTH factor 8 and factor 32 -- before the fix
+#: factor 8 cost ~11 B/vis (chunk-sized float64/complex128 temporaries), which
+#: is what the 108 GB NGC 7541 run died of.  The cost is the transients'
+#: overlap, not the output blocks, so one constant serves every factor.
 CONCURRENT_AVERAGING_COST = 4
 
 #: Per-table steps: bytes per visibility of the whole table they hold --

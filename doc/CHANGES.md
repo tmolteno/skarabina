@@ -3,6 +3,26 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The memory plan no longer under-predicts a frequency-averaging write at
+  small factors (skarabina#17).** A stage-0 flag + 8x channel average planned
+  at a 108 GB budget (20000-row chunks, 86 GB predicted) reached 117 GiB RSS
+  on a 2.15M-row 4096x4 MS and was killed.  The cause was in the averaging
+  step: `_flag_aware_average` held chunk-sized float64 temporaries (the
+  unflagged count, and an array of ones summed just to learn the bin size)
+  and returned DATA as complex128, so an 8x averaged write cost ~11 bytes per
+  input visibility in flight where the plan charges
+  `CONCURRENT_AVERAGING_COST = 4` -- a value fitted at factor 32, where those
+  per-input-visibility costs are four times smaller.  The counts are now
+  float32, the bin size comes from the caller (every bin holds exactly
+  `factor` samples; the frequency tail holds `n_rem`), and the DATA mean is
+  cast back to the input dtype.  Measured on a 4096x4 MS: the x8 averaging
+  write's peak fell by a third, and its cost over an un-averaged write is
+  3.0-4.3 B/vis at factors 8 and 32 alike, so the constant stands.  Flags,
+  FLAG_ROW, weights and sigmas of an averaged MS are bit-identical to
+  1.0.27's; DATA matches within 1 ulp of complex64.
+
 ## [1.0.27]
 
 ### Fixed

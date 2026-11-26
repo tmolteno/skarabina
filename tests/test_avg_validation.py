@@ -255,6 +255,22 @@ def test_frequency_average_with_tail():
     assert np.allclose(ms.ds.DATA.data.compute(), ref_d)
 
 
+def test_averaged_data_keeps_the_input_dtype():
+    """complex64 in, complex64 out (skarabina#17): the mean used to divide
+    complex64 sums by a float64 count, so an averaged DATA column came out
+    complex128 -- twice the chunk-sized output blocks per worker, plus a
+    cast in the write, which is what the memory plan did not charge for."""
+    ms = _make_ms(40, 64, 2, row_chunk=10, chan_chunk=16)
+    ms.ds["DATA"] = ms.ds.DATA.astype(np.complex64)
+    ms.frequency_average(8)
+    assert ms.ds.DATA.data.dtype == np.complex64
+
+    ms = _make_ms(40, 8, 2, row_chunk=10, chan_chunk=8)
+    ms.ds["DATA"] = ms.ds.DATA.astype(np.complex64)
+    ms.time_average(4)
+    assert ms.ds.DATA.data.dtype == np.complex64
+
+
 # ---- Flagged-data exclusion: explicit patterns on the real DaskMS path ----
 
 def _make_ms_with_flags(data, flag, weight=None, sigma=None, uvw=None,
